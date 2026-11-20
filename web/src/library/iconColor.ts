@@ -54,9 +54,14 @@ async function sha1Hex(text: string): Promise<string> {
 
 /**
  * Recolor the selected SVG icons to `color` (hex), or restore their original colors when `color`
- * is null. One undo step. Returns how many icons changed.
+ * is null. With `preview`, the change is shown but not recorded in undo history (see
+ * IconRecolorSession for how a drag becomes one undo step). Returns how many icons changed.
  */
-export async function recolorSelectedIcons(api: ExcalidrawImperativeAPI, color: string | null): Promise<number> {
+export async function recolorSelectedIcons(
+  api: ExcalidrawImperativeAPI,
+  color: string | null,
+  preview = false,
+): Promise<number> {
   const appState = api.getAppState();
   const files = api.getFiles();
   const all = api.getSceneElementsIncludingDeleted();
@@ -82,13 +87,87 @@ export async function recolorSelectedIcons(api: ExcalidrawImperativeAPI, color: 
   }
   if (!updates.size) return 0;
 
+  // Decode first so Excalidraw's own image load (below) is served from the browser's cache.
+  await Promise.all(
+    [...newFiles.values()].map((f) => {
+      const img = new Image();
+      img.src = f.dataURL;
+      return img.decode().catch(() => undefined);
+    }),
+  );
+  api.updateScene({
+    elements: all.map((el) => updates.get(el.id) ?? el),
+    captureUpdate: preview ? CaptureUpdateAction.NEVER : CaptureUpdateAction.IMMEDIATELY,
+  });
+  // Add the files after the elements point at them: Excalidraw loads images for files added to
+  // elements already in the scene, so the new icon appears right away instead of a placeholder.
   const now = Date.now();
   api.addFiles(
     [...newFiles.values()].map((f) => ({ ...f, mimeType: "image/svg+xml" as const, created: now, lastRetrieved: now })),
   );
-  api.updateScene({
-    elements: all.map((el) => updates.get(el.id) ?? el),
-    captureUpdate: CaptureUpdateAction.IMMEDIATELY,
-  });
   return updates.size;
+}
+
+/**
+ * Serialises recolors (they are async) and turns a live-preview drag into exactly one undo step:
+ * previews are applied without history; on commit the icons are first put back to how they were
+ * before the drag (also without history) and the final color is then applied as one change.
+ */
+export class IconRecolorSession {
+  private queue: { color: string | null; preview: boolean } | null = null;
+  private busy = false;
+  /** Selected image elements as they were before the current drag started. */
+  private base: Map<string, ExcalidrawElement> | null = null;
+
+  constructor(
+    private getApi: () => ExcalidrawImperativeAPI | undefined,
+    private onError: (e: Error) => void,
+  ) {}
+
+  apply(color: string | null, preview = false): void {
+    // Keep only the newest preview; never let a preview replace a pending commit.
+    if (!this.queue || this.queue.preview) this.queue = { color, preview };
+    void this.pump();
+  }
+
+  private async pump(): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      while (this.queue) {
+        const job = this.queue;
+        this.queue = null;
+        const api = this.getApi();
+        if (!api) continue;
+        if (job.preview) {
+          if (!this.base) this.base = this.snapshotSelectedImages(api);
+          await recolorSelectedIcons(api, job.color, true);
+        } else {
+          if (this.base) {
+            const base = this.base;
+            this.base = null;
+            api.updateScene({
+              elements: api.getSceneElementsIncludingDeleted().map((el) => base.get(el.id) ?? el),
+              captureUpdate: CaptureUpdateAction.NEVER,
+            });
+          }
+          await recolorSelectedIcons(api, job.color, false);
+        }
+      }
+    } catch (e) {
+      this.onError(e as Error);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private snapshotSelectedImages(api: ExcalidrawImperativeAPI): Map<string, ExcalidrawElement> {
+    const sel = api.getAppState().selectedElementIds;
+    return new Map(
+      api
+        .getSceneElementsIncludingDeleted()
+        .filter((el) => el.type === "image" && sel[el.id])
+        .map((el) => [el.id, el]),
+    );
+  }
 }

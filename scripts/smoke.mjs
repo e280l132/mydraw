@@ -180,24 +180,42 @@ await waitFor(() => {
 }, "autosaved file contains image + embedded file");
 await page.fill(".md-panel-search input", "");
 
-step("recolor dropped icons with the icon color bar (saved, undoable, restorable)");
+step("recolor icons from the properties panel: swatch, custom picker (live), Original, undo");
 await t((x) => x.selectImages());
-await page.waitForSelector(".md-iconbar");
+const SECTION = ".md-drawing:not([style*='none']) .App-menu__left .md-iconcolor";
+await page.waitForSelector(SECTION);
 assert.match(await t((x) => x.iconSelection()), /^2:0:original$/, "two SVG icons selected, original colors");
-await page.click('.md-iconbar [aria-label="Blue"]');
+await page.click(`${SECTION} [aria-label="Blue"]`);
 await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "#1971c2"), "icons recolored blue");
-await page.screenshot({ path: path.join(shots, "icons-recolored.png") });
 await waitFor(() => {
   const d = JSON.parse(fs.readFileSync(file, "utf8"));
   const imgs = d.elements.filter((e) => e.type === "image");
   return imgs.length && imgs.every((e) => e.customData?.mydrawIconColor === "#1971c2" && d.files[e.fileId]);
 }, "recolor autosaved with its file");
-await page.click(".md-iconbar >> text=Original");
-await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "original"), "original colors restored");
-// Focus the canvas without clicking it (a click would change the selection, which is itself an undo step).
+
+// Custom picker: drag across the color square; icons follow live, then the color is committed.
+await page.click(`${SECTION} >> text=Custom…`);
+const sv = await page.waitForSelector(`${SECTION} .md-picker-sv`);
+const box = await sv.boundingBox();
+await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+await page.mouse.down();
+await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.4, { steps: 4 });
+await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c !== "#1971c2" && c !== "original"), "live preview while dragging");
+await page.mouse.move(box.x + box.width * 0.9, box.y + box.height * 0.3, { steps: 4 });
+await page.mouse.up();
+const custom = await page.$eval(`${SECTION} .md-picker-hex`, (el) => el.value);
+await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === custom), "custom color committed");
+const slotBg = await page.$eval(`${SECTION} .md-swatch-slot`, (el) => getComputedStyle(el).backgroundColor);
+assert.notEqual(slotBg, "rgba(0, 0, 0, 0)", "custom color shown as the 12th swatch");
+await page.screenshot({ path: path.join(shots, "icons-recolored.png") });
+
+// The whole drag is one undo step: undo goes straight back to blue.
 await page.evaluate(() => document.querySelector(".md-drawing:not([style*='none']) .excalidraw-container")?.focus());
 await page.keyboard.press("Meta+Z");
-await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "#1971c2"), "undo brings the blue back");
+await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "#1971c2"), "one undo step for the whole drag");
+
+await page.click(`${SECTION} >> text=Original`);
+await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "original"), "original colors restored");
 
 step("save selection as stencil; it appears in the library");
 // Excalidraw handles keys only when its canvas has focus: click an empty spot first.

@@ -18,14 +18,15 @@ import type {
 } from "@excalidraw/excalidraw/types";
 import type { LibraryIndex, LibraryItem } from "../../shared/library";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { safeFileName, titleFromPath } from "../../shared/names";
 import type { DrawingStyle, MenuCommand, OpenedFile, Settings } from "../../shared/types";
 import { AppMenu } from "./AppMenu";
 import { drawingStyleAppState } from "./drawingStyle";
 import { ExportDialog } from "./ExportDialog";
 import { PacksDialog, RenameDialog, SaveStencilDialog } from "./library/dialogs";
-import { IconColorBar } from "./library/IconColorBar";
-import { NO_ICONS, iconSelection, recolorSelectedIcons, type IconSelection } from "./library/iconColor";
+import { IconColorSection } from "./library/IconColorSection";
+import { IconRecolorSession, NO_ICONS, iconSelection, recolorSelectedIcons, type IconSelection } from "./library/iconColor";
 import { STENCIL_DRAG_TYPE, StencilPanel } from "./library/StencilPanel";
 import {
   insertStencil,
@@ -423,14 +424,50 @@ export function App() {
     [showToast],
   );
 
+  const recolorSession = useRef<IconRecolorSession | null>(null);
   const recolorIcons = useCallback(
-    (color: string | null) => {
-      const api = apis.current.get(activeRef.current);
-      if (!api) return;
-      recolorSelectedIcons(api, color).catch((e: Error) => showToast(`Could not recolor: ${e.message}`, true));
+    (color: string | null, preview = false) => {
+      recolorSession.current ??= new IconRecolorSession(
+        () => apis.current.get(activeRef.current),
+        (e) => showToast(`Could not recolor: ${e.message}`, true),
+      );
+      recolorSession.current.apply(color, preview);
     },
     [showToast],
   );
+
+  // The "Icon color" section lives inside Excalidraw's properties panel (left side). Excalidraw has
+  // no API for adding panel sections, so we keep a host <div> at the top of its panel column and
+  // render into it with a portal; a MutationObserver re-attaches it when Excalidraw re-renders.
+  const [iconHost, setIconHost] = useState<HTMLElement | null>(null);
+  const showIconSection = icons.count > 0 || icons.raster > 0;
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!root) return;
+    if (!showIconSection) {
+      root.querySelectorAll(".md-iconcolor-host").forEach((n) => n.remove());
+      setIconHost(null);
+      return;
+    }
+    const attach = () => {
+      const column = root.querySelector<HTMLElement>(".md-drawing:not([style*='none']) .App-menu__left .panelColumn");
+      if (!column) return setIconHost(null);
+      let host = column.querySelector<HTMLElement>(":scope > .md-iconcolor-host");
+      if (!host) {
+        root.querySelectorAll(".md-iconcolor-host").forEach((n) => n.remove());
+        host = document.createElement("div");
+        host.className = "md-iconcolor-host";
+        column.prepend(host);
+      } else if (column.firstElementChild !== host) {
+        column.prepend(host);
+      }
+      setIconHost((prev) => (prev === host ? prev : host));
+    };
+    attach();
+    const mo = new MutationObserver(attach);
+    mo.observe(root, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, [showIconSection, activeId]);
 
   const openSaveStencil = useCallback(() => {
     const api = apis.current.get(activeRef.current);
@@ -883,7 +920,7 @@ export function App() {
       },
       imageFileCount: () => Object.keys(api().getFiles()).length,
       iconSelection: () => iconsKey.current,
-      recolor: (color: string | null) => recolorSelectedIcons(api(), color),
+      recolor: (color: string | null, preview = false) => recolorSelectedIcons(api(), color, preview),
       selectImages: () =>
         api().updateScene({
           appState: {
@@ -940,9 +977,7 @@ export function App() {
             onLibraryChange={onLibraryChange}
           />
         ))}
-        {(icons.count > 0 || icons.raster > 0) && !exportOpen && (
-          <IconColorBar selection={icons} onColor={recolorIcons} />
-        )}
+        {iconHost && showIconSection && createPortal(<IconColorSection selection={icons} onColor={recolorIcons} />, iconHost)}
       </div>
       {panelOpen && (
         <StencilPanel

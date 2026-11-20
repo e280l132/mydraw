@@ -17,6 +17,9 @@ Roadmap and phase status: `plan.md`. Read it before starting a phase.
 - Panel → canvas drag uses the `application/x-mydraw-stencil` type and is handled in a capture-phase drop listener in `App.tsx`, before Excalidraw sees it.
 - Icon recolor: `shared/recolor.ts` (`recolorSvg`, pure + unit-tested) rewrites fills/strokes/stops/currentColor, keeping near-white and transparent parts. `web/src/library/iconColor.ts` swaps the element's `fileId` to the recolored SVG and keeps the original SVG in `customData.mydrawOriginalSvg` (+ `mydrawIconColor`), so recolors never compound and "Original" restores. Reuse for an MCP `recolor` tool.
 - Excalidraw 0.18 records selection changes in undo history.
+- The Icon color section is rendered with a React portal into a host `<div>` we prepend to Excalidraw's `.App-menu__left .panelColumn` (no API for custom panel sections); a MutationObserver in `App.tsx` re-attaches it.
+- Live recolor previews use `CaptureUpdateAction.NEVER`; `IconRecolorSession` restores the pre-drag elements (NEVER) before the final IMMEDIATELY change, so a drag is one undo step. Don't use EVENTUALLY here: in 0.18 it merges into the *previous* committed change.
+- When swapping an image's `fileId`, call `updateScene` first and `addFiles` after; Excalidraw only starts loading images for files added while an element references them (otherwise a grey placeholder shows until some later update).
 - Excalidraw handles keyboard shortcuts only when its canvas has focus (tests click the canvas first).
 - Console "font-src" CSP errors for `esm.sh` are expected: Excalidraw lists a CDN fallback after our local fonts; CSP blocks it so the app stays offline.
 

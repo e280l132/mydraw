@@ -36,7 +36,7 @@ npm run smoke      # builds, then drives the real app with Playwright (save, aut
 - **Stencils panel** (tab bar button or ⇧⌘Y): search, ★ favorites, recent, collapsible collections. Click to insert (repeated clicks lay icons out in a row), or drag onto the canvas. Right-click for favorite / rename / show in Finder / move to Trash.
 - **Icon packs** (⋯ → Download icon packs…): AWS, Azure, Google Cloud, Kubernetes, network devices (IBM Carbon) and 2,300 product logos, downloaded from the vendors into the library folder. Command line: `node scripts/fetch-packs.mjs [aws azure gcp k8s network logos]`.
 - **Your own stencils**: select shapes → ⋯ → Save selection as stencil (or Edit → Save Selection as Stencil…). Drop SVG/PNG/.excalidrawlib files or folders onto the panel to import them.
-- **Recolor icons**: select one or more SVG icons on the canvas and use the color bar at the bottom (11 swatches, custom color, **Original** to restore). Colored parts take the new color, white details are kept; undoable, saved with the drawing. PNG icons can't be recolored.
+- **Recolor icons**: select one or more SVG icons; an **Icon color** section appears at the top of the left properties panel: 11 swatches + your last custom color as the 12th, **Original**, and **Custom…** (color square, hue, hex, eyedropper) that updates the icons live while you drag. A whole drag is one undo step. Colored parts take the new color, white details are kept; saved with the drawing. PNG icons can't be recolored.
 - **Excalidraw's Library panel** is saved to `Library/Excalidraw Library/library.excalidrawlib` and shared by all tabs.
 - Drawings embed the icons they use, so they still open if a stencil is later changed or deleted.
 
