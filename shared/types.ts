@@ -1,3 +1,4 @@
+import type { AgentCommand, AgentReply } from "./agent";
 import type { LibraryIndex } from "./library";
 
 // Types shared by the Electron main process, the preload bridge and the renderer.
@@ -124,4 +125,8 @@ export interface MydrawBridge {
   onLibraryChanged(cb: (index: LibraryIndex) => void): () => void;
   onExcalidrawLibraryChanged(cb: (content: string) => void): () => void;
   onPackProgress(cb: (message: string) => void): () => void;
+
+  // ----- agent control (MCP) -----
+  onAgentCommand(cb: (cmd: AgentCommand) => void): () => void;
+  agentReply(reply: AgentReply): void;
 }

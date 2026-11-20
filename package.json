@@ -7,17 +7,20 @@
   "main": "app/dist/main.cjs",
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "build": "node scripts/build-app.mjs && vite build",
+    "build": "node scripts/build-app.mjs && node scripts/build-mcp.mjs && vite build",
     "start": "npm run build && node scripts/start.mjs",
     "icon": "node scripts/make-icon.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "smoke": "npm run build && node scripts/smoke.mjs"
+    "smoke": "npm run build && node scripts/smoke.mjs",
+    "build:mcp": "node scripts/build-mcp.mjs"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",

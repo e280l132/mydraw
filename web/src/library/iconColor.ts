@@ -3,7 +3,13 @@
 // the element's customData so "Original" can restore it and recoloring never compounds.
 import { CaptureUpdateAction, newElementWith } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement, ExcalidrawImageElement, FileId } from "@excalidraw/excalidraw/element/types";
-import type { AppState, BinaryFiles, DataURL, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type {
+  AppState,
+  BinaryFileData,
+  BinaryFiles,
+  DataURL,
+  ExcalidrawImperativeAPI,
+} from "@excalidraw/excalidraw/types";
 import { ensureSvgSize, recolorSvg, svgFromDataURL, svgToDataURL } from "../../../shared/recolor";
 import { TRUE_COLOR_SVG_MIME, isSvgDataURL } from "./trueColor";
 
@@ -55,39 +61,62 @@ async function sha1Hex(text: string): Promise<string> {
 }
 
 /**
- * Recolor the selected SVG icons to `color` (hex), or restore their original colors when `color`
- * is null. With `preview`, the change is shown but not recorded in undo history (see
- * IconRecolorSession for how a drag becomes one undo step). Returns how many icons changed.
+ * The recolored version of one SVG icon element: a new element pointing at a new file (or the
+ * original file when `color` is null). The original SVG is kept in customData so recolors never
+ * compound.
+ */
+export async function recoloredIcon(
+  el: ExcalidrawImageElement,
+  file: BinaryFileData,
+  color: string | null,
+): Promise<{ element: ExcalidrawElement; file: BinaryFileData | null }> {
+  const custom = { ...(el.customData ?? {}) };
+  const original = ensureSvgSize((custom[ORIGINAL_KEY] as string | undefined) ?? svgFromDataURL(file.dataURL));
+  const svg = color ? recolorSvg(original, color) : original;
+  const id = (await sha1Hex(svg)) as FileId;
+  const now = Date.now();
+  const newFile =
+    id !== el.fileId
+      ? { id, dataURL: svgToDataURL(svg) as DataURL, mimeType: TRUE_COLOR_SVG_MIME, created: now, lastRetrieved: now }
+      : null;
+  if (color) {
+    if (original.length <= MAX_STORED_ORIGINAL) custom[ORIGINAL_KEY] = original;
+    custom[COLOR_KEY] = color;
+  } else {
+    delete custom[ORIGINAL_KEY];
+    delete custom[COLOR_KEY];
+  }
+  return { element: newElementWith(el, { fileId: id, status: "saved", customData: custom }), file: newFile };
+}
+
+/** Whether an element is an SVG icon that can be recolored. */
+export function isRecolorableIcon(el: ExcalidrawElement, files: BinaryFiles): el is ExcalidrawImageElement {
+  return el.type === "image" && !el.isDeleted && isSvgFile(files, el);
+}
+
+/**
+ * Recolor the selected SVG icons (or the icons in `ids`) to `color` (hex), or restore their
+ * original colors when `color` is null. With `preview`, the change is shown but not recorded in
+ * undo history (see IconRecolorSession for how a drag becomes one undo step). Returns how many
+ * icons changed.
  */
 export async function recolorSelectedIcons(
   api: ExcalidrawImperativeAPI,
   color: string | null,
   preview = false,
+  ids?: ReadonlySet<string>,
 ): Promise<number> {
   const appState = api.getAppState();
   const files = api.getFiles();
   const all = api.getSceneElementsIncludingDeleted();
   const updates = new Map<string, ExcalidrawElement>();
-  const newFiles = new Map<string, { id: FileId; dataURL: DataURL }>();
+  const newFiles = new Map<string, BinaryFileData>();
 
   for (const el of all) {
-    if (el.type !== "image" || el.isDeleted || !appState.selectedElementIds[el.id] || !isSvgFile(files, el)) continue;
-    const custom = { ...(el.customData ?? {}) };
-    const original = ensureSvgSize(
-      (custom[ORIGINAL_KEY] as string | undefined) ?? svgFromDataURL(files[el.fileId!].dataURL),
-    );
-    const svg = color ? recolorSvg(original, color) : original;
-    const id = (await sha1Hex(svg)) as FileId;
-    if (id !== el.fileId) newFiles.set(id, { id, dataURL: svgToDataURL(svg) as DataURL });
-
-    if (color) {
-      if (original.length <= MAX_STORED_ORIGINAL) custom[ORIGINAL_KEY] = original;
-      custom[COLOR_KEY] = color;
-    } else {
-      delete custom[ORIGINAL_KEY];
-      delete custom[COLOR_KEY];
-    }
-    updates.set(el.id, newElementWith(el, { fileId: id, status: "saved", customData: custom }));
+    if (!isRecolorableIcon(el, files) || !(ids ? ids.has(el.id) : appState.selectedElementIds[el.id])) continue;
+    const r = await recoloredIcon(el, files[el.fileId!], color);
+    if (r.file) newFiles.set(r.file.id, r.file);
+    updates.set(el.id, r.element);
   }
   if (!updates.size) return 0;
 
@@ -105,10 +134,7 @@ export async function recolorSelectedIcons(
   });
   // Add the files after the elements point at them: Excalidraw loads images for files added to
   // elements already in the scene, so the new icon appears right away instead of a placeholder.
-  const now = Date.now();
-  api.addFiles(
-    [...newFiles.values()].map((f) => ({ ...f, mimeType: TRUE_COLOR_SVG_MIME, created: now, lastRetrieved: now })),
-  );
+  api.addFiles([...newFiles.values()]);
   return updates.size;
 }
 

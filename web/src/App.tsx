@@ -39,6 +39,8 @@ import {
 import { DEFAULT_EXPORT_OPTIONS, renderExport, type ExportOptions } from "./exportImage";
 import { apiSceneHash, parseDrawing, sceneHash, serializeScene, type LoadedScene } from "./scene";
 import { TabBar, type TabInfo } from "./TabBar";
+import { createAgentExecutor } from "./agent/executor";
+import type { AgentReply } from "../../shared/agent";
 
 const bridge = window.mydraw;
 
@@ -49,6 +51,8 @@ const RECOVERED = "recovered";
 
 interface Tab extends TabInfo {
   initialData: ExcalidrawInitialDataState;
+  /** Created by an agent: never silently replaced by the next opened file (the agent holds its id). */
+  keep?: boolean;
   /** Set when the file changed on disk while this tab had unsaved edits. */
   conflict: OpenedFile | null;
 }
@@ -133,7 +137,7 @@ const DrawingView = memo(function DrawingView({
   }, [hidden]);
 
   return (
-    <div className="md-drawing" style={{ display: hidden ? "none" : undefined }}>
+    <div className="md-drawing" data-md-tab={tab.id} style={{ display: hidden ? "none" : undefined }}>
       {tab.conflict && (
         <div className="md-banner">
           <span>“{tab.title}” changed on disk while you had unsaved edits.</span>
@@ -589,7 +593,7 @@ export function App() {
       const activeApi = apis.current.get(activeRef.current);
       // Replace an untouched empty "Untitled" tab instead of piling up blank tabs.
       const replace =
-        active && !active.filePath && !active.dirty && activeApi && activeApi.getSceneElements().length === 0;
+        active && !active.keep && !active.filePath && !active.dirty && activeApi && activeApi.getSceneElements().length === 0;
       if (replace) {
         apis.current.delete(active.id);
         baselines.current.delete(active.id);
@@ -605,11 +609,12 @@ export function App() {
     [commitTabs, setActive],
   );
 
-  const newTab = useCallback(() => {
+  const newTab = useCallback((title?: string, keep = false): string => {
     const style = settingsRef.current?.drawingStyle ?? "clean";
     const tab: Tab = {
       id: newId(),
-      title: nextUntitled(),
+      title: title ?? nextUntitled(),
+      keep,
       filePath: null,
       dirty: false,
       conflict: null,
@@ -617,6 +622,7 @@ export function App() {
     };
     commitTabs((ts) => [...ts, tab]);
     setActive(tab.id);
+    return tab.id;
   }, [commitTabs, setActive]);
 
   const openFiles = useCallback(
@@ -736,7 +742,7 @@ export function App() {
       const idx = ts.findIndex((t) => t.id === activeRef.current);
       switch (cmd.type) {
         case "new":
-          return newTab();
+          return void newTab();
         case "open":
           return openFiles(await bridge.openDialog());
         case "save":
@@ -923,6 +929,42 @@ export function App() {
     if (active) bridge.setWindowState({ title: `${active.title} — mydraw`, edited: active.dirty });
   }, [active?.title, active?.dirty]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ---------- agent control (MCP): commands forwarded by the main process ----------
+
+  useEffect(() => {
+    const run = createAgentExecutor(
+      {
+        tabs: () => tabsRef.current.map(({ id, title, filePath, dirty }) => ({ id, title, filePath, dirty })),
+        activeId: () => activeRef.current,
+        api: (id) => apis.current.get(id),
+        activate: (id) => setActive(id),
+        newDrawing: (title) => newTab(title, true),
+        openFiles: (files) => openFiles(files),
+        save: async (id, path) => {
+          const tab = getTab(id);
+          if (!tab) throw new Error("drawing is closed");
+          if (!path || path === tab.filePath) {
+            if (!tab.filePath) throw new Error("this drawing has never been saved: pass a path");
+            if (!(await save(id))) throw new Error("save failed");
+            return tab.filePath;
+          }
+          // Save under the new path; if that fails, the tab keeps its old file (and watcher).
+          const prev = { filePath: tab.filePath, title: tab.title };
+          patchTab(id, { filePath: path, title: titleFromPath(path) });
+          if (!(await save(id))) {
+            if (getTab(id)) patchTab(id, prev);
+            throw new Error(`could not save to ${path}`);
+          }
+          if (prev.filePath && prev.filePath !== path) void bridge.unwatchFile(prev.filePath);
+          return path;
+        },
+        markStencilUsed: (id) => void bridge.libraryMarkUsed(id),
+      },
+      (r) => bridge.agentReply(r as AgentReply),
+    );
+    return bridge.onAgentCommand(run);
+  }, [newTab, openFiles, patchTab, save, setActive]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ---------- test hook (only when launched by the smoke test) ----------
 
   useEffect(() => {
@@ -960,6 +1002,7 @@ export function App() {
         await bridge.writeFileForTest(path, out.data);
       },
       newTab: () => newTab(),
+      tabApiReady: (id: string) => !!apis.current.get(id),
       openExportDialog: () => setExportOpen(true),
       library: () => libraryRef.current,
       insertStencil: (id: string) => {
@@ -1032,7 +1075,7 @@ export function App() {
         activeId={activeId}
         onSelect={setActive}
         onClose={(id) => void closeTab(id)}
-        onNew={newTab}
+        onNew={() => void newTab()}
         panelOpen={panelOpen}
         onTogglePanel={togglePanel}
       />

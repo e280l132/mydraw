@@ -53,6 +53,8 @@ const bridge: MydrawBridge = {
   onLibraryChanged: (cb) => subscribe("library:changed", cb),
   onExcalidrawLibraryChanged: (cb) => subscribe("xlib:changed", cb),
   onPackProgress: (cb) => subscribe("library:pack-progress", cb),
+  onAgentCommand: (cb) => subscribe("agent:command", cb),
+  agentReply: (reply) => ipcRenderer.send("agent:reply", reply),
 };
 
 contextBridge.exposeInMainWorld("mydraw", bridge);

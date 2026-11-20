@@ -28,11 +28,20 @@ export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
   embedScene: false,
 };
 
-/** Elements to export: everything, or the selection plus text bound to selected shapes. */
-export function exportElements(api: ExcalidrawImperativeAPI, scope: ExportOptions["scope"]): NonDeleted<ExcalidrawElement>[] {
+/**
+ * Elements to export: everything, or the selection (or the elements in `ids`) plus text bound to
+ * those shapes.
+ */
+export function exportElements(
+  api: ExcalidrawImperativeAPI,
+  scope: ExportOptions["scope"],
+  ids?: ReadonlySet<string>,
+): NonDeleted<ExcalidrawElement>[] {
   const all = api.getSceneElements() as NonDeleted<ExcalidrawElement>[];
-  if (scope === "all") return all;
-  const selected = api.getAppState().selectedElementIds;
+  if (scope === "all" && !ids) return all;
+  const selected: Record<string, boolean> = ids
+    ? Object.fromEntries([...ids].map((id) => [id, true]))
+    : api.getAppState().selectedElementIds;
   return all.filter(
     (el) => selected[el.id] || ("containerId" in el && el.containerId != null && selected[el.containerId]),
   );
@@ -51,8 +60,9 @@ export async function renderExport(
   api: ExcalidrawImperativeAPI,
   opts: ExportOptions,
   previewMaxSize?: number,
+  ids?: ReadonlySet<string>,
 ): Promise<RenderedExport> {
-  const elements = exportElements(api, opts.scope);
+  const elements = exportElements(api, opts.scope, ids);
   const isJpg = opts.format === "jpg";
   const appState = {
     ...api.getAppState(),

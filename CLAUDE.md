@@ -26,6 +26,24 @@ Roadmap and phase status: `plan.md`. Read it before starting a phase.
 - Excalidraw handles keyboard shortcuts only when its canvas has focus (tests click the canvas first).
 - Console "font-src" CSP errors for `esm.sh` are expected: Excalidraw lists a CDN fallback after our local fonts; CSP blocks it so the app stays offline.
 
+## Agent control (MCP, Phase 2)
+- Path: Claude Code → `mcp/src/index.ts` (stdio MCP server, bundled to `mcp/dist/index.js` by `scripts/build-mcp.mjs`) → HTTP `POST 127.0.0.1:<port>/rpc` → `app/src/control.ts` → `app/src/agent.ts` (main) → IPC `agent:command` → `web/src/agent/executor.ts` (renderer) → reply on `agent:reply`.
+- `control.ts`: loopback only, random port, 32-byte key as `Authorization: Bearer`. Refuses any request with an `Origin` header or a non-loopback `Host` (CSRF / DNS rebinding). `{port, key, pid}` in `<userData>/control.json`, chmod 600, removed on quit.
+- `agent.ts` runs library and file-system methods in main (`search_stencils`, `add_stencil_file`, `delete_stencil`, `open_drawing`, writing exports, allowing `save` paths) and forwards the rest. `place_stencil` gets the full `LibraryItem` from main, so freshly added stencils work before the renderer's index refreshes.
+- Executor: commands run strictly one at a time against the latest scene; every scene change is a single `updateScene(IMMEDIATELY)` that merges by element id, so one MCP call = one undo step and user edits made meanwhile are kept. Selection changes from `select` use `NEVER`.
+- `web/src/agent/sceneOps.ts`: `buildElements` (skeletons via `convertToExcalidrawElements` with `regenerateIds: false`; arrows with `from`/`to` are drawn edge to edge with `shared/geometry.ts` and bound by hand, because the converter only binds within its own batch), `applyUpdates` (moves/resizes re-centre labels via `relabel` and `reroute` bound arrows), `deleteElements` (unbinds arrows), `describe` (compact `get_scene` output; bound labels folded into their container).
+- Undo/redo click the tab's own `[data-testid="button-undo"]` (each `DrawingView` root has `data-md-tab`); Excalidraw's API has no undo call.
+- Drawings are addressed by `drawing` = tab id, file path or title; default active tab.
+- MCP finds the app via `MYDRAW_USER_DATA` (default `~/Library/Application Support/mydraw`). If it isn't running it launches `/Applications/mydraw.app` (or `MYDRAW_APP`), else the dev build with the branded Electron (`npm run build` first). `MYDRAW_NO_LAUNCH=1` disables launching (smoke test).
+- Register: `claude mcp add --scope user mydraw -- node ~/Projects/mydraw/mcp/dist/index.js`.
+
+## How to drive mydraw (for Claude)
+1. `list_drawings` / `new_drawing` / `open_drawing`; `get_scene` for ids.
+2. Shapes with labels in one `add_elements` call (give your own ids like `"web1"` so you can refer to them); arrows as `{type:"arrow", from, to, label}` in the same call or via `connect`.
+3. Icons: `search_stencils "ec2"` → `place_stencil {id, right_of: "web1", label: "web-1"}`; connect to the returned `icon` id.
+4. `screenshot` to check the layout; fix with `move` / `update_elements`; `zoom_to_fit` so the user sees it.
+5. `save {path}` and `export {path: ".../x.png"}`.
+
 ## Conventions
 - Excalidraw is pinned to `0.18.1`. Import types from `@excalidraw/excalidraw/types` and `@excalidraw/excalidraw/element/types`.
 - `process.env.IS_PREACT` must stay defined as `"false"` in `vite.config.ts`.
@@ -34,6 +52,6 @@ Roadmap and phase status: `plan.md`. Read it before starting a phase.
 - No browser `alert/confirm`; use the main-process dialogs (`askUnsaved`) or in-app banners/toasts.
 
 ## Checks before committing
-`npm run typecheck && npm test && npm run smoke`
+`npm run typecheck && npm test && npm run smoke` (`npm run build` also builds the MCP server)
 
 The smoke test runs the built app with `MYDRAW_TEST=1`, a temp `MYDRAW_USER_DATA` and a temp `MYDRAW_LIBRARY`, and uses the test-only `window.__mydrawTest` hook (`web/src/App.tsx`). Extend it when adding features.

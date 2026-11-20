@@ -6,3 +6,4 @@ release/
 .electron/
 *.log
 .DS_Store
+mcp/dist/

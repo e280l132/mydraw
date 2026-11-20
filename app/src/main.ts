@@ -14,6 +14,9 @@ import {
   writeDrawing,
   writeRecovery,
 } from "./files";
+import { CONTROL_FILE } from "../../shared/agent";
+import { setupAgent } from "./agent";
+import { removeControlFile, startControlServer, writeControlFile } from "./control";
 import { LIBRARY_SCHEME, setupLibrary } from "./library-ipc";
 import { buildMenu } from "./menu";
 import { getSettings, onSettingsChanged, rememberRecent, updateSettings } from "./settings-store";
@@ -281,6 +284,26 @@ function createWindow(): void {
   void win.loadURL(devUrl ?? `${APP_ORIGIN}/index.html`);
 }
 
+// ---------- agent control (MCP) ----------
+
+async function startAgentControl(store: ReturnType<typeof setupLibrary>): Promise<void> {
+  const handler = setupAgent({
+    getWin: () => win,
+    isRendererReady: () => rendererReady,
+    store,
+    openFile: (abs) => open(abs),
+    allowPath: (abs) => allowedPaths.add(abs),
+  });
+  try {
+    const server = await startControlServer(handler);
+    const file = path.join(app.getPath("userData"), CONTROL_FILE);
+    writeControlFile(file, { port: server.port, key: server.key, pid: process.pid, version: app.getVersion() });
+    app.on("will-quit", () => removeControlFile(file, server.key));
+  } catch (err) {
+    console.error("[mydraw] agent control server failed to start:", err);
+  }
+}
+
 // ---------- app lifecycle ----------
 
 if (!isTest && !app.requestSingleInstanceLock()) {
@@ -321,8 +344,9 @@ if (!isTest && !app.requestSingleInstanceLock()) {
     });
 
     registerIpc();
-    setupLibrary(() => win, settings, (patch) => updateSettings(patch));
+    const store = setupLibrary(() => win, settings, (patch) => updateSettings(patch));
     createWindow();
+    void startAgentControl(store);
   });
 
   app.on("window-all-closed", () => app.quit());

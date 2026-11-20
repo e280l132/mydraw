@@ -1,4 +1,5 @@
-// End-to-end smoke test: launches the built app with Playwright and exercises Phase 1 features.
+// End-to-end smoke test: launches the built app with Playwright and exercises its features,
+// including the MCP server driving the app (Phase 2).
 // Usage: npm run smoke   (set SMOKE_SCREENSHOTS=<dir> to keep screenshots)
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -286,6 +287,136 @@ assert.equal(await t((x) => x.elementCount()), 2);
 await page.screenshot({ path: path.join(shots, "recovered.png") });
 assert.equal(await t((x) => x.excalidrawLibraryCount()), 1, "Excalidraw library survives restart");
 assert.ok((await t((x) => x.library())).items.some((i) => i.name === "Core pair"), "saved stencil survives restart");
+
+step("MCP: control file is private; requests without the key are refused");
+const controlFile = path.join(userData, "control.json");
+const control = await waitFor(() => fs.existsSync(controlFile) && JSON.parse(fs.readFileSync(controlFile, "utf8")), "control.json");
+assert.equal(fs.statSync(controlFile).mode & 0o777, 0o600, "control.json is chmod 600");
+const noKey = await fetch(`http://127.0.0.1:${control.port}/rpc`, { method: "POST", body: '{"method":"list_drawings"}' });
+assert.equal(noKey.status, 401);
+
+step("MCP: Claude builds, edits, checks and saves a diagram end to end");
+const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
+const client = new Client({ name: "mydraw-smoke", version: "1.0.0" });
+await client.connect(
+  new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(root, "mcp/dist/index.js")],
+    env: { ...process.env, MYDRAW_USER_DATA: userData, MYDRAW_NO_LAUNCH: "1" },
+    stderr: "inherit",
+  }),
+);
+const callRaw = (name, args = {}) => client.callTool({ name, arguments: args });
+const call = async (name, args = {}) => {
+  const r = await callRaw(name, args);
+  if (r.isError) throw new Error(`${name}: ${r.content[0].text}`);
+  return JSON.parse(r.content[0].text);
+};
+assert.ok((await client.listTools()).tools.length >= 30, "MCP tools listed");
+
+const drawing = await call("new_drawing", { title: "MCP test" });
+assert.equal(drawing.active, true);
+assert.equal((await t((x) => x.state())).activeId, drawing.id, "new drawing is the active tab");
+
+const added = await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "web", x: 0, y: 0, width: 160, height: 80, label: "Web" },
+    { type: "ellipse", id: "db", x: 400, y: 0, width: 140, height: 90, label: "DB", backgroundColor: "#a5d8ff", fillStyle: "solid" },
+    { type: "arrow", id: "a1", from: "web", to: "db", label: "SQL" },
+  ],
+});
+assert.deepEqual(added.ids, ["web", "db", "a1"]);
+let scene = await call("get_scene");
+const el = (id) => scene.elements.find((e) => e.id === id);
+assert.equal(el("web").label, "Web");
+assert.equal(el("a1").from, "web");
+assert.equal(el("a1").to, "db");
+assert.ok(Math.abs(el("a1").points[0][0] - 164) < 1 && Math.abs(el("a1").points[1][0] - 396) < 1, "arrow runs edge to edge");
+let [webFull] = await call("get_element", { id: "web" });
+assert.ok(webFull.element.boundElements.some((b) => b.id === "a1"), "arrow bound to its shape");
+assert.equal(webFull.element.roughness, 0, "new shapes use the Clean drawing style");
+
+const found = await call("search_stencils", { query: "testrouter" });
+assert.equal(found.items[0].name, "TestRouter");
+const placed = await call("place_stencil", { id: found.items[0].id, right_of: "db", label: "edge-rtr", color: "#e8590c" });
+assert.ok(placed.icon && placed.label, "stencil placed with icon + label");
+scene = await call("get_scene");
+assert.equal(el(placed.icon).icon.color, "#e8590c", "stencil recolored on insert");
+assert.ok(el(placed.icon).x > el("db").x + el("db").width, "stencil is right of db");
+assert.ok(Math.abs(el(placed.icon).y + el(placed.icon).height / 2 - (el("db").y + el("db").height / 2)) < 1, "centres aligned");
+const link = await call("connect", { from: "db", to: placed.icon, style: { strokeStyle: "dashed" } });
+
+await call("update_elements", { updates: [{ id: "db", dy: 200 }] });
+scene = await call("get_scene");
+assert.ok(el("a1").points[1][1] > 150, "arrow follows a moved shape");
+assert.ok(el(link.id).points[0][1] > 150, "second arrow follows too");
+
+await call("update_elements", { updates: [{ id: "web", label: "Web tier", data: { ip: "10.0.0.5" } }] });
+scene = await call("get_scene");
+assert.equal(el("web").label, "Web tier");
+assert.equal(el("web").data.ip, "10.0.0.5");
+await call("undo");
+scene = await call("get_scene");
+assert.equal(el("web").label, "Web", "undo reverts the agent's last call as one step");
+await call("redo");
+
+await call("recolor", { ids: ["web"], color: "#2f9e44" });
+assert.equal((await call("get_color", { id: "web" })).color, "#2f9e44");
+
+const shot = await callRaw("screenshot", {});
+assert.equal(shot.content[0].type, "image");
+assert.deepEqual([...Buffer.from(shot.content[0].data, "base64").subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47], "screenshot is a PNG");
+const mcpJpg = path.join(work, "mcp.jpg");
+await call("export", { path: mcpJpg });
+assert.deepEqual([...fs.readFileSync(mcpJpg).subarray(0, 3)], [0xff, 0xd8, 0xff], "exported JPEG");
+await call("export", { path: path.join(work, "mcp-db.svg"), ids: ["db"] });
+assert.ok(fs.readFileSync(path.join(work, "mcp-db.svg"), "utf8").includes("<svg"));
+
+const savedPath = (await call("save", { path: path.join(work, "mcp-diagram") })).path;
+assert.equal(savedPath, path.join(work, "mcp-diagram.excalidraw"));
+const savedScene = JSON.parse(fs.readFileSync(savedPath, "utf8"));
+assert.ok(savedScene.elements.some((e) => e.id === "a1") && Object.keys(savedScene.files).length >= 1, "saved with icon file");
+assert.equal((await call("list_drawings")).find((d) => d.id === drawing.id).title, "mcp-diagram");
+
+const stencil = await call("save_as_stencil", { name: "Web box", ids: ["web"] });
+assert.ok(fs.existsSync(path.join(libraryDir, stencil.id)), "agent saved a stencil");
+
+// move takes the stencil's whole group (icon + label) along, and its arrow follows.
+const iconBefore = el(placed.icon);
+const moved = await call("move", { ids: [placed.icon], dx: 100 });
+assert.ok(moved.moved.includes(placed.label), "label moves with its icon");
+scene = await call("get_scene");
+assert.equal(el(placed.icon).x, iconBefore.x + 100);
+const g = await call("group", { ids: ["web", "db"] });
+scene = await call("get_scene");
+assert.ok(el("web").groupIds.includes(g.groupId) && el("db").groupIds.includes(g.groupId));
+await call("ungroup", { groupId: g.groupId });
+await call("select", { ids: ["web"] });
+assert.deepEqual((await call("get_selection")).map((e) => e.id), ["web"]);
+await call("zoom_to_fit");
+
+// Frames bring their contents along; deleting a stencil icon removes its caption too.
+await call("add_elements", { elements: [{ type: "frame", id: "zone", x: -50, y: 400, width: 300, height: 200, name: "Zone", children: [] }, { type: "rectangle", id: "inzone", x: 0, y: 450, width: 100, height: 60 }] });
+await call("raw_update", { elements: [{ id: "inzone", frameId: "zone" }] });
+await call("move", { ids: ["zone"], dx: 40 });
+scene = await call("get_scene");
+assert.equal(el("inzone").x, 40, "frame contents move with the frame");
+await call("delete_elements", { ids: [placed.icon] });
+scene = await call("get_scene");
+assert.ok(!el(placed.label), "stencil caption deleted with its icon");
+const exp = await callRaw("export", { path: path.join(work, "part.excalidraw"), ids: ["web"] });
+assert.ok(exp.isError, "partial .excalidraw export is refused");
+
+await call("delete_elements", { ids: ["db"] });
+scene = await call("get_scene");
+assert.ok(!el("db") && !el("a1").to, "deleted shape is gone and its arrow came loose");
+
+const bad = await callRaw("connect", { from: "nope", to: "web" });
+assert.ok(bad.isError && /no element/.test(bad.content[0].text), "errors are reported to the agent");
+await page.screenshot({ path: path.join(shots, "mcp-diagram.png") });
+await client.close();
+
 app.process().kill("SIGKILL");
 
 assert.deepEqual(errors, [], "no uncaught page errors");
