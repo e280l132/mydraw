@@ -135,6 +135,36 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
 
 Tests: vitest for catalog builder, exporters (format headers/dimensions), drawio/Mermaid writers, `build_diagram` layout, control-server auth; Playwright-Electron smoke test.
 
+## Models per phase
+
+### Building the app (Claude Code session model)
+Switch with `/model` in Claude Code (or `claude --model <name>`). Rule of thumb: Opus 5.5 for architecture, protocols and tricky algorithms; Sonnet 5.5 for UI and straightforward features; Fable 5.2 only when Opus gets stuck on a hard problem.
+
+| Phase | Model | Effort | Why |
+|---|---|---|---|
+| 1. Core app | **Opus 5.5** | high | Sets the architecture everything else builds on; Electron + Vite + Excalidraw 0.18 setup has sharp edges (ESM, CSS, assets, IPC, security). |
+| 2. MCP + control server | **Opus 5.5** | xhigh | Protocol design, auth, serial command queue, undo grouping, user + agent editing at once. Mistakes here are costly later. |
+| 3. Stencil library | **Opus 5.5** for library format, persistence, image-file spike; **Sonnet 5.5** for downloader + index scripts and the panel UI | high / medium | Storage format and "drawings keep their own icon copies" must be right; the rest is routine. |
+| 4. Colors + styles | **Sonnet 5.5** | medium | Mostly UI components and data (palettes, presets). |
+| 5. Diagram generation | **Opus 5.5**; switch to **Fable 5.2** if layout quality is poor | xhigh | Hardest part: mapping ELK layout to Excalidraw elements, bound arrows, nested zones. Quality of Claude-built diagrams depends on it. |
+| 6. Full export + CLI | **Opus 5.5** for drawio writer, PDF and headless CLI; **Sonnet 5.5** for JPG/WebP/CSV/HTML/clipboard | high / medium | drawio mapping and headless rendering are fiddly; the rest is plumbing. |
+| 7. Ease of use | **Sonnet 5.5**; **Opus 5.5** for quick connect and lint | medium / high | Mostly UI; quick connect hooks into Excalidraw's pointer handling. |
+| 8. Data features | **Sonnet 5.5** | medium | Forms, tables, CSV/YAML parsing, snapshots. |
+| 9. Package | **Sonnet 5.5** | medium | electron-builder config, CLI symlink. |
+| End of every phase | **Opus 5.5** running `/code-review` | high | Catch bugs before the next phase builds on them. |
+
+Haiku 5.5: fine for small chores (renames, README/CHANGELOG updates, commit messages), not for feature work.
+
+### Using the finished app
+- **The app itself needs no model.** It runs fully offline. AI comes only from Claude Code calling the mydraw MCP tools.
+- **Everyday diagrams** ("add a NAS next to the switch", "recolor the DMZ", "export JPG"): **Sonnet 5.5**, fast and cheap.
+- **Big diagrams from scratch or from real data** (Terraform, docker-compose, homelab via Proxmox/Portainer): **Opus 5.5**.
+- **Diagram review** (`screenshot` + `lint_diagram`, judging layout from the image): **Opus 5.5**.
+- **Ask Claude box (later):** runs `claude -p --model <model>`; default Sonnet 5.5, selectable in Preferences.
+
+### Cost reference (API list price per 1M tokens, input / output)
+Haiku 5.5 $0.10 / $0.50 · Sonnet 5.5 $2 / $10 · Opus 5.5 $4 / $20 · Fable 5.2 $8 / $40. On a Claude subscription these count against usage limits instead of dollars; Opus and Fable use those limits up faster.
+
 ## Risks
 - Image elements + `files` must persist in saves and every export format (verify phase 3).
 - PDF/PPTX fidelity of hand-drawn fonts; embed fonts in SVG before printing.
