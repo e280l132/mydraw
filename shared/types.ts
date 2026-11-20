@@ -45,7 +45,10 @@ export type MenuCommand =
   | { type: "closeTab" }
   | { type: "nextTab" }
   | { type: "prevTab" }
-  | { type: "selectTab"; index: number };
+  | { type: "selectTab"; index: number }
+  // In-app menu only:
+  | { type: "openRecent"; path: string }
+  | { type: "clearRecent" };
 
 export interface MydrawBridge {
   platform: string;
@@ -55,6 +58,9 @@ export interface MydrawBridge {
   openDialog(): Promise<OpenedFile[]>;
   /** Files passed on the command line or via Finder before the UI was ready. */
   takePendingFiles(): Promise<OpenedFile[]>;
+  /** Open a file from the recent list; missing files are dropped from the list. */
+  openRecent(path: string): Promise<OpenedFile[]>;
+  clearRecent(): Promise<void>;
   saveFile(path: string, content: string): Promise<void>;
   saveFileAs(defaultName: string, content: string): Promise<string | null>;
   exportFile(req: ExportFileRequest): Promise<string | null>;

@@ -80,21 +80,26 @@ function assertString(v: unknown, name: string): asserts v is string {
   if (typeof v !== "string" || !v) throw new Error(`${name} must be a non-empty string`);
 }
 
+/** Returns false (and drops it from the recent list) when the file no longer exists. */
+function checkRecent(p: string): boolean {
+  if (fs.existsSync(p)) return true;
+  dialog.showErrorBox("File not found", `${p}\n\nIt has been removed from Open Recent.`);
+  updateSettings({ recentFiles: getSettings().recentFiles.filter((r) => r !== p) });
+  return false;
+}
+
+function clearRecent(): void {
+  updateSettings({ recentFiles: [] });
+  app.clearRecentDocuments();
+}
+
 function rebuildMenu(settings: Settings): void {
   buildMenu(settings, {
     send: (cmd) => win?.webContents.send("app:menu", cmd),
     openRecent: (p) => {
-      if (!fs.existsSync(p)) {
-        dialog.showErrorBox("File not found", p);
-        updateSettings({ recentFiles: getSettings().recentFiles.filter((r) => r !== p) });
-        return;
-      }
-      requestOpen([p]);
+      if (checkRecent(p)) requestOpen([p]);
     },
-    clearRecent: () => {
-      updateSettings({ recentFiles: [] });
-      app.clearRecentDocuments();
-    },
+    clearRecent,
     updateSettings: (patch) => updateSettings(patch),
   });
 }
@@ -122,7 +127,15 @@ function registerIpc(): void {
     return openPaths(paths);
   });
 
-  ipcMain.handle("file:save", (_e, filePath: unknown, content: unknown) => {
+  ipcMain.handle("file:open-recent", (_e, filePath: unknown) => {
+    assertString(filePath, "path");
+    // Only paths that are actually in the recent list may be opened this way.
+    if (!getSettings().recentFiles.includes(filePath) || !checkRecent(filePath)) return [];
+    return openPaths([filePath]);
+  });
+  ipcMain.handle("file:clear-recent", () => clearRecent());
+
+  ipcMain.handle("file:save",(_e, filePath: unknown, content: unknown) => {
     assertString(filePath, "path");
     if (typeof content !== "string") throw new Error("content must be a string");
     if (!allowedPaths.has(filePath)) throw new Error("path was not opened or chosen by the user");

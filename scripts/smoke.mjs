@@ -101,6 +101,37 @@ await page.waitForSelector(".md-export-preview img", { timeout: 10000 });
 await page.screenshot({ path: path.join(shots, "export-dialog.png") });
 await page.keyboard.press("Escape");
 
+step("in-app menu: recent files, theme, drawing style, autosave");
+const MENU = ".App-menu_top__left .dropdown-menu";
+const openMenu = async () => {
+  if (!(await page.$(MENU))) await page.click('[data-testid="main-menu-trigger"]');
+  await page.waitForSelector(MENU);
+};
+const getSettings = () => page.evaluate(() => window.mydraw.getSettings());
+await openMenu();
+assert.ok(await page.isVisible(`${MENU} >> text=Open recent`), "recent group shown");
+assert.ok(await page.isVisible(`${MENU} .dropdown-menu-item >> text=network`), "recent file listed");
+await page.screenshot({ path: path.join(shots, "app-menu-light.png") });
+
+await page.click(`${MENU} [role=radiogroup][aria-label="Theme"] >> text=Dark`);
+await waitFor(async () => (await getSettings()).theme === "dark", "theme setting dark");
+await page.waitForSelector(".excalidraw.theme--dark");
+
+await openMenu();
+await page.click(`${MENU} [role=radiogroup][aria-label="Drawing style"] >> text=Sketch`);
+await waitFor(async () => (await t((x) => x.currentItemRoughness())) === 1, "sketch style applied");
+
+await openMenu();
+await page.click(`${MENU} >> text=Autosave saved files`);
+await waitFor(async () => (await getSettings()).autosave === false, "autosave off");
+assert.ok(await page.$(MENU), "menu stays open after toggling autosave");
+await page.screenshot({ path: path.join(shots, "app-menu-dark.png") });
+
+// restore defaults for the remaining steps
+await page.evaluate(() => window.mydraw.updateSettings({ theme: "light", drawingStyle: "clean", autosave: true }));
+await waitFor(async () => (await t((x) => x.currentItemRoughness())) === 0, "clean style restored");
+await page.keyboard.press("Escape");
+
 step("new tab + crash recovery of unsaved drawing");
 await t((x) => x.newTab());
 await waitFor(async () => (await t((x) => x.elementCount())) === 0, "new tab mounted");

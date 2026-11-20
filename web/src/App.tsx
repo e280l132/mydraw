@@ -1,9 +1,10 @@
-import { CaptureUpdateAction, Excalidraw, MainMenu, convertToExcalidrawElements } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, Excalidraw, convertToExcalidrawElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState, ExcalidrawImperativeAPI, ExcalidrawInitialDataState } from "@excalidraw/excalidraw/types";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { safeFileName, titleFromPath } from "../../shared/names";
 import type { DrawingStyle, MenuCommand, OpenedFile, Settings } from "../../shared/types";
+import { AppMenu } from "./AppMenu";
 import { drawingStyleAppState } from "./drawingStyle";
 import { ExportDialog } from "./ExportDialog";
 import { DEFAULT_EXPORT_OPTIONS, renderExport, type ExportOptions } from "./exportImage";
@@ -66,9 +67,11 @@ interface DrawingViewProps {
   tab: Tab;
   hidden: boolean;
   theme: "light" | "dark";
+  settings: Settings | null;
   onApi(id: string, api: ExcalidrawImperativeAPI): void;
   onChange(id: string, elements: readonly ExcalidrawElement[], appState: AppState): void;
   onCommand(cmd: MenuCommand): void;
+  onSettings(patch: Partial<Settings>): void;
   onResolveConflict(id: string, reload: boolean): void;
 }
 
@@ -76,9 +79,11 @@ const DrawingView = memo(function DrawingView({
   tab,
   hidden,
   theme,
+  settings,
   onApi,
   onChange,
   onCommand,
+  onSettings,
   onResolveConflict,
 }: DrawingViewProps) {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
@@ -107,28 +112,7 @@ const DrawingView = memo(function DrawingView({
           name={tab.title}
           UIOptions={UI_OPTIONS}
         >
-          <MainMenu>
-            <MainMenu.Item onSelect={() => onCommand({ type: "new" })} shortcut="⌘N">
-              New drawing
-            </MainMenu.Item>
-            <MainMenu.Item onSelect={() => onCommand({ type: "open" })} shortcut="⌘O">
-              Open…
-            </MainMenu.Item>
-            <MainMenu.Item onSelect={() => onCommand({ type: "save" })} shortcut="⌘S">
-              Save
-            </MainMenu.Item>
-            <MainMenu.Item onSelect={() => onCommand({ type: "saveAs" })} shortcut="⇧⌘S">
-              Save as…
-            </MainMenu.Item>
-            <MainMenu.Item onSelect={() => onCommand({ type: "export" })} shortcut="⇧⌘E">
-              Export image…
-            </MainMenu.Item>
-            <MainMenu.Separator />
-            <MainMenu.DefaultItems.ClearCanvas />
-            <MainMenu.DefaultItems.ChangeCanvasBackground />
-            <MainMenu.Separator />
-            <MainMenu.DefaultItems.Help />
-          </MainMenu>
+          <AppMenu settings={settings} onCommand={onCommand} onSettings={onSettings} />
         </Excalidraw>
       </div>
     </div>
@@ -139,8 +123,10 @@ export function App() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeId, setActiveIdState] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const systemTheme = useSystemTheme();
+  const theme = !settings || settings.theme === "system" ? systemTheme : settings.theme;
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
-  const theme = useSystemTheme();
 
   // Refs hold the latest values for callbacks fired by Excalidraw, IPC and timers.
   const tabsRef = useRef<Tab[]>([]);
@@ -460,10 +446,17 @@ export function App() {
         case "selectTab":
           if (ts[cmd.index]) setActive(ts[cmd.index].id);
           return;
+        case "openRecent":
+          return openFiles(await bridge.openRecent(cmd.path));
+        case "clearRecent":
+          return bridge.clearRecent();
       }
     },
     [closeTab, newTab, openFiles, save, setActive],
   );
+
+  // Main process saves settings and broadcasts them back (settings:changed), which updates state.
+  const onSettings = useCallback((patch: Partial<Settings>) => void bridge.updateSettings(patch), []);
 
   const onCommandSync = useCallback((cmd: MenuCommand) => void onCommand(cmd), [onCommand]);
 
@@ -511,6 +504,7 @@ export function App() {
     void (async () => {
       const settings = await bridge.getSettings();
       settingsRef.current = settings;
+      setSettings(settings);
 
       const recovered = await bridge.listRecovery();
       for (const r of recovered) {
@@ -560,6 +554,7 @@ export function App() {
       bridge.onSettingsChanged((s) => {
         const prev = settingsRef.current;
         settingsRef.current = s;
+        setSettings(s);
         if (prev?.drawingStyle !== s.drawingStyle) {
           for (const api of apis.current.values()) {
             api.updateScene({
@@ -650,9 +645,11 @@ export function App() {
             tab={t}
             hidden={t.id !== activeId}
             theme={theme}
+            settings={settings}
             onApi={onApi}
             onChange={onChange}
             onCommand={onCommandSync}
+            onSettings={onSettings}
             onResolveConflict={onResolveConflict}
           />
         ))}
