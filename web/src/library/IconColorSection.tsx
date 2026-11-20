@@ -18,12 +18,18 @@ export const ICON_SWATCHES: Array<{ color: string; name: string }> = [
   { color: "#c2255c", name: "Pink" },
 ];
 
-const CUSTOM_KEY = "mydraw.customIconColor";
+export const CUSTOM_COLOR_KEY = "mydraw.customIconColor";
 
 interface Props {
   selection: IconSelection;
   /** Apply a color; `preview` = live update during a drag (merged into one undo step). */
   onColor(color: string | null, preview?: boolean): void;
+  /** The custom (12th) swatch. */
+  custom: string | null;
+  onCustomChange(hex: string): void;
+  /** Start "pick color from canvas" mode. */
+  onPick(): void;
+  picking: boolean;
 }
 
 // ---------- picker ----------
@@ -32,7 +38,15 @@ interface PickerProps {
   value: string;
   onPreview(hex: string): void;
   onCommit(hex: string): void;
+  onPick(): void;
+  picking: boolean;
 }
+
+const EyedropperIcon = () => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+    <path d="M14.5 4.5l5 5M17 2l5 5-3 3-5-5zM14 7L5 16l-1 4 4-1 9-9" />
+  </svg>
+);
 
 function useDrag(onMove: (x: number, y: number) => void, onEnd: () => void) {
   return (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -55,11 +69,20 @@ function useDrag(onMove: (x: number, y: number) => void, onEnd: () => void) {
   };
 }
 
-function ColorPicker({ value, onPreview, onCommit }: PickerProps) {
+function ColorPicker({ value, onPreview, onCommit, onPick, picking }: PickerProps) {
   const [hsv, setHsv] = useState<HSV>(() => hexToHsv(value));
   const [hexText, setHexText] = useState(value);
   const hsvRef = useRef(hsv);
   const frame = useRef(0);
+  // Follow the value when it changes from outside (e.g. the eyedropper).
+  useEffect(() => {
+    const hex = normalizeHex(value);
+    if (!hex || hex === hsvToHex(hsvRef.current)) return;
+    const next = hexToHsv(hex);
+    hsvRef.current = next;
+    setHsv(next);
+    setHexText(hex);
+  }, [value]);
 
   const update = (next: HSV) => {
     hsvRef.current = next;
@@ -88,25 +111,6 @@ function ColorPicker({ value, onPreview, onCommit }: PickerProps) {
     onCommit(hex);
   };
 
-  const hasEyeDropper = "EyeDropper" in window;
-  const pickFromScreen = async () => {
-    try {
-      // Chromium EyeDropper API: lets you pick any color on screen.
-      const Ctor = (window as unknown as { EyeDropper: new () => { open(): Promise<{ sRGBHex: string }> } }).EyeDropper;
-      const { sRGBHex } = await new Ctor().open();
-      const hex = normalizeHex(sRGBHex);
-      if (hex) {
-        const next = hexToHsv(hex);
-        hsvRef.current = next;
-        setHsv(next);
-        setHexText(hex);
-        onCommit(hex);
-      }
-    } catch {
-      // cancelled
-    }
-  };
-
   return (
     <div className="md-picker">
       <div className="md-picker-sv" style={{ background: hueColor }} onPointerDown={onSV} aria-label="Saturation and brightness">
@@ -131,13 +135,14 @@ function ColorPicker({ value, onPreview, onCommit }: PickerProps) {
             if (e.key === "Enter") applyHex();
           }}
         />
-        {hasEyeDropper && (
-          <button className="md-picker-eyedrop" title="Pick a color from the screen" aria-label="Eyedropper" onClick={pickFromScreen}>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-              <path d="M14.5 4.5l5 5M17 2l5 5-3 3-5-5zM14 7L5 16l-1 4 4-1 9-9" />
-            </svg>
-          </button>
-        )}
+        <button
+          className={`md-picker-eyedrop${picking ? " on" : ""}`}
+          title="Pick a color from an icon or shape on the canvas"
+          aria-label="Pick color from canvas"
+          onClick={onPick}
+        >
+          <EyedropperIcon />
+        </button>
       </div>
     </div>
   );
@@ -145,24 +150,18 @@ function ColorPicker({ value, onPreview, onCommit }: PickerProps) {
 
 // ---------- section ----------
 
-export function IconColorSection({ selection, onColor }: Props) {
-  const [custom, setCustom] = useState<string | null>(() => normalizeHex(localStorage.getItem(CUSTOM_KEY) ?? ""));
+export function IconColorSection({ selection, onColor, custom, onCustomChange, onPick, picking }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   // A selected color that isn't a preset becomes the custom (12th) swatch.
   const current = selection.color && selection.color !== "original" ? selection.color : null;
   const isPreset = (c: string | null) => !!c && ICON_SWATCHES.some((s) => s.color === c);
   useEffect(() => {
-    if (current && !isPreset(current) && current !== custom) {
-      setCustom(current);
-      localStorage.setItem(CUSTOM_KEY, current);
-    }
+    if (current && !isPreset(current) && current !== custom) onCustomChange(current);
   }, [current]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const rememberCustom = (hex: string) => {
-    if (isPreset(hex)) return;
-    setCustom(hex);
-    localStorage.setItem(CUSTOM_KEY, hex);
+    if (!isPreset(hex)) onCustomChange(hex);
   };
 
   if (selection.count === 0) {
@@ -204,15 +203,26 @@ export function IconColorSection({ selection, onColor }: Props) {
         <button className={`md-chip md-chip-custom${pickerOpen ? " on" : ""}`} onClick={() => setPickerOpen((v) => !v)}>
           <span className="md-rainbow" /> Custom…
         </button>
+        <button
+          className={`md-chip md-chip-pick${picking ? " on" : ""}`}
+          title="Pick a color from an icon or shape on the canvas; it goes into the custom swatch"
+          aria-label="Pick color from canvas"
+          onClick={onPick}
+        >
+          <EyedropperIcon />
+        </button>
       </div>
+      {picking && <div className="md-iconcolor-note">Click an icon or shape to copy its color · Esc to cancel</div>}
       {pickerOpen && (
         <ColorPicker
-          value={current ?? custom ?? "#1971c2"}
+          value={custom ?? current ?? "#1971c2"}
           onPreview={(hex) => onColor(hex, true)}
           onCommit={(hex) => {
             rememberCustom(hex);
             onColor(hex);
           }}
+          onPick={onPick}
+          picking={picking}
         />
       )}
       {selection.raster > 0 && (

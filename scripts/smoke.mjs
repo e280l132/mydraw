@@ -217,6 +217,23 @@ await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "
 await page.click(`${SECTION} >> text=Original`);
 await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "original"), "original colors restored");
 
+// Eyedropper: copy an icon's color into the custom swatch without changing the selection, then apply it.
+await page.click(`${SECTION} .md-chip-pick`);
+let at = await t((x) => x.screenCenter("image", 0));
+await page.mouse.click(at.x, at.y);
+await waitFor(async () => (await page.$eval(`${SECTION} .md-swatch-slot`, (el) => el.title)).includes("#2f6fde"), "icon color picked");
+assert.match(await t((x) => x.iconSelection()), /^2:0:original$/, "picking did not change the selection");
+await page.click(`${SECTION} .md-swatch-slot`);
+await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "#2f6fde"), "picked color applied");
+// ...and from a shape (rectangle outline, no fill).
+await page.click(`${SECTION} .md-chip-pick`);
+at = await t((x) => x.screenCenter("rectangle", -1, true)); // on its outline: hollow shapes are picked by their edge
+await page.mouse.click(at.x, at.y);
+await waitFor(async () => (await page.$eval(`${SECTION} .md-swatch-slot`, (el) => el.title)).includes("#1e1e1e"), "shape color picked");
+await page.screenshot({ path: path.join(shots, "eyedropper.png") });
+await page.click(`${SECTION} >> text=Original`);
+await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "original"), "back to original colors");
+
 step("save selection as stencil; it appears in the library");
 // Excalidraw handles keys only when its canvas has focus: click an empty spot first.
 await page.click(".md-drawing:not([style*='none']) canvas.interactive", { position: { x: 900, y: 700 } });

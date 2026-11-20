@@ -966,6 +966,19 @@ body {
   font-size: 0.75rem;
 }
 
+.md-picking canvas {
+  cursor: crosshair !important;
+}
+
+.md-chip-pick {
+  padding: 0 0.45rem;
+}
+
+.md-picker-eyedrop.on {
+  border-color: var(--color-primary, #6965db);
+  color: var(--color-primary, #6965db);
+}
+
 .md-picker-eyedrop {
   display: flex;
   align-items: center;

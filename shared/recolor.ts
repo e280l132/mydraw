@@ -134,3 +134,33 @@ export function ensureSvgSize(svg: string, fallback = 64): string {
     return `<svg${cleaned} width="${w}" height="${h}">`;
   });
 }
+
+/**
+ * The main color of an SVG icon: the most frequently used fill/stroke/stop color, ignoring
+ * white/near-white details, transparent parts and "none". `currentColor` resolves to the root's
+ * `color` (attribute or style), defaulting to black. Returns a lower-case #rrggbb, or null.
+ */
+export function dominantSvgColor(svg: string): string | null {
+  const root = svg.match(/<svg\b([^>]*)>/i)?.[1] ?? "";
+  const rootColor =
+    root.match(/\scolor\s*=\s*["']([^"']+)["']/i)?.[1] ?? root.match(/[;"'\s]color\s*:\s*([^;"']+)/i)?.[1] ?? "#000000";
+  const counts = new Map<string, number>();
+  const add = (raw: string) => {
+    let v = raw.trim();
+    if (v.toLowerCase() === "currentcolor") v = rootColor;
+    if (!shouldReplace(v)) return;
+    const c = parseColor(v);
+    if (!c) return;
+    const hex = `#${c.slice(0, 3).map((n) => Math.round(n).toString(16).padStart(2, "0")).join("")}`;
+    counts.set(hex, (counts.get(hex) ?? 0) + 1);
+  };
+  for (const m of svg.matchAll(/\s(?:fill|stroke|stop-color)\s*=\s*["']([^"']*)["']/gi)) add(m[1]);
+  for (const m of svg.matchAll(/(?:^|[;{\s"'])(?:fill|stroke|stop-color)\s*:\s*([^;}"']+)/gi)) add(m[1]);
+  // Shapes with no fill at all are black by default.
+  const anyFill = /\s(?:fill|stroke)\s*=|(?:fill|stroke)\s*:/i.test(svg);
+  if (!counts.size && !anyFill && /<(path|rect|circle|ellipse|polygon)\b/i.test(svg)) add("#000000");
+  let best: string | null = null;
+  let bestN = 0;
+  for (const [hex, n] of counts) if (n > bestN) [best, bestN] = [hex, n];
+  return best;
+}

@@ -25,7 +25,9 @@ import { AppMenu } from "./AppMenu";
 import { drawingStyleAppState } from "./drawingStyle";
 import { ExportDialog } from "./ExportDialog";
 import { PacksDialog, RenameDialog, SaveStencilDialog } from "./library/dialogs";
-import { IconColorSection } from "./library/IconColorSection";
+import { CUSTOM_COLOR_KEY, IconColorSection } from "./library/IconColorSection";
+import { colorOfElement, elementAt } from "./library/pickColor";
+import { normalizeHex } from "../../shared/colorMath";
 import { IconRecolorSession, NO_ICONS, iconSelection, recolorSelectedIcons, type IconSelection } from "./library/iconColor";
 import { STENCIL_DRAG_TYPE, StencilPanel } from "./library/StencilPanel";
 import {
@@ -174,6 +176,14 @@ export function App() {
   const [renaming, setRenaming] = useState<LibraryItem | null>(null);
   const [packsOpen, setPacksOpen] = useState(false);
   const [icons, setIcons] = useState<IconSelection>(NO_ICONS);
+  const [customColor, setCustomColorState] = useState<string | null>(() =>
+    normalizeHex(localStorage.getItem(CUSTOM_COLOR_KEY) ?? ""),
+  );
+  const setCustomColor = useCallback((hex: string) => {
+    localStorage.setItem(CUSTOM_COLOR_KEY, hex);
+    setCustomColorState(hex);
+  }, []);
+  const [picking, setPicking] = useState(false);
   const iconsKey = useRef("");
 
   // Refs hold the latest values for callbacks fired by Excalidraw, IPC and timers.
@@ -435,6 +445,59 @@ export function App() {
     },
     [showToast],
   );
+
+  // Eyedropper: the next click on the canvas copies that element's color into the custom swatch.
+  // The click is swallowed so Excalidraw doesn't change the selection.
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!picking || !root) return;
+    const isCanvas = (t: EventTarget | null) => t instanceof HTMLCanvasElement;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!isCanvas(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPicking(false);
+      const api = apis.current.get(activeRef.current);
+      if (!api) return;
+      const { x, y } = viewportCoordsToSceneCoords({ clientX: e.clientX, clientY: e.clientY }, api.getAppState());
+      const el = elementAt(api, x, y);
+      if (!el) return showToast("Nothing there. Click an icon or shape to copy its color.", true);
+      colorOfElement(api, el).then(
+        (hex) => {
+          if (!hex) return showToast("That item has no color to copy (it's white or transparent).", true);
+          setCustomColor(hex);
+          showToast(`Copied ${hex} to the custom swatch. Click it to apply.`);
+        },
+        (err: Error) => showToast(`Could not read the color: ${err.message}`, true),
+      );
+    };
+    const swallow = (e: Event) => {
+      if (isCanvas(e.target)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setPicking(false);
+      }
+    };
+    root.classList.add("md-picking");
+    root.addEventListener("pointerdown", onPointerDown, true);
+    root.addEventListener("pointerup", swallow, true);
+    root.addEventListener("click", swallow, true);
+    root.addEventListener("dblclick", swallow, true);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      root.classList.remove("md-picking");
+      root.removeEventListener("pointerdown", onPointerDown, true);
+      root.removeEventListener("pointerup", swallow, true);
+      root.removeEventListener("click", swallow, true);
+      root.removeEventListener("dblclick", swallow, true);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [picking, setCustomColor, showToast]);
 
   // The "Icon color" section lives inside Excalidraw's properties panel (left side). Excalidraw has
   // no API for adding panel sections, so we keep a host <div> at the top of its panel column and
@@ -920,6 +983,19 @@ export function App() {
       },
       imageFileCount: () => Object.keys(api().getFiles()).length,
       iconSelection: () => iconsKey.current,
+      /** Screen position of the centre of the n-th element of a type (for clicking it in tests). */
+      screenCenter: (type: string, n = 0, leftEdge = false) => {
+        const a = api();
+        const all = a.getSceneElements().filter((e) => e.type === type);
+        const el = all[n < 0 ? all.length + n : n];
+        if (!el) return null;
+        const [x1, y1, x2, y2] = getCommonBounds([el]);
+        const st = a.getAppState();
+        return {
+          x: ((leftEdge ? x1 + 1 : (x1 + x2) / 2) + st.scrollX) * st.zoom.value + st.offsetLeft,
+          y: ((y1 + y2) / 2 + st.scrollY) * st.zoom.value + st.offsetTop,
+        };
+      },
       recolor: (color: string | null, preview = false) => recolorSelectedIcons(api(), color, preview),
       selectImages: () =>
         api().updateScene({
@@ -977,7 +1053,17 @@ export function App() {
             onLibraryChange={onLibraryChange}
           />
         ))}
-        {iconHost && showIconSection && createPortal(<IconColorSection selection={icons} onColor={recolorIcons} />, iconHost)}
+        {iconHost && showIconSection && createPortal(
+            <IconColorSection
+              selection={icons}
+              onColor={recolorIcons}
+              custom={customColor}
+              onCustomChange={setCustomColor}
+              onPick={() => setPicking((v) => !v)}
+              picking={picking}
+            />,
+            iconHost,
+          )}
       </div>
       {panelOpen && (
         <StencilPanel

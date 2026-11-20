@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ensureSvgSize, isNearWhite, parseColor, recolorSvg, svgFromDataURL, svgToDataURL } from "../shared/recolor";
+import { dominantSvgColor, ensureSvgSize, isNearWhite, parseColor, recolorSvg, svgFromDataURL, svgToDataURL } from "../shared/recolor";
 
 const BLUE = "#1971c2";
 
@@ -81,5 +81,22 @@ describe("ensureSvgSize", () => {
   });
   it("falls back when there is no viewBox", () => {
     expect(ensureSvgSize(`<svg>`)).toBe(`<svg width="64" height="64">`);
+  });
+});
+
+describe("dominantSvgColor", () => {
+  it("finds an AWS icon's background color, not its white glyph", () => {
+    expect(dominantSvgColor(`<svg><rect fill="#ED7100"/><path fill="#FFFFFF"/><path fill="#FFF"/></svg>`)).toBe("#ed7100");
+  });
+  it("uses the most frequent color, from attributes, styles and <style>", () => {
+    const svg = `<svg><style>.a{fill:#4285f4}.b{fill:#4285f4}</style><path style="fill:#34a853"/><path class="a"/></svg>`;
+    expect(dominantSvgColor(svg)).toBe("#4285f4");
+  });
+  it("resolves currentColor and default black", () => {
+    expect(dominantSvgColor(`<svg style="color:#1e1e1e"><path fill="currentColor"/></svg>`)).toBe("#1e1e1e");
+    expect(dominantSvgColor(`<svg viewBox="0 0 1 1"><path d="M0 0"/></svg>`)).toBe("#000000");
+  });
+  it("returns null for an all-white icon", () => {
+    expect(dominantSvgColor(`<svg><rect fill="#fff"/></svg>`)).toBeNull();
   });
 });
