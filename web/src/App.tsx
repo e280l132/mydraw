@@ -11,6 +11,7 @@ import {
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type {
   AppState,
+  BinaryFiles,
   ExcalidrawImperativeAPI,
   ExcalidrawInitialDataState,
   LibraryItems,
@@ -23,6 +24,8 @@ import { AppMenu } from "./AppMenu";
 import { drawingStyleAppState } from "./drawingStyle";
 import { ExportDialog } from "./ExportDialog";
 import { PacksDialog, RenameDialog, SaveStencilDialog } from "./library/dialogs";
+import { IconColorBar } from "./library/IconColorBar";
+import { NO_ICONS, iconSelection, recolorSelectedIcons, type IconSelection } from "./library/iconColor";
 import { STENCIL_DRAG_TYPE, StencilPanel } from "./library/StencilPanel";
 import {
   insertStencil,
@@ -102,7 +105,7 @@ interface DrawingViewProps {
   theme: "light" | "dark";
   settings: Settings | null;
   onApi(id: string, api: ExcalidrawImperativeAPI): void;
-  onChange(id: string, elements: readonly ExcalidrawElement[], appState: AppState): void;
+  onChange(id: string, elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles): void;
   onCommand(cmd: MenuCommand): void;
   onSettings(patch: Partial<Settings>): void;
   onResolveConflict(id: string, reload: boolean): void;
@@ -142,7 +145,7 @@ const DrawingView = memo(function DrawingView({
             onApi(tab.id, api);
           }}
           initialData={tab.initialData}
-          onChange={(elements, appState) => onChange(tab.id, elements, appState)}
+          onChange={(elements, appState, files) => onChange(tab.id, elements, appState, files)}
           onLibraryChange={(items) => onLibraryChange(tab.id, items)}
           theme={theme}
           name={tab.title}
@@ -169,6 +172,8 @@ export function App() {
   const [saveSelection, setSaveSelection] = useState<(StencilContent & { suggestedName: string }) | null>(null);
   const [renaming, setRenaming] = useState<LibraryItem | null>(null);
   const [packsOpen, setPacksOpen] = useState(false);
+  const [icons, setIcons] = useState<IconSelection>(NO_ICONS);
+  const iconsKey = useRef("");
 
   // Refs hold the latest values for callbacks fired by Excalidraw, IPC and timers.
   const tabsRef = useRef<Tab[]>([]);
@@ -196,6 +201,8 @@ export function App() {
   const setActive = useCallback((id: string) => {
     activeRef.current = id;
     setActiveIdState(id);
+    iconsKey.current = "";
+    setIcons(NO_ICONS);
   }, []);
 
   const showToast = useCallback((text: string, error = false) => setToast({ text, error }), []);
@@ -298,8 +305,16 @@ export function App() {
   }, []);
 
   const onChange = useCallback(
-    (id: string, elements: readonly ExcalidrawElement[], appState: AppState) => {
+    (id: string, elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
       if (appState.isLoading) return;
+      if (id === activeRef.current) {
+        const sel = appState.viewModeEnabled ? NO_ICONS : iconSelection(elements, appState, files);
+        const key = `${sel.count}:${sel.raster}:${sel.color}`;
+        if (key !== iconsKey.current) {
+          iconsKey.current = key;
+          setIcons(sel);
+        }
+      }
       const hash = sceneHash(elements, appState);
       const base = baselines.current.get(id);
       if (base === undefined) {
@@ -404,6 +419,15 @@ export function App() {
       } catch (e) {
         showToast(`Could not insert “${item.name}”: ${(e as Error).message}`, true);
       }
+    },
+    [showToast],
+  );
+
+  const recolorIcons = useCallback(
+    (color: string | null) => {
+      const api = apis.current.get(activeRef.current);
+      if (!api) return;
+      recolorSelectedIcons(api, color).catch((e: Error) => showToast(`Could not recolor: ${e.message}`, true));
     },
     [showToast],
   );
@@ -858,6 +882,24 @@ export function App() {
         });
       },
       imageFileCount: () => Object.keys(api().getFiles()).length,
+      iconSelection: () => iconsKey.current,
+      recolor: (color: string | null) => recolorSelectedIcons(api(), color),
+      selectImages: () =>
+        api().updateScene({
+          appState: {
+            selectedElementIds: Object.fromEntries(
+              api()
+                .getSceneElements()
+                .filter((e) => e.type === "image")
+                .map((e) => [e.id, true]),
+            ),
+          } as Partial<AppState> as AppState,
+        }),
+      imageColors: () =>
+        api()
+          .getSceneElements()
+          .filter((e) => e.type === "image")
+          .map((e) => e.customData?.mydrawIconColor ?? "original"),
       excalidrawLibraryCount: async () => (await api().updateLibrary({ libraryItems: [], merge: true })).length,
       addToExcalidrawLibrary: async () => {
         const els = api().getSceneElements();
@@ -898,6 +940,9 @@ export function App() {
             onLibraryChange={onLibraryChange}
           />
         ))}
+        {(icons.count > 0 || icons.raster > 0) && !exportOpen && (
+          <IconColorBar selection={icons} onColor={recolorIcons} />
+        )}
       </div>
       {panelOpen && (
         <StencilPanel

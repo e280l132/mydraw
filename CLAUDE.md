@@ -15,6 +15,8 @@ Roadmap and phase status: `plan.md`. Read it before starting a phase.
 - `web/src/library/stencilContent.ts`: item → elements (+ image files, fileId = SHA-1 of the bytes), `cloneForInsert` (fresh ids, remapped bindings/groups), `insertStencil`. Reuse these for MCP `place_stencil` in Phase 2.
 - Excalidraw's own Library panel: `initialData.libraryItems` + `onLibraryChange` → `Library/Excalidraw Library/library.excalidrawlib`, synced to all tabs via `updateLibrary` (hash check prevents loops).
 - Panel → canvas drag uses the `application/x-mydraw-stencil` type and is handled in a capture-phase drop listener in `App.tsx`, before Excalidraw sees it.
+- Icon recolor: `shared/recolor.ts` (`recolorSvg`, pure + unit-tested) rewrites fills/strokes/stops/currentColor, keeping near-white and transparent parts. `web/src/library/iconColor.ts` swaps the element's `fileId` to the recolored SVG and keeps the original SVG in `customData.mydrawOriginalSvg` (+ `mydrawIconColor`), so recolors never compound and "Original" restores. Reuse for an MCP `recolor` tool.
+- Excalidraw 0.18 records selection changes in undo history.
 - Excalidraw handles keyboard shortcuts only when its canvas has focus (tests click the canvas first).
 - Console "font-src" CSP errors for `esm.sh` are expected: Excalidraw lists a CDN fallback after our local fonts; CSP blocks it so the app stays offline.
 

@@ -180,6 +180,25 @@ await waitFor(() => {
 }, "autosaved file contains image + embedded file");
 await page.fill(".md-panel-search input", "");
 
+step("recolor dropped icons with the icon color bar (saved, undoable, restorable)");
+await t((x) => x.selectImages());
+await page.waitForSelector(".md-iconbar");
+assert.match(await t((x) => x.iconSelection()), /^2:0:original$/, "two SVG icons selected, original colors");
+await page.click('.md-iconbar [aria-label="Blue"]');
+await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "#1971c2"), "icons recolored blue");
+await page.screenshot({ path: path.join(shots, "icons-recolored.png") });
+await waitFor(() => {
+  const d = JSON.parse(fs.readFileSync(file, "utf8"));
+  const imgs = d.elements.filter((e) => e.type === "image");
+  return imgs.length && imgs.every((e) => e.customData?.mydrawIconColor === "#1971c2" && d.files[e.fileId]);
+}, "recolor autosaved with its file");
+await page.click(".md-iconbar >> text=Original");
+await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "original"), "original colors restored");
+// Focus the canvas without clicking it (a click would change the selection, which is itself an undo step).
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*='none']) .excalidraw-container")?.focus());
+await page.keyboard.press("Meta+Z");
+await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "#1971c2"), "undo brings the blue back");
+
 step("save selection as stencil; it appears in the library");
 // Excalidraw handles keys only when its canvas has focus: click an empty spot first.
 await page.click(".md-drawing:not([style*='none']) canvas.interactive", { position: { x: 900, y: 700 } });

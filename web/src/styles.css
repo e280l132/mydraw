@@ -820,6 +820,82 @@ body {
   font-size: 11px;
 }
 
+/* ---------- icon color bar ---------- */
+
+.md-iconbar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 5;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--md-panel);
+  color: var(--md-fg);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.16), 0 0 0 1px var(--md-border);
+  white-space: nowrap;
+}
+
+.md-iconbar-label {
+  margin-right: 2px;
+  color: var(--md-muted);
+  font-size: 12px;
+}
+
+.md-iconbar-original {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--md-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--md-fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.md-iconbar-original.on {
+  border-color: var(--md-accent);
+  color: var(--md-accent);
+}
+
+.md-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.md-swatch.on {
+  outline: 2px solid var(--md-accent);
+  outline-offset: 2px;
+}
+
+.md-swatch-custom {
+  background: conic-gradient(#e03131, #f08c00, #f2b705, #2f9e44, #1971c2, #6741d9, #c2255c, #e03131);
+  color: #fff;
+  font-weight: 700;
+  text-shadow: 0 0 2px #000;
+}
+
+.md-hidden-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.md-iconbar-note {
+  margin-left: 4px;
+  color: var(--md-muted);
+  font-size: 11px;
+}
+
 /* ---------- toast ---------- */
 
 .md-toast {
