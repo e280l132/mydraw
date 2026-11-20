@@ -57,11 +57,15 @@ export function buildMenu(settings: Settings, h: MenuHandlers): void {
         { role: "copy" },
         { role: "paste" },
         { role: "selectAll", registerAccelerator: false },
+        { type: "separator" },
+        { label: "Save Selection as Stencil…", click: cmd({ type: "saveStencil" }) },
       ],
     },
     {
       label: "View",
       submenu: [
+        { label: "Stencils Panel", accelerator: "CmdOrCtrl+Shift+Y", click: cmd({ type: "toggleStencils" }) },
+        { type: "separator" },
         {
           label: "Theme",
           submenu: (["system", "light", "dark"] as const).map((t) => ({

@@ -9,6 +9,15 @@ Roadmap and phase status: `plan.md`. Read it before starting a phase.
 - Dirty tracking: `sceneHash` (element versions + count + background) compared with a per-tab baseline set on first `onChange` after load, after save, and after reload.
 - Drawing style (Clean/Sketch) sets `currentItem*` app state only; it never edits existing elements.
 
+## Stencil library
+- `app/src/library.ts` (`LibraryStore`): scans the library folder (collections = top-level folders; items = .svg/.png, `.stencil.json`, entries of `.excalidrawlib`), watches it, keeps favorites/recent in `library.json`. Item ids are root-relative paths (`#n` for .excalidrawlib entries). Files are served to the renderer via the `mdlib://library/<path>` protocol, confined to the root.
+- `app/src/packs.ts`: icon-pack downloader (plain Node; also `scripts/fetch-packs.mjs`). Packs build in `.<Collection>.installing` and replace only folders whose `collection.json` has `managedBy: "mydraw-packs"`.
+- `web/src/library/stencilContent.ts`: item → elements (+ image files, fileId = SHA-1 of the bytes), `cloneForInsert` (fresh ids, remapped bindings/groups), `insertStencil`. Reuse these for MCP `place_stencil` in Phase 2.
+- Excalidraw's own Library panel: `initialData.libraryItems` + `onLibraryChange` → `Library/Excalidraw Library/library.excalidrawlib`, synced to all tabs via `updateLibrary` (hash check prevents loops).
+- Panel → canvas drag uses the `application/x-mydraw-stencil` type and is handled in a capture-phase drop listener in `App.tsx`, before Excalidraw sees it.
+- Excalidraw handles keyboard shortcuts only when its canvas has focus (tests click the canvas first).
+- Console "font-src" CSP errors for `esm.sh` are expected: Excalidraw lists a CDN fallback after our local fonts; CSP blocks it so the app stays offline.
+
 ## Conventions
 - Excalidraw is pinned to `0.18.1`. Import types from `@excalidraw/excalidraw/types` and `@excalidraw/excalidraw/element/types`.
 - `process.env.IS_PREACT` must stay defined as `"false"` in `vite.config.ts`.
@@ -19,4 +28,4 @@ Roadmap and phase status: `plan.md`. Read it before starting a phase.
 ## Checks before committing
 `npm run typecheck && npm test && npm run smoke`
 
-The smoke test runs the built app with `MYDRAW_TEST=1` and a temp `MYDRAW_USER_DATA`, and uses the test-only `window.__mydrawTest` hook (`web/src/App.tsx`). Extend it when adding features.
+The smoke test runs the built app with `MYDRAW_TEST=1`, a temp `MYDRAW_USER_DATA` and a temp `MYDRAW_LIBRARY`, and uses the test-only `window.__mydrawTest` hook (`web/src/App.tsx`). Extend it when adding features.

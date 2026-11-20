@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { humanize, pushRecent, safeSegment, scoreItem, searchItems, type LibraryItem } from "../shared/library";
 import { ensureExtension, safeFileName, titleFromPath } from "../shared/names";
 import { DEFAULT_SETTINGS, MAX_RECENT, addRecent, mergeSettings } from "../shared/settings";
 
@@ -52,5 +53,56 @@ describe("names", () => {
   it("adds an extension only when missing", () => {
     expect(ensureExtension("/x/net", "excalidraw")).toBe("/x/net.excalidraw");
     expect(ensureExtension("/x/net.EXCALIDRAW", "excalidraw")).toBe("/x/net.EXCALIDRAW");
+  });
+});
+
+const item = (name: string, collection = "AWS", groups: string[] = [], tags: string[] = []): LibraryItem => ({
+  id: `${collection}/${name}.svg`,
+  collection,
+  groups,
+  name,
+  tags,
+  kind: "svg",
+  file: `${collection}/${name}.svg`,
+  mtime: 0,
+});
+
+describe("library search", () => {
+  const items = [
+    item("EC2 instance contents", "AWS", ["Groups"]),
+    item("Amazon EC2", "AWS", ["Services", "Compute"]),
+    item("Amazon EC2 Auto Scaling", "AWS", ["Services", "Compute"]),
+    item("Load Balancer (Application)", "Network", ["Load Balancing"], ["lb", "alb"]),
+    item("Firewall", "Network", ["Security"], ["firewall"]),
+    item("Pod", "Kubernetes", ["Resources"], ["k8s", "pod"]),
+    item("Aws Ec2", "Logos", ["A"], ["logo", "aws-ec2"]),
+    item("Amazon Simple Storage Service", "AWS", ["Services", "Storage"], ["service", "aws", "s3"]),
+    item("Amazon S3 on Outposts", "AWS", ["Services", "Storage"], ["service", "aws"]),
+  ];
+
+  it("ranks the closest name first", () => {
+    expect(searchItems(items, "ec2")[0].name).toBe("Amazon EC2");
+    expect(searchItems(items, "firewall")[0].name).toBe("Firewall");
+    expect(searchItems(items, "s3")[0].name).toBe("Amazon Simple Storage Service");
+  });
+
+  it("requires every word to match and uses tags, groups and collection", () => {
+    expect(searchItems(items, "lb app").map((i) => i.name)).toEqual(["Load Balancer (Application)"]);
+    expect(searchItems(items, "k8s").map((i) => i.name)).toEqual(["Pod"]);
+    expect(searchItems(items, "compute ec2")).toHaveLength(2);
+    expect(searchItems(items, "router")).toEqual([]);
+    expect(scoreItem(items[0], "")).toBe(0);
+  });
+
+  it("humanizes file names and keeps path segments safe", () => {
+    expect(humanize("Load-Balancer_vpc.svg")).toBe("Load Balancer vpc");
+    expect(humanize("core pair.stencil.json")).toBe("core pair");
+    expect(safeSegment("../a/b:c")).toBe("-a-b-c");
+    expect(safeSegment("   ")).toBe("untitled");
+  });
+
+  it("keeps recent stencils unique and capped", () => {
+    expect(pushRecent(["a", "b"], "b")).toEqual(["b", "a"]);
+    expect(pushRecent(["a", "b", "c"], "d", 3)).toEqual(["d", "a", "b"]);
   });
 });

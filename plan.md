@@ -125,7 +125,7 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
 ## Phases
 1. ✅ **Core app** (done 2026-11-19): scaffold, Excalidraw in Electron, file ops, autosave, crash recovery, file watcher, tabs, Clean theme default, PNG/SVG/JPG export. `npm run dev`. Smoke test: `npm run smoke`.
 2. **MCP + control server:** read/build/connect/delete/screenshot/export. Claude can draw end to end early.
-3. **Stencil library:** library folder + index, pack downloader, panel, "Add to library", file drop, Excalidraw library panel persisted to the folder, folder watcher, `place_stencil`/`search_stencils`/`save_as_stencil`, `.excalidrawlib` import/export. First verify image elements survive save/reopen/export.
+3. ✅ **Stencil library** (done 2026-11-20, before Phase 2 at Brian's request): library folder + index, pack downloader (AWS, Azure, GCP, Kubernetes, Network via IBM Carbon, Logos), Stencils panel (search, favorites, recent, drag/click insert, rename/trash), save selection as stencil, file/folder drop import, Excalidraw Library panel persisted + shared across tabs, folder watcher. Verified: images persist in saved files; library survives restart. MCP stencil tools move to Phase 2.
 4. **Colors + styles:** color panel, palettes, swatches, themes, style presets.
 5. **Diagram generation:** `build_diagram`, ELK layout, zones, Mermaid, templates, legend.
 6. **Full export + CLI:** WebP, PDF, PPTX, drawio, Mermaid, CSV, HTML, clipboard, batch per frame, auto-export on save, `mydraw` CLI.

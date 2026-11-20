@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 import type { MydrawBridge } from "../../shared/types";
 
 function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -33,6 +33,26 @@ const bridge: MydrawBridge = {
   onFileChangedOnDisk: (cb) => subscribe("file:changed-on-disk", cb),
   onSettingsChanged: (cb) => subscribe("settings:changed", cb),
   onBeforeClose: (cb) => subscribe("app:before-close", () => cb()),
+
+  libraryIndex: () => ipcRenderer.invoke("library:index"),
+  librarySetFavorite: (id, favorite) => ipcRenderer.invoke("library:set-favorite", id, favorite),
+  libraryMarkUsed: (id) => ipcRenderer.invoke("library:mark-used", id),
+  librarySaveStencil: (payload) => ipcRenderer.invoke("library:save-stencil", payload),
+  libraryImport: (paths, collection) => ipcRenderer.invoke("library:import", paths, collection),
+  libraryImportDialog: () => ipcRenderer.invoke("library:import-dialog"),
+  libraryRename: (id, name) => ipcRenderer.invoke("library:rename", id, name),
+  libraryRemove: (id) => ipcRenderer.invoke("library:remove", id),
+  libraryReveal: (id) => ipcRenderer.invoke("library:reveal", id),
+  libraryOpenFolder: () => ipcRenderer.invoke("library:open-folder"),
+  libraryChooseFolder: () => ipcRenderer.invoke("library:choose-folder"),
+  libraryPacks: () => ipcRenderer.invoke("library:packs"),
+  libraryInstallPacks: (ids) => ipcRenderer.invoke("library:install-packs", ids),
+  excalidrawLibraryGet: () => ipcRenderer.invoke("xlib:get"),
+  excalidrawLibrarySave: (content) => ipcRenderer.invoke("xlib:save", content),
+  pathForFile: (file) => webUtils.getPathForFile(file),
+  onLibraryChanged: (cb) => subscribe("library:changed", cb),
+  onExcalidrawLibraryChanged: (cb) => subscribe("xlib:changed", cb),
+  onPackProgress: (cb) => subscribe("library:pack-progress", cb),
 };
 
 contextBridge.exposeInMainWorld("mydraw", bridge);

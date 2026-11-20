@@ -93,6 +93,13 @@ export function AppMenu({ settings, onCommand, onSettings }: Props) {
         </MainMenu.Group>
       )}
 
+      <MainMenu.Group title="Stencils">
+        <MainMenu.Item onSelect={() => onCommand({ type: "toggleStencils" })} shortcut="⇧⌘Y">
+          Show / hide stencils panel
+        </MainMenu.Item>
+        <MainMenu.Item onSelect={() => onCommand({ type: "saveStencil" })}>Save selection as stencil…</MainMenu.Item>
+      </MainMenu.Group>
+
       <MainMenu.Separator />
       {settings && (
         <MainMenu.Group title="Preferences">

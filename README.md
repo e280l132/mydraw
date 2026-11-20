@@ -30,6 +30,15 @@ npm run smoke      # builds, then drives the real app with Playwright (save, aut
 - View → Theme (System/Light/Dark) and Drawing Style (Clean = sharp edges, no roughness, Nunito; Sketch = hand-drawn).
 - Works offline: Excalidraw fonts are served locally.
 
+## Stencil library (Phase 3)
+
+- One library for every drawing, stored in `~/Documents/mydraw/Library/` (change it from the Stencils panel ⋯ menu). Each top-level folder is a collection; sub-folders are groups.
+- **Stencils panel** (tab bar button or ⇧⌘Y): search, ★ favorites, recent, collapsible collections. Click to insert (repeated clicks lay icons out in a row), or drag onto the canvas. Right-click for favorite / rename / show in Finder / move to Trash.
+- **Icon packs** (⋯ → Download icon packs…): AWS, Azure, Google Cloud, Kubernetes, network devices (IBM Carbon) and 2,300 product logos, downloaded from the vendors into the library folder. Command line: `node scripts/fetch-packs.mjs [aws azure gcp k8s network logos]`.
+- **Your own stencils**: select shapes → ⋯ → Save selection as stencil (or Edit → Save Selection as Stencil…). Drop SVG/PNG/.excalidrawlib files or folders onto the panel to import them.
+- **Excalidraw's Library panel** is saved to `Library/Excalidraw Library/library.excalidrawlib` and shared by all tabs.
+- Drawings embed the icons they use, so they still open if a stencil is later changed or deleted.
+
 ## Layout
 
 ```
@@ -40,7 +49,7 @@ scripts/      dev, build and smoke-test scripts
 tests/        vitest unit tests
 ```
 
-App data (settings, recovery) lives in `~/Library/Application Support/mydraw/`.
+App data (settings, recovery) lives in `~/Library/Application Support/mydraw/`; the stencil library in `~/Documents/mydraw/Library/`.
 
 ## App name and icon
 

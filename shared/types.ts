@@ -1,3 +1,5 @@
+import type { LibraryIndex } from "./library";
+
 // Types shared by the Electron main process, the preload bridge and the renderer.
 
 export type ThemeSetting = "system" | "light" | "dark";
@@ -11,6 +13,8 @@ export interface Settings {
   autosave: boolean;
   /** Most recent first, absolute paths. */
   recentFiles: string[];
+  /** Stencil library folder; null means the default (~/Documents/mydraw/Library). */
+  libraryPath: string | null;
 }
 
 export interface OpenedFile {
@@ -25,6 +29,23 @@ export interface RecoveryEntry {
   title: string;
   content: string;
   savedAt: number;
+}
+
+export interface PackStatus {
+  id: string;
+  title: string;
+  description: string;
+  approxMB: number;
+  license: string;
+  installed: boolean;
+}
+
+export interface SaveStencilPayload {
+  collection: string;
+  name: string;
+  tags: string[];
+  elements: unknown[];
+  files: Record<string, unknown>;
 }
 
 export type UnsavedChoice = "save" | "discard" | "cancel";
@@ -48,7 +69,9 @@ export type MenuCommand =
   | { type: "selectTab"; index: number }
   // In-app menu only:
   | { type: "openRecent"; path: string }
-  | { type: "clearRecent" };
+  | { type: "clearRecent" }
+  | { type: "toggleStencils" }
+  | { type: "saveStencil" };
 
 export interface MydrawBridge {
   platform: string;
@@ -78,4 +101,27 @@ export interface MydrawBridge {
   onFileChangedOnDisk(cb: (file: OpenedFile) => void): () => void;
   onSettingsChanged(cb: (s: Settings) => void): () => void;
   onBeforeClose(cb: () => void): () => void;
+
+  // ----- stencil library -----
+  libraryIndex(): Promise<LibraryIndex>;
+  librarySetFavorite(id: string, favorite: boolean): Promise<void>;
+  libraryMarkUsed(id: string): Promise<void>;
+  librarySaveStencil(payload: SaveStencilPayload): Promise<string>;
+  libraryImport(paths: string[], collection?: string): Promise<number>;
+  libraryImportDialog(): Promise<number>;
+  libraryRename(id: string, name: string): Promise<void>;
+  libraryRemove(id: string): Promise<void>;
+  libraryReveal(id: string): Promise<void>;
+  libraryOpenFolder(): Promise<void>;
+  libraryChooseFolder(): Promise<string | null>;
+  libraryPacks(): Promise<PackStatus[]>;
+  libraryInstallPacks(ids: string[]): Promise<Array<{ pack: string; ok: boolean; count?: number; error?: string }>>;
+  /** Contents of the Excalidraw Library panel file (shared by all tabs); "" when empty. */
+  excalidrawLibraryGet(): Promise<string>;
+  excalidrawLibrarySave(content: string): Promise<void>;
+  /** Absolute path of a dropped File (Finder drag). */
+  pathForFile(file: File): string;
+  onLibraryChanged(cb: (index: LibraryIndex) => void): () => void;
+  onExcalidrawLibraryChanged(cb: (content: string) => void): () => void;
+  onPackProgress(cb: (message: string) => void): () => void;
 }

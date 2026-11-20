@@ -11,6 +11,7 @@ import { electronBinary } from "./electron-app.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "mydraw-smoke-"));
 const userData = path.join(work, "userData");
+const libraryDir = path.join(work, "library");
 const shots = process.env.SMOKE_SCREENSHOTS || work;
 fs.mkdirSync(shots, { recursive: true });
 
@@ -29,7 +30,7 @@ async function launch() {
   const app = await electron.launch({
     executablePath: electronBinary(),
     args: [root],
-    env: { ...process.env, MYDRAW_TEST: "1", MYDRAW_USER_DATA: userData },
+    env: { ...process.env, MYDRAW_TEST: "1", MYDRAW_USER_DATA: userData, MYDRAW_LIBRARY: libraryDir },
   });
   const page = await app.firstWindow();
   await page.setViewportSize({ width: 1400, height: 860 });
@@ -132,9 +133,80 @@ await page.evaluate(() => window.mydraw.updateSettings({ theme: "light", drawing
 await waitFor(async () => (await t((x) => x.currentItemRoughness())) === 0, "clean style restored");
 await page.keyboard.press("Escape");
 
+step("stencil library: import SVG + .excalidrawlib, panel lists them");
+const svgFile = path.join(work, "TestRouter.svg");
+fs.writeFileSync(
+  svgFile,
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="64" height="64"><rect x="2" y="8" width="28" height="16" rx="3" fill="#2f6fde"/><circle cx="8" cy="16" r="2" fill="#fff"/></svg>',
+);
+const xlibFile = path.join(work, "team-shapes.excalidrawlib");
+fs.writeFileSync(
+  xlibFile,
+  JSON.stringify({
+    type: "excalidrawlib",
+    version: 2,
+    libraryItems: [
+      { id: "li1", status: "unpublished", created: 1, name: "Team box", elements: [{ type: "rectangle", id: "r1", x: 0, y: 0, width: 120, height: 60 }] },
+    ],
+  }),
+);
+assert.ok(fs.existsSync(path.join(libraryDir, "My Stencils")), "library folder created");
+assert.equal(await page.evaluate((p) => window.mydraw.libraryImport(p), [svgFile, xlibFile]), 2);
+const lib = await waitFor(async () => {
+  const idx = await t((x) => x.library());
+  return idx && idx.items.some((i) => i.name === "TestRouter") && idx.items.some((i) => i.name === "Team box") ? idx : null;
+}, "imported stencils in index");
+const routerId = lib.items.find((i) => i.name === "TestRouter").id;
+const teamId = lib.items.find((i) => i.name === "Team box").id;
+await page.waitForSelector(".md-panel .md-section-head >> text=My Stencils");
+await page.fill(".md-panel-search input", "testrouter");
+await page.waitForSelector(".md-panel .md-tile >> text=TestRouter");
+await page.screenshot({ path: path.join(shots, "stencil-panel-search.png") });
+
+step("insert stencils by click and by drag-and-drop; images persist in the saved file");
+const before = await t((x) => x.elementCount());
+await t((x, id) => x.insertStencil(id), routerId);
+await waitFor(async () => (await t((x) => x.elementCount())) === before + 2, "icon + label inserted");
+assert.ok((await t((x) => x.imageFileCount())) >= 1, "image file registered");
+await page.dragAndDrop(".md-panel .md-tile", ".md-drawing:not([style*='none']) canvas.interactive", {
+  targetPosition: { x: 500, y: 400 },
+});
+await waitFor(async () => (await t((x) => x.elementCount())) === before + 4, "drag-and-drop insert");
+await t((x, id) => x.insertStencil(id), teamId);
+await waitFor(async () => (await t((x) => x.elementCount())) === before + 5, "excalidrawlib item inserted");
+await waitFor(() => {
+  const d = JSON.parse(fs.readFileSync(file, "utf8"));
+  return d.elements.some((e) => e.type === "image") && Object.keys(d.files ?? {}).length >= 1;
+}, "autosaved file contains image + embedded file");
+await page.fill(".md-panel-search input", "");
+
+step("save selection as stencil; it appears in the library");
+// Excalidraw handles keys only when its canvas has focus: click an empty spot first.
+await page.click(".md-drawing:not([style*='none']) canvas.interactive", { position: { x: 900, y: 700 } });
+await page.keyboard.press("Meta+A");
+await waitFor(async () => (await t((x) => x.selectedCount())) > 1, "shapes selected");
+const savedRel = await t((x) => x.saveSelectionAsStencil("Core pair", "My Stencils"));
+assert.ok(fs.existsSync(path.join(libraryDir, savedRel)), "stencil file written");
+assert.equal(
+  JSON.parse(fs.readFileSync(path.join(libraryDir, savedRel), "utf8")).elements.length,
+  await t((x) => x.elementCount()),
+  "stencil holds every element, including text bound inside shapes",
+);
+const stencilItem = await waitFor(async () => (await t((x) => x.library())).items.find((i) => i.name === "Core pair"), "saved stencil indexed");
+const beforeStencil = await t((x) => x.elementCount());
+await t((x, id) => x.insertStencil(id), stencilItem.id);
+await waitFor(async () => (await t((x) => x.elementCount())) === beforeStencil * 2, "saved stencil inserted (all elements)");
+await page.screenshot({ path: path.join(shots, "stencils-inserted.png") });
+
+step("Excalidraw Library panel is saved to the library folder and shared by tabs");
+await t((x) => x.addToExcalidrawLibrary());
+const xlibPath = path.join(libraryDir, "Excalidraw Library", "library.excalidrawlib");
+await waitFor(() => fs.existsSync(xlibPath) && JSON.parse(fs.readFileSync(xlibPath, "utf8")).libraryItems?.length === 1, "library file written");
+
 step("new tab + crash recovery of unsaved drawing");
 await t((x) => x.newTab());
 await waitFor(async () => (await t((x) => x.elementCount())) === 0, "new tab mounted");
+assert.equal(await t((x) => x.excalidrawLibraryCount()), 1, "new tab sees the shared Excalidraw library");
 await t((x) => x.addSample("Unsaved NAS"));
 state = await t((x) => x.state());
 assert.equal(state.tabs.length, 2);
@@ -158,6 +230,8 @@ assert.ok(recoveredTab.title.startsWith("Untitled"));
 // rectangle + its bound label text
 assert.equal(await t((x) => x.elementCount()), 2);
 await page.screenshot({ path: path.join(shots, "recovered.png") });
+assert.equal(await t((x) => x.excalidrawLibraryCount()), 1, "Excalidraw library survives restart");
+assert.ok((await t((x) => x.library())).items.some((i) => i.name === "Core pair"), "saved stencil survives restart");
 app.process().kill("SIGKILL");
 
 assert.deepEqual(errors, [], "no uncaught page errors");

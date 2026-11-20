@@ -7,6 +7,7 @@ export const DEFAULT_SETTINGS: Settings = {
   drawingStyle: "clean",
   autosave: true,
   recentFiles: [],
+  libraryPath: null,
 };
 
 const THEMES: ThemeSetting[] = ["system", "light", "dark"];
@@ -22,6 +23,9 @@ export function mergeSettings(base: Settings, raw: unknown): Settings {
   if (typeof r.autosave === "boolean") out.autosave = r.autosave;
   if (Array.isArray(r.recentFiles)) {
     out.recentFiles = r.recentFiles.filter((p): p is string => typeof p === "string").slice(0, MAX_RECENT);
+  }
+  if (r.libraryPath === null || (typeof r.libraryPath === "string" && r.libraryPath.startsWith("/"))) {
+    out.libraryPath = r.libraryPath as string | null;
   }
   return out;
 }

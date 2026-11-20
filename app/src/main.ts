@@ -14,6 +14,7 @@ import {
   writeDrawing,
   writeRecovery,
 } from "./files";
+import { LIBRARY_SCHEME, setupLibrary } from "./library-ipc";
 import { buildMenu } from "./menu";
 import { getSettings, onSettingsChanged, rememberRecent, updateSettings } from "./settings-store";
 
@@ -28,6 +29,7 @@ const webRoot = path.join(app.getAppPath(), "web", "dist");
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true } },
+  { scheme: LIBRARY_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
 ]);
 
 let win: BrowserWindow | null = null;
@@ -319,6 +321,7 @@ if (!isTest && !app.requestSingleInstanceLock()) {
     });
 
     registerIpc();
+    setupLibrary(() => win, settings, (patch) => updateSettings(patch));
     createWindow();
   });
 

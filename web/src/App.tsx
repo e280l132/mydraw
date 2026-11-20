@@ -1,12 +1,35 @@
-import { CaptureUpdateAction, Excalidraw, convertToExcalidrawElements } from "@excalidraw/excalidraw";
+import {
+  CaptureUpdateAction,
+  Excalidraw,
+  convertToExcalidrawElements,
+  getCommonBounds,
+  getLibraryItemsHash,
+  loadLibraryFromBlob,
+  serializeLibraryAsJSON,
+  viewportCoordsToSceneCoords,
+} from "@excalidraw/excalidraw";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
-import type { AppState, ExcalidrawImperativeAPI, ExcalidrawInitialDataState } from "@excalidraw/excalidraw/types";
+import type {
+  AppState,
+  ExcalidrawImperativeAPI,
+  ExcalidrawInitialDataState,
+  LibraryItems,
+} from "@excalidraw/excalidraw/types";
+import type { LibraryIndex, LibraryItem } from "../../shared/library";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { safeFileName, titleFromPath } from "../../shared/names";
 import type { DrawingStyle, MenuCommand, OpenedFile, Settings } from "../../shared/types";
 import { AppMenu } from "./AppMenu";
 import { drawingStyleAppState } from "./drawingStyle";
 import { ExportDialog } from "./ExportDialog";
+import { PacksDialog, RenameDialog, SaveStencilDialog } from "./library/dialogs";
+import { STENCIL_DRAG_TYPE, StencilPanel } from "./library/StencilPanel";
+import {
+  insertStencil,
+  loadStencil,
+  selectionForStencil,
+  type StencilContent,
+} from "./library/stencilContent";
 import { DEFAULT_EXPORT_OPTIONS, renderExport, type ExportOptions } from "./exportImage";
 import { apiSceneHash, parseDrawing, sceneHash, serializeScene, type LoadedScene } from "./scene";
 import { TabBar, type TabInfo } from "./TabBar";
@@ -42,8 +65,18 @@ function nextUntitled(): string {
   return untitledCount === 1 ? "Untitled" : `Untitled ${untitledCount}`;
 }
 
+/** Items of Excalidraw's own Library panel, shared by every tab and saved in the library folder. */
+let sharedLibraryItems: LibraryItems = [];
+let sharedLibraryHash = getLibraryItemsHash([]);
+
+async function parseLibrary(content: string): Promise<LibraryItems> {
+  if (!content.trim()) return [];
+  return loadLibraryFromBlob(new Blob([content], { type: "application/json" }), "unpublished");
+}
+
 function initialDataFor(scene: LoadedScene | null, style: DrawingStyle): ExcalidrawInitialDataState {
   return {
+    libraryItems: sharedLibraryItems,
     elements: scene?.elements ?? [],
     appState: { viewBackgroundColor: "#ffffff", ...scene?.appState, ...drawingStyleAppState(style) },
     files: scene?.files ?? {},
@@ -73,6 +106,7 @@ interface DrawingViewProps {
   onCommand(cmd: MenuCommand): void;
   onSettings(patch: Partial<Settings>): void;
   onResolveConflict(id: string, reload: boolean): void;
+  onLibraryChange(id: string, items: LibraryItems): void;
 }
 
 const DrawingView = memo(function DrawingView({
@@ -85,6 +119,7 @@ const DrawingView = memo(function DrawingView({
   onCommand,
   onSettings,
   onResolveConflict,
+  onLibraryChange,
 }: DrawingViewProps) {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   useEffect(() => {
@@ -108,6 +143,7 @@ const DrawingView = memo(function DrawingView({
           }}
           initialData={tab.initialData}
           onChange={(elements, appState) => onChange(tab.id, elements, appState)}
+          onLibraryChange={(items) => onLibraryChange(tab.id, items)}
           theme={theme}
           name={tab.title}
           UIOptions={UI_OPTIONS}
@@ -127,6 +163,12 @@ export function App() {
   const systemTheme = useSystemTheme();
   const theme = !settings || settings.theme === "system" ? systemTheme : settings.theme;
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
+  const [libraryIndex, setLibraryIndex] = useState<LibraryIndex | null>(null);
+  const [panelOpen, setPanelOpen] = useState(() => localStorage.getItem("mydraw.panelOpen") !== "0");
+  const [addLabels, setAddLabels] = useState(() => localStorage.getItem("mydraw.addLabels") !== "0");
+  const [saveSelection, setSaveSelection] = useState<(StencilContent & { suggestedName: string }) | null>(null);
+  const [renaming, setRenaming] = useState<LibraryItem | null>(null);
+  const [packsOpen, setPacksOpen] = useState(false);
 
   // Refs hold the latest values for callbacks fired by Excalidraw, IPC and timers.
   const tabsRef = useRef<Tab[]>([]);
@@ -137,6 +179,10 @@ export function App() {
   const timers = useRef(new Map<string, { autosave?: number; recovery?: number }>());
   const saveChains = useRef(new Map<string, Promise<boolean>>());
   const started = useRef(false);
+  const libraryRef = useRef<LibraryIndex | null>(null);
+  const addLabelsRef = useRef(addLabels);
+  addLabelsRef.current = addLabels;
+  const librarySaveTimer = useRef<number | undefined>(undefined);
 
   const commitTabs = useCallback((update: (prev: Tab[]) => Tab[]) => {
     tabsRef.current = update(tabsRef.current);
@@ -269,6 +315,147 @@ export function App() {
     },
     [patchTab, scheduleBackground],
   );
+
+  // ---------- Excalidraw Library panel (shared by all tabs, saved in the library folder) ----------
+
+  const applySharedLibrary = useCallback((items: LibraryItems, exceptTab?: string) => {
+    sharedLibraryItems = items;
+    sharedLibraryHash = getLibraryItemsHash(items);
+    for (const [id, api] of apis.current) {
+      if (id !== exceptTab) void api.updateLibrary({ libraryItems: items, merge: false });
+    }
+  }, []);
+
+  const onLibraryChange = useCallback(
+    (id: string, items: LibraryItems) => {
+      if (getLibraryItemsHash(items) === sharedLibraryHash) return; // echo of a sync, or no change
+      applySharedLibrary(items, id);
+      window.clearTimeout(librarySaveTimer.current);
+      librarySaveTimer.current = window.setTimeout(() => {
+        bridge.excalidrawLibrarySave(serializeLibraryAsJSON(sharedLibraryItems)).catch((e: Error) =>
+          showToast(`Could not save the library: ${e.message}`, true),
+        );
+      }, 400);
+    },
+    [applySharedLibrary, showToast],
+  );
+
+  // ---------- stencils ----------
+
+  const labelOptions = () => {
+    const st = apis.current.get(activeRef.current)?.getAppState();
+    return {
+      label: addLabelsRef.current,
+      fontFamily: (st?.currentItemFontFamily as number | undefined) ?? 6,
+      strokeColor: st?.currentItemStrokeColor ?? "#1e1e1e",
+    };
+  };
+
+  /** Where the last click-insert went, so repeated clicks lay stencils out in a row. */
+  const lastPlacement = useRef<{
+    tab: string;
+    view: string;
+    right: number;
+    y: number;
+    rowLeft: number;
+    rowBottom: number;
+  } | null>(null);
+
+  /** Insert a stencil into the active drawing, at scene point `at` or the middle of the view. */
+  const insertItem = useCallback(
+    async (item: LibraryItem, at?: { x: number; y: number }) => {
+      const api = apis.current.get(activeRef.current);
+      if (!api) return;
+      try {
+        const content = await loadStencil(item, labelOptions());
+        const st = api.getAppState();
+        const view = `${st.scrollX}:${st.scrollY}:${st.zoom.value}`;
+        let target = at;
+        const last = lastPlacement.current;
+        let newRow = false;
+        if (!target && last && last.tab === activeRef.current && last.view === view) {
+          const [minX, minY, maxX, maxY] = getCommonBounds(content.elements);
+          const w = maxX - minX;
+          const visibleRight = st.width / st.zoom.value - st.scrollX - 40;
+          if (last.right + 40 + w > visibleRight) {
+            // Wrap to a new row under the previous one.
+            newRow = true;
+            target = { x: last.rowLeft + w / 2, y: last.rowBottom + 50 + (maxY - minY) / 2 };
+          } else {
+            target = { x: last.right + 40 + w / 2, y: last.y };
+          }
+        }
+        const placed = insertStencil(api, content, target);
+        if (placed.length) {
+          const [minX, minY, maxX, maxY] = getCommonBounds(placed);
+          const continuing = last && !newRow && target && !at;
+          lastPlacement.current = at
+            ? null
+            : {
+                tab: activeRef.current,
+                view,
+                right: maxX,
+                y: (minY + maxY) / 2,
+                rowLeft: continuing ? last.rowLeft : minX,
+                rowBottom: continuing ? Math.max(last.rowBottom, maxY) : maxY,
+              };
+        }
+        void bridge.libraryMarkUsed(item.id);
+      } catch (e) {
+        showToast(`Could not insert “${item.name}”: ${(e as Error).message}`, true);
+      }
+    },
+    [showToast],
+  );
+
+  const openSaveStencil = useCallback(() => {
+    const api = apis.current.get(activeRef.current);
+    if (!api) return;
+    const sel = selectionForStencil(api);
+    if (!sel.elements.length) {
+      showToast("Select the shapes you want to save as a stencil first.", true);
+      return;
+    }
+    setSaveSelection(sel);
+  }, [showToast]);
+
+  const togglePanel = useCallback(() => {
+    setPanelOpen((v) => {
+      localStorage.setItem("mydraw.panelOpen", v ? "0" : "1");
+      return !v;
+    });
+  }, []);
+
+  // Dropping a stencil from the panel onto the canvas (handled before Excalidraw sees the drop).
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const isStencil = (e: DragEvent) => e.dataTransfer?.types.includes(STENCIL_DRAG_TYPE);
+    const onDragOver = (e: DragEvent) => {
+      if (!isStencil(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer!.dropEffect = "copy";
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!isStencil(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const id = e.dataTransfer!.getData(STENCIL_DRAG_TYPE);
+      const item = libraryRef.current?.items.find((i) => i.id === id);
+      const api = apis.current.get(activeRef.current);
+      if (!item || !api) return;
+      const at = viewportCoordsToSceneCoords({ clientX: e.clientX, clientY: e.clientY }, api.getAppState());
+      void insertItem(item, at);
+    };
+    el.addEventListener("dragover", onDragOver, true);
+    el.addEventListener("drop", onDrop, true);
+    return () => {
+      el.removeEventListener("dragover", onDragOver, true);
+      el.removeEventListener("drop", onDrop, true);
+    };
+  }, [insertItem]);
 
   // ---------- tabs ----------
 
@@ -450,9 +637,13 @@ export function App() {
           return openFiles(await bridge.openRecent(cmd.path));
         case "clearRecent":
           return bridge.clearRecent();
+        case "toggleStencils":
+          return togglePanel();
+        case "saveStencil":
+          return openSaveStencil();
       }
     },
-    [closeTab, newTab, openFiles, save, setActive],
+    [closeTab, newTab, openFiles, openSaveStencil, save, setActive, togglePanel],
   );
 
   // Main process saves settings and broadcasts them back (settings:changed), which updates state.
@@ -506,6 +697,17 @@ export function App() {
       settingsRef.current = settings;
       setSettings(settings);
 
+      // Library first, so every tab starts with the shared Excalidraw Library items.
+      try {
+        const [index, xlib] = await Promise.all([bridge.libraryIndex(), bridge.excalidrawLibraryGet()]);
+        libraryRef.current = index;
+        setLibraryIndex(index);
+        sharedLibraryItems = await parseLibrary(xlib);
+        sharedLibraryHash = getLibraryItemsHash(sharedLibraryItems);
+      } catch (e) {
+        showToast(`Could not load the stencil library: ${(e as Error).message}`, true);
+      }
+
       const recovered = await bridge.listRecovery();
       for (const r of recovered) {
         try {
@@ -551,6 +753,16 @@ export function App() {
         if (tab.dirty) patchTab(tab.id, { conflict: file });
         else void reloadFromContent(tab.id, file.content);
       }),
+      bridge.onLibraryChanged((index) => {
+        libraryRef.current = index;
+        setLibraryIndex(index);
+      }),
+      bridge.onExcalidrawLibraryChanged((content) => {
+        parseLibrary(content).then(
+          (items) => getLibraryItemsHash(items) !== sharedLibraryHash && applySharedLibrary(items),
+          () => showToast("The Excalidraw library file changed on disk but could not be read.", true),
+        );
+      }),
       bridge.onSettingsChanged((s) => {
         const prev = settingsRef.current;
         settingsRef.current = s;
@@ -580,7 +792,7 @@ export function App() {
       offs.forEach((off) => off());
       window.removeEventListener("keydown", onKey, true);
     };
-  }, [beforeClose, onCommand, openFiles, patchTab, reloadFromContent, scheduleBackground]);
+  }, [applySharedLibrary, beforeClose, onCommand, openFiles, patchTab, reloadFromContent, scheduleBackground, showToast]);
 
   const active = tabs.find((t) => t.id === activeId);
   useEffect(() => {
@@ -625,8 +837,37 @@ export function App() {
       },
       newTab: () => newTab(),
       openExportDialog: () => setExportOpen(true),
+      library: () => libraryRef.current,
+      insertStencil: (id: string) => {
+        const item = libraryRef.current?.items.find((i) => i.id === id);
+        if (!item) throw new Error(`no stencil ${id}`);
+        return insertItem(item);
+      },
+      selectedCount: () => {
+        const sel = api().getAppState().selectedElementIds;
+        return api().getSceneElements().filter((e) => sel[e.id]).length;
+      },
+      saveSelectionAsStencil: (name: string, collection: string) => {
+        const sel = selectionForStencil(api());
+        return bridge.librarySaveStencil({
+          collection,
+          name,
+          tags: ["test"],
+          elements: sel.elements,
+          files: Object.fromEntries(sel.files.map((f) => [f.id, f])),
+        });
+      },
+      imageFileCount: () => Object.keys(api().getFiles()).length,
+      excalidrawLibraryCount: async () => (await api().updateLibrary({ libraryItems: [], merge: true })).length,
+      addToExcalidrawLibrary: async () => {
+        const els = api().getSceneElements();
+        await api().updateLibrary({
+          libraryItems: [{ id: newId(), status: "unpublished", created: Date.now(), elements: els, name: "Test item" }],
+          merge: true,
+        });
+      },
     };
-  }, [newTab, patchTab, save]);
+  }, [insertItem, newTab, patchTab, save]);
 
   const activeApi = apis.current.get(activeId);
   return (
@@ -637,8 +878,11 @@ export function App() {
         onSelect={setActive}
         onClose={(id) => void closeTab(id)}
         onNew={newTab}
+        panelOpen={panelOpen}
+        onTogglePanel={togglePanel}
       />
-      <div className="md-content">
+      <div className="md-main">
+      <div className="md-content" ref={contentRef}>
         {tabs.map((t) => (
           <DrawingView
             key={t.id}
@@ -651,8 +895,26 @@ export function App() {
             onCommand={onCommandSync}
             onSettings={onSettings}
             onResolveConflict={onResolveConflict}
+            onLibraryChange={onLibraryChange}
           />
         ))}
+      </div>
+      {panelOpen && (
+        <StencilPanel
+          index={libraryIndex}
+          addLabels={addLabels}
+          onAddLabelsChange={(v) => {
+            localStorage.setItem("mydraw.addLabels", v ? "1" : "0");
+            setAddLabels(v);
+          }}
+          onInsert={(item) => void insertItem(item)}
+          onSaveSelection={openSaveStencil}
+          onOpenPacks={() => setPacksOpen(true)}
+          onRename={setRenaming}
+          onToast={showToast}
+          onClose={togglePanel}
+        />
+      )}
       </div>
       {exportOpen && activeApi && active && (
         <ExportDialog
@@ -662,6 +924,16 @@ export function App() {
           onDone={(msg) => showToast(msg)}
         />
       )}
+      {saveSelection && (
+        <SaveStencilDialog
+          index={libraryIndex}
+          selection={saveSelection}
+          onClose={() => setSaveSelection(null)}
+          onSaved={(m) => showToast(m)}
+        />
+      )}
+      {renaming && <RenameDialog item={renaming} onClose={() => setRenaming(null)} onDone={showToast} />}
+      {packsOpen && <PacksDialog onClose={() => setPacksOpen(false)} onDone={showToast} />}
       {toast && <div className={`md-toast${toast.error ? " error" : ""}`}>{toast.text}</div>}
     </div>
   );
