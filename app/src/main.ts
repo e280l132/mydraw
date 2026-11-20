@@ -17,6 +17,8 @@ import {
 import { buildMenu } from "./menu";
 import { getSettings, onSettingsChanged, rememberRecent, updateSettings } from "./settings-store";
 
+app.setName("mydraw");
+
 const isTest = process.env.MYDRAW_TEST === "1";
 const devUrl = process.env.MYDRAW_DEV_URL;
 if (process.env.MYDRAW_USER_DATA) app.setPath("userData", process.env.MYDRAW_USER_DATA);
@@ -222,6 +224,7 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 500,
     title: "mydraw",
+    icon: path.join(app.getAppPath(), "assets", "icon.png"),
     show: false,
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#121212" : "#ffffff",
     webPreferences: {
@@ -276,6 +279,16 @@ if (!isTest && !app.requestSingleInstanceLock()) {
   pendingPaths.push(...process.argv.slice(1).filter(isDrawingPath));
 
   app.whenReady().then(() => {
+    const iconPng = path.join(app.getAppPath(), "assets", "icon.png");
+    // The branded dev bundle already has the icon; this covers runs via the stock Electron binary.
+    if (process.platform === "darwin" && !app.isPackaged && fs.existsSync(iconPng)) app.dock?.setIcon(iconPng);
+    app.setAboutPanelOptions({
+      applicationName: "mydraw",
+      applicationVersion: app.getVersion(),
+      copyright: "Built on Excalidraw (MIT)",
+      ...(fs.existsSync(iconPng) ? { iconPath: iconPng } : {}),
+    });
+
     protocol.handle("app", (req) => {
       const { pathname } = new URL(req.url);
       const file = path.normalize(path.join(webRoot, decodeURIComponent(pathname)));

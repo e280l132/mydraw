@@ -3,5 +3,6 @@ app/dist/
 web/dist/
 web/public/fonts/
 release/
+.electron/
 *.log
 .DS_Store

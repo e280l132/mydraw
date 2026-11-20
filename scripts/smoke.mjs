@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "playwright-core";
+import { electronBinary } from "./electron-app.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "mydraw-smoke-"));
@@ -26,6 +27,7 @@ async function waitFor(fn, what, timeout = 10000) {
 
 async function launch() {
   const app = await electron.launch({
+    executablePath: electronBinary(),
     args: [root],
     env: { ...process.env, MYDRAW_TEST: "1", MYDRAW_USER_DATA: userData },
   });

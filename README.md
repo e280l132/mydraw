@@ -41,3 +41,8 @@ tests/        vitest unit tests
 ```
 
 App data (settings, recovery) lives in `~/Library/Application Support/mydraw/`.
+
+## App name and icon
+
+`assets/icon.svg` is the source icon; `npm run icon` regenerates `assets/icon.png` and `assets/icon.icns`.
+On macOS, dev/start/smoke run a copy of Electron renamed to `mydraw.app` (built automatically in `.electron/` by `scripts/electron-app.mjs`), so the menu bar, Dock and ⌘-Tab show "mydraw" with the mydraw icon.

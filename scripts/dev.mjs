@@ -3,8 +3,10 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
-import electronPath from "electron";
 import { copyFonts, watchApp } from "./build-app.mjs";
+import { electronBinary } from "./electron-app.mjs";
+
+const electronPath = electronBinary();
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
