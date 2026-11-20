@@ -124,9 +124,9 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
 
 ## Phases
 1. ✅ **Core app** (done 2026-11-19): scaffold, Excalidraw in Electron, file ops, autosave, crash recovery, file watcher, tabs, Clean theme default, PNG/SVG/JPG export. `npm run dev`. Smoke test: `npm run smoke`.
-2. **MCP + control server:** read/build/connect/delete/screenshot/export. Claude can draw end to end early.
+2. **MCP + control server:** read/build/connect/delete/screenshot/export. Claude can draw end to end early. **← next.** Include stencil tools (`search_stencils`, `place_stencil`, `save_as_stencil`) and `recolor` (reuse `web/src/library/stencilContent.ts`, `iconColor.ts`, `pickColor.ts`).
 3. ✅ **Stencil library** (done 2026-11-20, before Phase 2 at Brian's request): library folder + index, pack downloader (AWS, Azure, GCP, Kubernetes, Network via IBM Carbon, Logos), Stencils panel (search, favorites, recent, drag/click insert, rename/trash), save selection as stencil, file/folder drop import, Excalidraw Library panel persisted + shared across tabs, folder watcher. Verified: images persist in saved files; library survives restart. MCP stencil tools move to Phase 2.
-4. **Colors + styles:** color panel, palettes, swatches, themes, style presets.
+4. **Colors + styles:** color panel, palettes, swatches, themes, style presets. *Already done (2026-11-20):* SVG icon recolor in the properties panel (11 swatches + custom 12th, live HSV picker, eyedropper that copies an element's real color), icons keep true colors in dark mode. Remaining: full color panel for shapes/text, palettes, themes, style presets.
 5. **Diagram generation:** `build_diagram`, ELK layout, zones, Mermaid, templates, legend.
 6. **Full export + CLI:** WebP, PDF, PPTX, drawio, Mermaid, CSV, HTML, clipboard, batch per frame, auto-export on save, `mydraw` CLI.
 7. **Ease of use:** command palette, quick connect, find & replace, page navigator, drill-down links, lint.
