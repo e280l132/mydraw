@@ -14,6 +14,8 @@ import type {
   LibraryItems,
 } from "@excalidraw/excalidraw/types";
 import { libraryFileUrl, type LibraryItem, type StencilFile } from "../../../shared/library";
+import { ensureSvgSize } from "../../../shared/recolor";
+import { TRUE_COLOR_SVG_MIME, trueColorFile } from "./trueColor";
 
 export interface StencilContent {
   elements: ExcalidrawElement[];
@@ -72,7 +74,11 @@ const randomInt = () => Math.floor(Math.random() * 2 ** 31);
 
 async function loadIcon(item: LibraryItem, opts: LabelOptions): Promise<StencilContent> {
   const raw = await fetchLibraryFile(item.file, item.mtime);
-  const bytes = await raw.arrayBuffer();
+  let bytes = await raw.arrayBuffer();
+  if (item.kind === "svg") {
+    // Icons need an intrinsic size or image export crops them (see ensureSvgSize).
+    bytes = new TextEncoder().encode(ensureSvgSize(new TextDecoder().decode(bytes))).buffer as ArrayBuffer;
+  }
   const mimeType = item.kind === "png" ? "image/png" : "image/svg+xml";
   const dataURL = await blobToDataURL(new Blob([bytes], { type: mimeType }));
   const fileId = (await sha1Hex(bytes)) as FileId;
@@ -98,7 +104,18 @@ async function loadIcon(item: LibraryItem, opts: LabelOptions): Promise<StencilC
     elements.push({ ...text, x: (width - text.width) / 2, groupIds: [groupId] } as ExcalidrawElement);
   }
   const now = Date.now();
-  return { elements, files: [{ id: fileId, dataURL: dataURL as DataURL, mimeType, created: now, lastRetrieved: now }] };
+  return {
+    elements,
+    files: [
+      {
+        id: fileId,
+        dataURL: dataURL as DataURL,
+        mimeType: item.kind === "png" ? "image/png" : TRUE_COLOR_SVG_MIME,
+        created: now,
+        lastRetrieved: now,
+      },
+    ],
+  };
 }
 
 async function loadXlibItems(item: LibraryItem): Promise<LibraryItems> {
@@ -120,7 +137,7 @@ async function loadUncached(item: LibraryItem, opts: LabelOptions): Promise<Sten
       const data = JSON.parse(await (await fetchLibraryFile(item.file, item.mtime)).text()) as StencilFile;
       return {
         elements: data.elements as ExcalidrawElement[],
-        files: Object.values(data.files ?? {}) as BinaryFileData[],
+        files: (Object.values(data.files ?? {}) as BinaryFileData[]).map(trueColorFile),
       };
     }
     case "xlib": {

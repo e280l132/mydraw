@@ -608,11 +608,6 @@ body {
   max-height: 44px;
 }
 
-.md-app.theme-dark .md-tile-preview img {
-  /* same treatment Excalidraw applies to the canvas in dark mode */
-  filter: invert(93%) hue-rotate(180deg);
-}
-
 .md-tile-missing {
   color: var(--md-muted);
 }

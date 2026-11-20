@@ -115,3 +115,22 @@ export function svgToDataURL(svg: string): string {
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return `data:image/svg+xml;base64,${btoa(bin)}`;
 }
+
+/**
+ * Give the root <svg> explicit width/height (from its viewBox) when missing. Images need an
+ * intrinsic size: without one the browser reports a default size and Excalidraw's image export
+ * crops/zooms the icon. Excalidraw does the same for SVGs it imports itself.
+ */
+export function ensureSvgSize(svg: string, fallback = 64): string {
+  return svg.replace(/<svg\b([^>]*)>/i, (all, attrs: string) => {
+    const hasW = /\swidth\s*=\s*["']\s*[\d.]+(px)?\s*["']/i.test(attrs);
+    const hasH = /\sheight\s*=\s*["']\s*[\d.]+(px)?\s*["']/i.test(attrs);
+    if (hasW && hasH) return all;
+    const vb = attrs.match(/\sviewBox\s*=\s*["']\s*([-\d.]+)[\s,]+([-\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)\s*["']/i);
+    const w = vb ? parseFloat(vb[3]) : fallback;
+    const h = vb ? parseFloat(vb[4]) : fallback;
+    // Drop percentage/auto sizes, then set numeric ones.
+    const cleaned = attrs.replace(/\s(width|height)\s*=\s*(["'])[^"']*\2/gi, "");
+    return `<svg${cleaned} width="${w}" height="${h}">`;
+  });
+}

@@ -4,7 +4,8 @@
 import { CaptureUpdateAction, newElementWith } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement, ExcalidrawImageElement, FileId } from "@excalidraw/excalidraw/element/types";
 import type { AppState, BinaryFiles, DataURL, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { recolorSvg, svgFromDataURL, svgToDataURL } from "../../../shared/recolor";
+import { ensureSvgSize, recolorSvg, svgFromDataURL, svgToDataURL } from "../../../shared/recolor";
+import { TRUE_COLOR_SVG_MIME, isSvgDataURL } from "./trueColor";
 
 const ORIGINAL_KEY = "mydrawOriginalSvg";
 const COLOR_KEY = "mydrawIconColor";
@@ -23,7 +24,8 @@ export interface IconSelection {
 export const NO_ICONS: IconSelection = { count: 0, raster: 0, color: null };
 
 function isSvgFile(files: BinaryFiles, el: ExcalidrawImageElement): boolean {
-  return !!el.fileId && files[el.fileId]?.mimeType === "image/svg+xml";
+  const file = el.fileId ? files[el.fileId] : undefined;
+  return !!file && isSvgDataURL(file.dataURL);
 }
 
 /** Summarise the selected images, for the color bar. */
@@ -71,7 +73,9 @@ export async function recolorSelectedIcons(
   for (const el of all) {
     if (el.type !== "image" || el.isDeleted || !appState.selectedElementIds[el.id] || !isSvgFile(files, el)) continue;
     const custom = { ...(el.customData ?? {}) };
-    const original = (custom[ORIGINAL_KEY] as string | undefined) ?? svgFromDataURL(files[el.fileId!].dataURL);
+    const original = ensureSvgSize(
+      (custom[ORIGINAL_KEY] as string | undefined) ?? svgFromDataURL(files[el.fileId!].dataURL),
+    );
     const svg = color ? recolorSvg(original, color) : original;
     const id = (await sha1Hex(svg)) as FileId;
     if (id !== el.fileId) newFiles.set(id, { id, dataURL: svgToDataURL(svg) as DataURL });
@@ -103,7 +107,7 @@ export async function recolorSelectedIcons(
   // elements already in the scene, so the new icon appears right away instead of a placeholder.
   const now = Date.now();
   api.addFiles(
-    [...newFiles.values()].map((f) => ({ ...f, mimeType: "image/svg+xml" as const, created: now, lastRetrieved: now })),
+    [...newFiles.values()].map((f) => ({ ...f, mimeType: TRUE_COLOR_SVG_MIME, created: now, lastRetrieved: now })),
   );
   return updates.size;
 }

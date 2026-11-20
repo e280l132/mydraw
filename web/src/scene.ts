@@ -1,6 +1,7 @@
 import { hashElementsVersion, loadFromBlob, serializeAsJSON } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import { trueColorFiles } from "./library/trueColor";
 
 export interface LoadedScene {
   elements: readonly ExcalidrawElement[];
@@ -21,7 +22,8 @@ export async function parseDrawing(content: string): Promise<LoadedScene> {
       gridStep: data.appState.gridStep,
       gridModeEnabled: data.appState.gridModeEnabled,
     },
-    files: data.files ?? {},
+    // SVG images keep their colors in dark mode (see library/trueColor.ts).
+    files: trueColorFiles(data.files ?? {}),
   };
 }
 

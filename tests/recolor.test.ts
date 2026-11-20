@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isNearWhite, parseColor, recolorSvg, svgFromDataURL, svgToDataURL } from "../shared/recolor";
+import { ensureSvgSize, isNearWhite, parseColor, recolorSvg, svgFromDataURL, svgToDataURL } from "../shared/recolor";
 
 const BLUE = "#1971c2";
 
@@ -67,5 +67,19 @@ describe("data URLs", () => {
     const svg = `<svg><title>Ünïcode — test</title></svg>`;
     expect(svgFromDataURL(svgToDataURL(svg))).toBe(svg);
     expect(svgFromDataURL(`data:image/svg+xml,${encodeURIComponent(svg)}`)).toBe(svg);
+  });
+});
+
+describe("ensureSvgSize", () => {
+  it("adds width/height from the viewBox", () => {
+    expect(ensureSvgSize(`<svg id="x" viewBox="0 0 512 256"><g/></svg>`)).toBe(`<svg id="x" viewBox="0 0 512 256" width="512" height="256"><g/></svg>`);
+  });
+  it("replaces percentage sizes and keeps numeric ones", () => {
+    expect(ensureSvgSize(`<svg viewBox="0 0 32 32" width="100%" height="100%">`)).toBe(`<svg viewBox="0 0 32 32" width="32" height="32">`);
+    const sized = `<svg viewBox="0 0 32 32" width="64" height="64">`;
+    expect(ensureSvgSize(sized)).toBe(sized);
+  });
+  it("falls back when there is no viewBox", () => {
+    expect(ensureSvgSize(`<svg>`)).toBe(`<svg width="64" height="64">`);
   });
 });
