@@ -194,7 +194,7 @@ await waitFor(() => {
 }, "recolor autosaved with its file");
 
 // Custom picker: drag across the color square; icons follow live, then the color is committed.
-await page.click(`${SECTION} >> text=Custom…`);
+await page.click(`${SECTION} >> text=Custom`);
 const sv = await page.waitForSelector(`${SECTION} .md-picker-sv`);
 const box = await sv.boundingBox();
 await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);

@@ -848,6 +848,17 @@ body {
   display: flex;
   gap: 0.35rem;
   margin-top: 0.5rem;
+  /* same width as the swatch grid, so the row never spills past the panel */
+  width: calc(6 * 1.6rem + 5 * 0.35rem);
+}
+
+.md-iconcolor-actions .md-chip {
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 0.4rem;
+  white-space: nowrap;
 }
 
 .md-chip {
@@ -871,6 +882,7 @@ body {
 }
 
 .md-rainbow {
+  flex: none;
   width: 12px;
   height: 12px;
   border-radius: 50%;
@@ -970,8 +982,9 @@ body {
   cursor: crosshair !important;
 }
 
-.md-chip-pick {
-  padding: 0 0.45rem;
+.md-iconcolor-actions .md-chip-pick {
+  flex: 0 0 1.75rem;
+  padding: 0;
 }
 
 .md-picker-eyedrop.on {

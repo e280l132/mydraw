@@ -201,7 +201,7 @@ export function IconColorSection({ selection, onColor, custom, onCustomChange, o
           Original
         </button>
         <button className={`md-chip md-chip-custom${pickerOpen ? " on" : ""}`} onClick={() => setPickerOpen((v) => !v)}>
-          <span className="md-rainbow" /> Custom…
+          <span className="md-rainbow" /> Custom
         </button>
         <button
           className={`md-chip md-chip-pick${picking ? " on" : ""}`}
