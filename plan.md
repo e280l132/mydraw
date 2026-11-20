@@ -123,7 +123,7 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
 - Generate docs: `get_inventory` → Markdown table + exported PNG.
 
 ## Phases
-1. **Core app:** scaffold, Excalidraw in Electron, file ops, autosave, tabs, Clean theme default, PNG/SVG/JPG export. `npm run dev`.
+1. ✅ **Core app** (done 2026-11-19): scaffold, Excalidraw in Electron, file ops, autosave, crash recovery, file watcher, tabs, Clean theme default, PNG/SVG/JPG export. `npm run dev`. Smoke test: `npm run smoke`.
 2. **MCP + control server:** read/build/connect/delete/screenshot/export. Claude can draw end to end early.
 3. **Stencil library:** library folder + index, pack downloader, panel, "Add to library", file drop, Excalidraw library panel persisted to the folder, folder watcher, `place_stencil`/`search_stencils`/`save_as_stencil`, `.excalidrawlib` import/export. First verify image elements survive save/reopen/export.
 4. **Colors + styles:** color panel, palettes, swatches, themes, style presets.

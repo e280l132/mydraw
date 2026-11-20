@@ -1,0 +1,7 @@
+node_modules/
+app/dist/
+web/dist/
+web/public/fonts/
+release/
+*.log
+.DS_Store
