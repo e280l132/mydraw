@@ -29,14 +29,32 @@ export interface AgentCommand {
 
 export type AgentReply = { id: number; ok: true; result: unknown } | { id: number; ok: false; error: string };
 
-/** Formats the `export` tool can write in Phase 2 (more in Phase 6). */
-export const AGENT_EXPORT_FORMATS = ["png", "jpg", "svg", "excalidraw"] as const;
+/** Formats the `export` tool can write, and the file extension each gets by default. */
+export const AGENT_EXPORT_FORMATS = ["png", "jpg", "webp", "svg", "html", "mermaid", "csv", "markdown", "excalidraw"] as const;
 export type AgentExportFormat = (typeof AGENT_EXPORT_FORMATS)[number];
 
+export const AGENT_EXPORT_EXTENSION: Record<AgentExportFormat, string> = {
+  png: "png",
+  jpg: "jpg",
+  webp: "webp",
+  svg: "svg",
+  html: "html",
+  mermaid: "mmd",
+  csv: "csv",
+  markdown: "md",
+  excalidraw: "excalidraw",
+};
+
+export const AGENT_EXPORT_SCOPES = ["all", "selection", "frame", "frames"] as const;
+
+/** Format implied by a file name (`.mmd`/`.mermaid` -> mermaid, `.md` -> markdown, `.jpeg` -> jpg). */
 export function exportFormatForPath(p: string): AgentExportFormat | null {
   const m = /\.([a-z0-9]+)$/i.exec(p);
   if (!m) return null;
   const ext = m[1].toLowerCase();
   if (ext === "jpeg") return "jpg";
-  return (AGENT_EXPORT_FORMATS as readonly string[]).includes(ext) ? (ext as AgentExportFormat) : null;
+  if (ext === "mermaid") return "mermaid";
+  if (ext === "htm") return "html";
+  if (ext === "markdown") return "markdown";
+  return (Object.keys(AGENT_EXPORT_EXTENSION) as AgentExportFormat[]).find((f) => AGENT_EXPORT_EXTENSION[f] === ext) ?? null;
 }

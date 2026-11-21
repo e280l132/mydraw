@@ -1,19 +1,38 @@
 import { useEffect, useRef, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import { siblingPath } from "../../shared/names";
 import {
   DEFAULT_EXPORT_OPTIONS,
+  EXPORT_FORMATS,
+  TEXT_FORMATS,
   exportElements,
   hasSelection,
+  listFrames,
   renderExport,
+  renderFrameExports,
   type ExportFormat,
   type ExportOptions,
 } from "./exportImage";
 
 const STORAGE_KEY = "mydraw.exportOptions";
 
-function loadOptions(): ExportOptions {
+const FORMAT_LABEL: Record<ExportFormat, string> = {
+  png: "PNG",
+  jpg: "JPG",
+  webp: "WebP",
+  svg: "SVG",
+  html: "HTML",
+  mermaid: "Mermaid",
+  csv: "CSV",
+  markdown: "Markdown",
+};
+
+/** Options as last used (scope is never remembered). */
+export function loadExportOptions(): ExportOptions {
   try {
-    return { ...DEFAULT_EXPORT_OPTIONS, ...JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}"), scope: "all" };
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Partial<ExportOptions> & { jpgQuality?: number };
+    const { jpgQuality, ...rest } = saved;
+    return { ...DEFAULT_EXPORT_OPTIONS, ...(jpgQuality !== undefined ? { quality: jpgQuality } : {}), ...rest, scope: "all", frameId: undefined };
   } catch {
     return DEFAULT_EXPORT_OPTIONS;
   }
@@ -22,26 +41,41 @@ function loadOptions(): ExportOptions {
 interface Props {
   api: ExcalidrawImperativeAPI;
   title: string;
+  /** The saved .excalidraw file, or null for an unsaved drawing (no auto-export then). */
+  filePath: string | null;
+  autoExport: "png" | "svg" | null;
+  onAutoExport(format: "png" | "svg" | null): void;
   onClose(): void;
   onDone(message: string): void;
 }
 
-export function ExportDialog({ api, title, onClose, onDone }: Props) {
+export function ExportDialog({ api, title, filePath, autoExport, onAutoExport, onClose, onDone }: Props) {
+  const frames = listFrames(api);
   const [opts, setOpts] = useState<ExportOptions>(() => {
-    const o = loadOptions();
+    const o = loadExportOptions();
     return hasSelection(api) ? { ...o, scope: "selection" } : o;
   });
-  const [preview, setPreview] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ url?: string; text?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const previewUrl = useRef<string | null>(null);
 
   const selectionAvailable = hasSelection(api);
-  const count = exportElements(api, opts.scope).length;
+  const frameId = opts.frameId ?? frames[0]?.id;
+  const isText = TEXT_FORMATS.includes(opts.format);
+  const isPicture = !isText;
+  const canScale = opts.format === "png" || opts.format === "jpg" || opts.format === "webp";
   const set = <K extends keyof ExportOptions>(k: K, v: ExportOptions[K]) => setOpts((o) => ({ ...o, [k]: v }));
 
+  let count = 0;
+  try {
+    count = opts.scope === "frames" ? frames.length : exportElements(api, opts.scope, undefined, frameId).length;
+  } catch {
+    count = 0;
+  }
+
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...opts, scope: "all" }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...opts, scope: "all", frameId: undefined }));
   }, [opts]);
 
   useEffect(() => {
@@ -50,20 +84,32 @@ export function ExportDialog({ api, title, onClose, onDone }: Props) {
       setPreview(null);
       return;
     }
-    renderExport(api, opts, 480)
-      .then(({ data }) => {
+    // A batch previews its first frame.
+    const previewOpts: ExportOptions =
+      opts.scope === "frames" ? { ...opts, scope: "frame", frameId: frames[0]?.id } : { ...opts, frameId };
+    renderExport(api, previewOpts, 480)
+      .then(({ data, mime }) => {
         if (cancelled) return;
-        const mime = opts.format === "jpg" ? "image/jpeg" : "image/png";
+        if (typeof data === "string") {
+          setPreview({ text: data.length > 4000 ? `${data.slice(0, 4000)}\n…` : data });
+          return;
+        }
         const url = URL.createObjectURL(new Blob([data], { type: mime }));
         if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
         previewUrl.current = url;
-        setPreview(url);
+        setPreview({ url });
       })
-      .catch((e: Error) => !cancelled && setError(e.message));
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setPreview(null);
+        setError(e.message);
+      });
+    setError(null);
     return () => {
       cancelled = true;
     };
-  }, [api, opts, count]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, opts, count, frameId]);
 
   useEffect(
     () => () => {
@@ -84,8 +130,19 @@ export function ExportDialog({ api, title, onClose, onDone }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const out = await renderExport(api, opts);
-      const saved = await window.mydraw.exportFile({ defaultName: title, extension: out.extension, data: out.data });
+      const run = { ...opts, frameId };
+      if (opts.scope === "frames") {
+        const files = await renderFrameExports(api, run);
+        const saved = await window.mydraw.exportFiles({ files });
+        if (saved) {
+          onDone(`Exported ${saved.length} file${saved.length === 1 ? "" : "s"} to ${saved[0].replace(/[\\/][^\\/]*$/, "")}`);
+          onClose();
+        }
+        return;
+      }
+      const out = await renderExport(api, run);
+      const name = opts.scope === "frame" ? `${title} - ${frames.find((f) => f.id === frameId)?.name ?? "frame"}` : title;
+      const saved = await window.mydraw.exportFile({ defaultName: name, extension: out.extension, data: out.data });
       if (saved) {
         onDone(`Exported ${saved}`);
         onClose();
@@ -97,27 +154,33 @@ export function ExportDialog({ api, title, onClose, onDone }: Props) {
     }
   }
 
-  const raster = opts.format !== "svg";
+  const lossy = opts.format === "jpg" || opts.format === "webp";
   return (
     <div className="md-modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="md-modal" role="dialog" aria-label="Export image">
-        <h2>Export image</h2>
+      <div className="md-modal" role="dialog" aria-label="Export">
+        <h2>Export</h2>
         <div className="md-export">
           <div className="md-export-preview">
-            {preview ? <img src={preview} alt="Export preview" /> : <span>{count ? "Rendering…" : "Nothing to export"}</span>}
+            {preview?.url ? (
+              <img src={preview.url} alt="Export preview" />
+            ) : preview?.text !== undefined ? (
+              <pre className="md-export-text">{preview.text}</pre>
+            ) : (
+              <span>{count ? (error ? "No preview" : "Rendering…") : "Nothing to export"}</span>
+            )}
           </div>
           <div className="md-export-options">
             <label>Format</label>
-            <div className="md-seg">
-              {(["png", "jpg", "svg"] as ExportFormat[]).map((f) => (
+            <div className="md-seg md-seg-wrap">
+              {EXPORT_FORMATS.map((f) => (
                 <button key={f} className={opts.format === f ? "on" : ""} onClick={() => set("format", f)}>
-                  {f.toUpperCase()}
+                  {FORMAT_LABEL[f]}
                 </button>
               ))}
             </div>
 
             <label>Content</label>
-            <div className="md-seg">
+            <div className="md-seg md-seg-wrap">
               <button className={opts.scope === "all" ? "on" : ""} onClick={() => set("scope", "all")}>
                 Whole drawing
               </button>
@@ -128,9 +191,25 @@ export function ExportDialog({ api, title, onClose, onDone }: Props) {
               >
                 Selection
               </button>
+              <button className={opts.scope === "frame" ? "on" : ""} disabled={!frames.length} onClick={() => set("scope", "frame")}>
+                One frame
+              </button>
+              <button className={opts.scope === "frames" ? "on" : ""} disabled={!frames.length} onClick={() => set("scope", "frames")}>
+                Every frame
+              </button>
             </div>
+            {opts.scope === "frame" && (
+              <select value={frameId} onChange={(e) => set("frameId", e.target.value)} aria-label="Frame">
+                {frames.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {opts.scope === "frames" && <small>One file per frame, written to a folder you choose.</small>}
 
-            {raster && (
+            {canScale && (
               <>
                 <label>Scale</label>
                 <div className="md-seg">
@@ -143,54 +222,74 @@ export function ExportDialog({ api, title, onClose, onDone }: Props) {
               </>
             )}
 
-            {opts.format === "jpg" && (
+            {lossy && (
               <>
-                <label>Quality {Math.round(opts.jpgQuality * 100)}%</label>
+                <label>Quality {Math.round(opts.quality * 100)}%</label>
                 <input
                   type="range"
                   min={10}
                   max={100}
-                  value={Math.round(opts.jpgQuality * 100)}
-                  onChange={(e) => set("jpgQuality", Number(e.target.value) / 100)}
+                  value={Math.round(opts.quality * 100)}
+                  onChange={(e) => set("quality", Number(e.target.value) / 100)}
                 />
               </>
             )}
 
-            <label>Padding (px)</label>
-            <input
-              type="number"
-              min={0}
-              max={500}
-              value={opts.padding}
-              onChange={(e) => set("padding", Math.max(0, Math.min(500, Number(e.target.value) || 0)))}
-            />
+            {isPicture && (
+              <>
+                <label>Padding (px)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={500}
+                  value={opts.padding}
+                  onChange={(e) => set("padding", Math.max(0, Math.min(500, Number(e.target.value) || 0)))}
+                />
 
-            <label className="md-check">
-              <input
-                type="checkbox"
-                checked={opts.background || opts.format === "jpg"}
-                disabled={opts.format === "jpg"}
-                onChange={(e) => set("background", e.target.checked)}
-              />
-              Background {opts.format === "jpg" && <small>(always on for JPG)</small>}
-            </label>
-            <label className="md-check">
-              <input type="checkbox" checked={opts.darkMode} onChange={(e) => set("darkMode", e.target.checked)} />
-              Dark mode
-            </label>
-            {opts.format !== "jpg" && (
-              <label className="md-check">
-                <input type="checkbox" checked={opts.embedScene} onChange={(e) => set("embedScene", e.target.checked)} />
-                Embed drawing (re-openable in mydraw/Excalidraw)
-              </label>
+                <label className="md-check">
+                  <input
+                    type="checkbox"
+                    checked={opts.background || opts.format === "jpg"}
+                    disabled={opts.format === "jpg"}
+                    onChange={(e) => set("background", e.target.checked)}
+                  />
+                  Background {opts.format === "jpg" ? <small>(always on for JPG)</small> : <small>(off = transparent)</small>}
+                </label>
+                <label className="md-check">
+                  <input type="checkbox" checked={opts.darkMode} onChange={(e) => set("darkMode", e.target.checked)} />
+                  Dark mode
+                </label>
+                {(opts.format === "png" || opts.format === "svg") && (
+                  <label className="md-check">
+                    <input type="checkbox" checked={opts.embedScene} onChange={(e) => set("embedScene", e.target.checked)} />
+                    Embed drawing (re-openable in mydraw/Excalidraw)
+                  </label>
+                )}
+              </>
             )}
+
+            <label>Keep an image up to date</label>
+            <div className="md-seg">
+              {([null, "png", "svg"] as const).map((f) => (
+                <button key={f ?? "off"} className={autoExport === f ? "on" : ""} disabled={!filePath} onClick={() => onAutoExport(f)}>
+                  {f ? f.toUpperCase() : "Off"}
+                </button>
+              ))}
+            </div>
+            <small>
+              {!filePath
+                ? "Save the drawing to a file first, then you can have an image written automatically."
+                : autoExport
+                  ? `On: every time you save, ${siblingPath(filePath, autoExport).split(/[\\/]/).pop()} is rewritten next to this file (replacing the old one). No need to export again.`
+                  : `Off. Choose PNG or SVG and every save also writes an image (e.g. ${siblingPath(filePath, "png").split(/[\\/]/).pop()}) next to this file, replacing the old one. Handy for README/docs. Applies to this drawing only; uses the settings above; whole drawing.`}
+            </small>
           </div>
         </div>
         {error && <div className="md-error">{error}</div>}
         <div className="md-modal-actions">
           <button onClick={onClose}>Cancel</button>
           <button className="primary" disabled={!count || busy} onClick={doExport}>
-            {busy ? "Exporting…" : `Export ${opts.format.toUpperCase()}…`}
+            {busy ? "Exporting…" : opts.scope === "frames" ? `Export ${frames.length} frames…` : `Export ${FORMAT_LABEL[opts.format]}…`}
           </button>
         </div>
       </div>

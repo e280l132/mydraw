@@ -76,12 +76,26 @@ await waitFor(
 );
 await waitFor(async () => !(await t((x) => x.state())).tabs[0].dirty, "clean after autosave");
 
+step("auto-export on save writes a PNG, then an SVG, next to the file");
+await page.evaluate((f) => window.mydraw.updateSettings({ autoExport: { [f]: "png" } }), file);
+await t((x) => x.addSample("Switch"));
+const autoPng = path.join(work, "network.png");
+await waitFor(() => fs.existsSync(autoPng), "auto-exported PNG");
+assert.deepEqual([...fs.readFileSync(autoPng).subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47], "auto-export PNG magic");
+await page.evaluate((f) => window.mydraw.updateSettings({ autoExport: { [f]: "svg" } }), file);
+await t((x) => x.addSample("Switch 2"));
+const autoSvg = path.join(work, "network.svg");
+await waitFor(() => fs.existsSync(autoSvg), "auto-exported SVG");
+assert.ok(fs.readFileSync(autoSvg, "utf8").includes("<svg"), "auto-export SVG");
+await page.evaluate((f) => window.mydraw.updateSettings({ autoExport: {} }), file);
+await waitFor(async () => !(await t((x) => x.state())).tabs[0].dirty, "clean after auto-export");
+
 step("exports PNG, JPG and SVG");
 const png = path.join(work, "out.png");
 const jpg = path.join(work, "out.jpg");
 const svg = path.join(work, "out.svg");
 await t((x, p) => x.exportTo(p, { format: "png", scale: 2 }), png);
-await t((x, p) => x.exportTo(p, { format: "jpg", scale: 1, jpgQuality: 0.8 }), jpg);
+await t((x, p) => x.exportTo(p, { format: "jpg", scale: 1, quality: 0.8 }), jpg);
 await t((x, p) => x.exportTo(p, { format: "svg", embedScene: true }), svg);
 assert.deepEqual([...fs.readFileSync(png).subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47], "PNG magic");
 assert.deepEqual([...fs.readFileSync(jpg).subarray(0, 3)], [0xff, 0xd8, 0xff], "JPEG magic");
@@ -97,10 +111,18 @@ fs.writeFileSync(file, JSON.stringify(saved));
 await waitFor(async () => (await t((x) => x.elementCount())) === 1, "reload from disk", 8000);
 assert.equal((await t((x) => x.state())).tabs[0].dirty, false);
 
-step("export dialog opens");
+step("export dialog opens; WebP, Mermaid and CSV previews");
+await t((x) => x.addSample("Router"));
 await t((x) => x.openExportDialog());
 await page.waitForSelector(".md-export-preview img", { timeout: 10000 });
 await page.screenshot({ path: path.join(shots, "export-dialog.png") });
+await page.click('.md-export-options .md-seg button:text-is("WebP")');
+await page.waitForSelector(".md-export-preview img", { timeout: 10000 });
+await page.click('.md-export-options .md-seg button:text-is("Mermaid")');
+await page.waitForSelector(".md-export-preview .md-export-text", { timeout: 10000 });
+assert.ok((await page.textContent(".md-export-text")).startsWith("flowchart"), "Mermaid preview");
+await page.click('.md-export-options .md-seg button:text-is("CSV")');
+await waitFor(async () => (await page.textContent(".md-export-text").catch(() => ""))?.startsWith("name,kind,type"), "CSV preview");
 await page.keyboard.press("Escape");
 
 step("in-app menu: recent files, theme, drawing style, autosave");
@@ -633,6 +655,130 @@ const legendEls = legendFile.elements.filter((e) => e.customData?.mydrawLegend &
 const nodeEls = legendFile.elements.filter((e) => ["k1", "k2", "k3"].includes(e.id));
 assert.ok(legendEls.length > 0, "legend present");
 assert.ok(Math.min(...legendEls.map((e) => e.y)) > Math.max(...nodeEls.map((e) => e.y + e.height)), "legend sits below the laid-out diagram");
+step("MCP: export WebP, scopes, frames, Mermaid, CSV, Markdown, HTML; copy to clipboard");
+await call("new_drawing", { title: "Exports" });
+await call("build_diagram", {
+  zones: [
+    { id: "dmz", label: "DMZ" },
+    { id: "core", label: "Core" },
+  ],
+  nodes: [
+    { id: "web", label: "Web | 1", zone: "dmz", kind: "Server", data: { ip: "10.0.0.5", hostname: "web-1", notes: "public, \"edge\"" }, link: "https://example.com/web" },
+    { id: "db", label: "Database", shape: "ellipse", zone: "core", data: { ip: "10.0.1.9" } },
+    { id: "fw", label: "Firewall", fill: "#ffc9c9" },
+  ],
+  edges: [
+    { from: "fw", to: "web", label: "https" },
+    { from: "web", to: "db", style: "dashed" },
+  ],
+  direction: "right",
+});
+await call("add_elements", {
+  elements: [
+    { type: "frame", id: "fa", x: -400, y: -300, width: 260, height: 180, name: "Prod", children: [] },
+    { type: "rectangle", id: "fa1", x: -380, y: -260, width: 120, height: 60, label: "In Prod" },
+    { type: "frame", id: "fb", x: -400, y: 300, width: 260, height: 180, name: "Staging", children: [] },
+    { type: "rectangle", id: "fb1", x: -380, y: 340, width: 120, height: 60, label: "In Staging" },
+  ],
+});
+await call("raw_update", { elements: [{ id: "fa1", frameId: "fa" }, { id: "fb1", frameId: "fb" }] });
+
+const outDir = path.join(work, "exports");
+fs.mkdirSync(outDir);
+const pngWidth = (f) => fs.readFileSync(f).readUInt32BE(16);
+const riff = (f) => {
+  const b = fs.readFileSync(f);
+  return { head: b.subarray(0, 4).toString("latin1"), webp: b.subarray(8, 12).toString("latin1"), b };
+};
+
+const webp = path.join(outDir, "all.webp");
+await call("export", { path: webp });
+assert.equal(riff(webp).head, "RIFF");
+assert.equal(riff(webp).webp, "WEBP", "WebP magic");
+const webpT = path.join(outDir, "transparent.webp");
+await call("export", { path: webpT, background: false, quality: 0.8 });
+const tb = riff(webpT).b;
+assert.equal(tb.subarray(8, 12).toString("latin1"), "WEBP");
+assert.ok(tb.includes("ALPH") || tb.includes("VP8L"), "transparent WebP carries alpha");
+
+const pngAll = path.join(outDir, "all.png");
+const pngFrame = path.join(outDir, "frame.png");
+await call("export", { path: pngAll, scale: 1, padding: 0 });
+await call("export", { path: pngFrame, scale: 1, scope: "frame", frame: "Staging" });
+assert.deepEqual([...fs.readFileSync(pngFrame).subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+assert.ok(pngWidth(pngFrame) < pngWidth(pngAll), "a frame export is smaller than the whole drawing");
+assert.ok(pngWidth(pngFrame) <= 262, `frame PNG is the frame's size, got ${pngWidth(pngFrame)}`);
+const noFrame = await callRaw("export", { path: path.join(outDir, "x.png"), scope: "frame", frame: "Nope" });
+assert.ok(noFrame.isError && /no frame "Nope"/.test(noFrame.content[0].text), "unknown frame is reported");
+
+const batchDir = path.join(outDir, "frames");
+const batch = await call("export", { path: batchDir, scope: "frames", format: "png", scale: 1 });
+assert.deepEqual(batch.files.map((f) => f.frame).sort(), ["Prod", "Staging"]);
+for (const f of batch.files) assert.deepEqual([...fs.readFileSync(f.path).subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47], "frame PNG");
+assert.deepEqual(fs.readdirSync(batchDir).sort(), ["Prod.png", "Staging.png"]);
+
+const dark = path.join(outDir, "dark.svg");
+await call("export", { path: dark, darkMode: true, background: false });
+assert.ok(fs.readFileSync(dark, "utf8").includes("<svg"));
+
+// Mermaid: text, and it reads back through our own parser (mermaid_to_scene).
+const mmd = path.join(outDir, "diagram.mmd");
+await call("export", { path: mmd });
+const mermaidText = fs.readFileSync(mmd, "utf8");
+assert.ok(/^flowchart (LR|TD)\n/.test(mermaidText), "Mermaid flowchart header");
+assert.ok(mermaidText.includes("subgraph") && mermaidText.includes("-.->") && mermaidText.includes("Database"), "zones, dashed edge, labels");
+await call("new_drawing", { title: "Round trip" });
+await call("mermaid_to_scene", { mermaid: mermaidText });
+const rt = await call("get_scene");
+const labels = rt.elements.map((e) => e.label).filter(Boolean);
+for (const l of ["Web | 1", "Database", "Firewall"]) assert.ok(labels.includes(l), `round trip keeps "${l}"`);
+assert.equal(rt.elements.filter((e) => e.type === "zone").length, 2, "round trip keeps the zones");
+assert.equal(rt.elements.filter((e) => e.type === "arrow").length, 2, "round trip keeps the edges");
+await call("activate_drawing", { drawing: "Exports" });
+
+const csv = path.join(outDir, "inventory.csv");
+await call("export", { path: csv });
+const csvLines = fs.readFileSync(csv, "utf8").split("\r\n");
+assert.equal(csvLines[0], "name,kind,type,zone,ip,hostname,notes", "CSV header");
+assert.ok(csvLines.some((l) => l.startsWith("Web | 1,Server,rectangle,DMZ,") && l.includes("10.0.0.5") && l.includes("web-1") && l.includes("DMZ")), "CSV row for the web node");
+assert.ok(csvLines.some((l) => l.startsWith("Database,") && l.includes("Core") && l.includes("10.0.1.9")), "CSV row for the database");
+assert.ok(fs.readFileSync(csv, "utf8").includes('"public, ""edge"""'), "CSV quotes notes");
+const md = path.join(outDir, "inventory.md");
+await call("export", { path: md });
+const mdLines = fs.readFileSync(md, "utf8").split("\n");
+assert.equal(mdLines[0], "| Name | Kind | Type | Zone | Ip | Hostname | Notes |", "Markdown table header");
+assert.ok(mdLines.some((l) => l.includes("Web \\| 1") && l.includes("10.0.0.5")), "Markdown row, pipe escaped");
+
+const html = path.join(outDir, "diagram.html");
+await call("export", { path: html });
+const htmlText = fs.readFileSync(html, "utf8");
+assert.ok(htmlText.startsWith("<!doctype html>") && htmlText.includes("<svg") && htmlText.includes("Database"), "HTML embeds the SVG");
+assert.ok(htmlText.includes("https://example.com/web"), "HTML keeps node links clickable");
+assert.ok(htmlText.includes('addEventListener("wheel"'), "HTML has pan/zoom");
+assert.ok(!/<script src|<link /i.test(htmlText), "HTML is self-contained");
+
+// Selection scope + explicit format override of the path.
+await call("select", { ids: ["web", "db"] });
+const selCsv = path.join(outDir, "selection.txt");
+await call("export", { path: selCsv, format: "csv", scope: "selection" });
+const selRows = fs.readFileSync(selCsv, "utf8").trim().split("\r\n");
+assert.equal(selRows.length, 3, "selection exports only the selected nodes");
+assert.ok(!selRows.join("").includes("Firewall"));
+await call("add_elements", { elements: [{ type: "rectangle", id: "bare", x: 900, y: 900, width: 50, height: 50 }] });
+const emptySel = await callRaw("export", { path: path.join(outDir, "e.csv"), ids: ["bare"] });
+assert.ok(emptySel.isError && /no nodes/.test(emptySel.content[0].text), "inventory without labelled nodes is refused");
+assert.ok(!fs.existsSync(path.join(outDir, "e.csv")), "nothing is written on error");
+await call("select", { ids: [] });
+
+// Clipboard (File > Copy As ...): text and image.
+const clip = (fn) => app.evaluate(fn);
+await t((x) => x.command({ type: "copyAs", format: "mermaid" }));
+await waitFor(async () => (await clip(({ clipboard }) => clipboard.readText())).startsWith("flowchart"), "Mermaid on the clipboard");
+await t((x) => x.command({ type: "copyAs", format: "svg" }));
+await waitFor(async () => (await clip(({ clipboard }) => clipboard.readText())).includes("<svg"), "SVG on the clipboard");
+await t((x) => x.command({ type: "copyAs", format: "png" }));
+await waitFor(async () => clip(async ({ clipboard }) => (await clipboard.has("image/png")) === true), "PNG on the clipboard");
+
 await client.close();
 
 app.process().kill("SIGKILL");

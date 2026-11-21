@@ -23,7 +23,7 @@ import { safeFileName, titleFromPath } from "../../shared/names";
 import type { DrawingStyle, MenuCommand, OpenedFile, Settings } from "../../shared/types";
 import { AppMenu } from "./AppMenu";
 import { drawingStyleAppState } from "./drawingStyle";
-import { ExportDialog } from "./ExportDialog";
+import { ExportDialog, loadExportOptions } from "./ExportDialog";
 import { PacksDialog, RenameDialog, SaveStencilDialog } from "./library/dialogs";
 import { CUSTOM_COLOR_KEY } from "./library/IconColorSection";
 import { StyleSection } from "./StyleSection";
@@ -38,7 +38,7 @@ import {
   selectionForStencil,
   type StencilContent,
 } from "./library/stencilContent";
-import { DEFAULT_EXPORT_OPTIONS, renderExport, type ExportOptions } from "./exportImage";
+import { DEFAULT_EXPORT_OPTIONS, renderClipboard, renderExport, type ExportOptions } from "./exportImage";
 import { apiSceneHash, parseDrawing, sceneHash, serializeScene, type LoadedScene } from "./scene";
 import { TabBar, type TabInfo } from "./TabBar";
 import { createAgentExecutor } from "./agent/executor";
@@ -243,6 +243,21 @@ export function App() {
 
   // ---------- saving ----------
 
+  /** Per-file setting: also write a PNG/SVG next to the saved drawing. Never fails the save. */
+  const autoExport = useCallback(
+    async (api: ExcalidrawImperativeAPI, filePath: string, now?: "png" | "svg") => {
+      const format = now ?? settingsRef.current?.autoExport[filePath];
+      if (!format || !api.getSceneElements().length) return;
+      try {
+        const out = await renderExport(api, { ...loadExportOptions(), format, scope: "all" });
+        await bridge.autoExportFile({ path: filePath, extension: format, data: out.data });
+      } catch (e) {
+        showToast(`Auto-export failed: ${(e as Error).message}`, true);
+      }
+    },
+    [showToast],
+  );
+
   const doSave = useCallback(
     async (id: string, saveAs: boolean): Promise<boolean> => {
       const tab = getTab(id);
@@ -273,9 +288,10 @@ export function App() {
       patchTab(id, { filePath, title: titleFromPath(filePath), dirty: !unchanged, conflict: null });
       if (unchanged) void bridge.deleteRecovery(id);
       void bridge.watchFile(filePath);
+      void autoExport(api, filePath);
       return true;
     },
-    [patchTab, showToast],
+    [autoExport, patchTab, showToast],
   );
 
   /** Saves for one tab run one after another, never in parallel. */
@@ -762,6 +778,17 @@ export function App() {
         case "export":
           if (apis.current.get(activeRef.current)) setExportOpen(true);
           return;
+        case "copyAs": {
+          const api = apis.current.get(activeRef.current);
+          if (!api) return;
+          try {
+            await bridge.copyToClipboard(await renderClipboard(api, cmd.format, loadExportOptions()));
+            showToast(`Copied as ${cmd.format === "mermaid" ? "Mermaid" : cmd.format.toUpperCase()}`);
+          } catch (e) {
+            showToast(`Copy failed: ${(e as Error).message}`, true);
+          }
+          return;
+        }
         case "closeTab":
           return closeTab(activeRef.current);
         case "nextTab":
@@ -783,7 +810,7 @@ export function App() {
           return openSaveStencil();
       }
     },
-    [closeTab, newTab, openFiles, openSaveStencil, save, setActive, togglePanel],
+    [closeTab, newTab, openFiles, openSaveStencil, save, setActive, showToast, togglePanel],
   );
 
   // Main process saves settings and broadcasts them back (settings:changed), which updates state.
@@ -1014,6 +1041,7 @@ export function App() {
       newTab: () => newTab(),
       tabApiReady: (id: string) => !!apis.current.get(id),
       openExportDialog: () => setExportOpen(true),
+      command: (cmd: MenuCommand) => onCommand(cmd),
       library: () => libraryRef.current,
       insertStencil: (id: string) => {
         const item = libraryRef.current?.items.find((i) => i.id === id);
@@ -1151,6 +1179,17 @@ export function App() {
         <ExportDialog
           api={activeApi}
           title={safeFileName(active.title)}
+          filePath={active.filePath}
+          autoExport={(active.filePath && settings?.autoExport[active.filePath]) || null}
+          onAutoExport={(format) => {
+            const path = active.filePath;
+            if (!path) return;
+            const next = { ...(settingsRef.current?.autoExport ?? {}) };
+            if (format) next[path] = format;
+            else delete next[path];
+            onSettings({ autoExport: next });
+            if (format) void autoExport(activeApi, path, format); // write the image right away
+          }}
           onClose={() => setExportOpen(false)}
           onDone={(msg) => showToast(msg)}
         />

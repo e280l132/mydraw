@@ -15,7 +15,16 @@ import type { AgentCommand } from "../../../shared/agent";
 import { center, placeBeside, type Box, type Side } from "../../../shared/geometry";
 import type { LibraryItem } from "../../../shared/library";
 import type { OpenedFile } from "../../../shared/types";
-import { DEFAULT_EXPORT_OPTIONS, exportElements, renderExport, type ExportFormat } from "../exportImage";
+import {
+  DEFAULT_EXPORT_OPTIONS,
+  EXPORT_FORMATS,
+  exportElements,
+  findFrame,
+  renderExport,
+  renderFrameExports,
+  type ExportFormat,
+  type ExportOptions,
+} from "../exportImage";
 import { isRecolorableIcon, recoloredIcon } from "../library/iconColor";
 import { colorOfElement } from "../library/pickColor";
 import { cloneForInsert, loadStencil } from "../library/stencilContent";
@@ -377,35 +386,43 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
         const { api } = await target(p);
         const format = String(p.format);
         if (format === "excalidraw") {
-          if (p.ids !== undefined || p.scope === "selection") {
+          if (p.ids !== undefined || (p.scope !== undefined && p.scope !== "all")) {
             throw new Error("excalidraw export always writes the whole drawing; use save_as_stencil for a part of it");
           }
           return { data: serializeScene(api) };
         }
+        if (!EXPORT_FORMATS.includes(format as ExportFormat)) throw new Error(`unknown export format "${format}"`);
         const ids = Array.isArray(p.ids)
           ? new Set(withGroupsAndLabels(strArray(p.ids, "ids"), api.getSceneElements()).map((e) => e.id))
           : undefined;
-        const scope = p.scope === "selection" ? "selection" : "all";
-        if (!exportElements(api, scope, ids).length) {
+        const scope = (["all", "selection", "frame", "frames"] as const).find((s) => s === p.scope) ?? "all";
+        if (p.scope !== undefined && scope !== p.scope) throw new Error("scope must be all, selection, frame or frames");
+        if (ids && (scope === "frame" || scope === "frames")) throw new Error("ids cannot be combined with scope frame/frames");
+        let frameId: string | undefined;
+        if (scope === "frame") {
+          if (typeof p.frame !== "string" || !p.frame.trim()) throw new Error('scope "frame" needs `frame` (a frame name or id)');
+          frameId = findFrame(api, p.frame).id;
+        }
+        const opts: ExportOptions = {
+          ...DEFAULT_EXPORT_OPTIONS,
+          format: format as ExportFormat,
+          scope,
+          frameId,
+          scale: Math.min(Math.max(Math.round(Number(p.scale) || 2), 1), 4) as 1 | 2 | 3 | 4,
+          padding: typeof p.padding === "number" ? Math.min(Math.max(p.padding, 0), 500) : DEFAULT_EXPORT_OPTIONS.padding,
+          background: p.background !== false,
+          darkMode: p.darkMode === true,
+          quality: typeof p.quality === "number" ? Math.min(Math.max(p.quality, 0.1), 1) : DEFAULT_EXPORT_OPTIONS.quality,
+          embedScene: p.embedScene === true,
+        };
+        if (scope === "frames") {
+          const files = await renderFrameExports(api, opts);
+          return { files };
+        }
+        if (!exportElements(api, scope, ids, frameId).length) {
           throw new Error(scope === "selection" && !ids ? "nothing to export: nothing is selected" : "nothing to export: the drawing is empty");
         }
-        const scale = Math.min(Math.max(Math.round(Number(p.scale) || (p.maxSize ? 2 : 2)), 1), 4) as 1 | 2 | 3 | 4;
-        const out = await renderExport(
-          api,
-          {
-            ...DEFAULT_EXPORT_OPTIONS,
-            format: format as ExportFormat,
-            scope,
-            scale,
-            padding: typeof p.padding === "number" ? p.padding : DEFAULT_EXPORT_OPTIONS.padding,
-            background: p.background !== false,
-            darkMode: p.darkMode === true,
-            jpgQuality: typeof p.quality === "number" ? Math.min(Math.max(p.quality, 0.1), 1) : DEFAULT_EXPORT_OPTIONS.jpgQuality,
-            embedScene: p.embedScene === true,
-          },
-          typeof p.maxSize === "number" ? p.maxSize : undefined,
-          ids,
-        );
+        const out = await renderExport(api, opts, typeof p.maxSize === "number" ? p.maxSize : undefined, ids);
         return { data: out.data };
       }
 

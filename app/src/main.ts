@@ -1,9 +1,9 @@
-import { BrowserWindow, app, dialog, ipcMain, nativeTheme, net, protocol, shell } from "electron";
+import { BrowserWindow, ClipboardItem, app, clipboard, dialog, ipcMain, nativeTheme, net, protocol, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { ensureExtension } from "../../shared/names";
-import type { ExportFileRequest, OpenedFile, RecoveryEntry, Settings, UnsavedChoice } from "../../shared/types";
+import { batchFileStems, ensureExtension, siblingPath } from "../../shared/names";
+import type { AutoExportRequest, ClipboardRequest, ExportExtension, ExportFileRequest, ExportFilesRequest, OpenedFile, RecoveryEntry, Settings, UnsavedChoice } from "../../shared/types";
 import {
   deleteRecovery,
   listRecovery,
@@ -167,17 +167,68 @@ function registerIpc(): void {
     return target;
   });
 
+  const EXPORT_TYPES: Record<ExportExtension, { name: string; extensions: string[] }> = {
+    png: { name: "PNG image", extensions: ["png"] },
+    jpg: { name: "JPEG image", extensions: ["jpg", "jpeg"] },
+    webp: { name: "WebP image", extensions: ["webp"] },
+    svg: { name: "SVG image", extensions: ["svg"] },
+    html: { name: "HTML page", extensions: ["html"] },
+    mmd: { name: "Mermaid flowchart", extensions: ["mmd"] },
+    csv: { name: "CSV inventory", extensions: ["csv"] },
+    md: { name: "Markdown table", extensions: ["md"] },
+  };
+  const isExt = (v: unknown): v is ExportExtension => typeof v === "string" && Object.hasOwn(EXPORT_TYPES, v);
+  const isData = (v: unknown): v is ArrayBuffer | string => typeof v === "string" || v instanceof ArrayBuffer || ArrayBuffer.isView(v);
+
   ipcMain.handle("file:export", async (_e, req: ExportFileRequest) => {
-    if (!win || !req || !["png", "jpg", "svg"].includes(req.extension)) return null;
+    if (!win || !req || !isExt(req.extension) || !isData(req.data)) return null;
     assertString(req.defaultName, "defaultName");
-    const names: Record<string, string> = { png: "PNG image", jpg: "JPEG image", svg: "SVG image" };
     const res = await dialog.showSaveDialog(win, {
       defaultPath: ensureExtension(req.defaultName, req.extension),
-      filters: [{ name: names[req.extension], extensions: req.extension === "jpg" ? ["jpg", "jpeg"] : [req.extension] }],
+      filters: [EXPORT_TYPES[req.extension]],
     });
     if (res.canceled || !res.filePath) return null;
     writeBinary(res.filePath, req.data);
     return res.filePath;
+  });
+
+  ipcMain.handle("file:export-files", async (_e, req: ExportFilesRequest) => {
+    if (!win || !req || !Array.isArray(req.files) || !req.files.length || !req.files.every((f) => f && isExt(f.extension) && isData(f.data))) {
+      return null;
+    }
+    const res = await dialog.showOpenDialog(win, {
+      title: "Export every frame to…",
+      properties: ["openDirectory", "createDirectory"],
+      buttonLabel: "Export here",
+    });
+    if (res.canceled || !res.filePaths[0]) return null;
+    const names = batchFileStems(req.files.map((f) => String(f.name)));
+    return req.files.map((f, i) => {
+      const target = path.join(res.filePaths[0], `${names[i]}.${f.extension}`);
+      writeBinary(target, f.data);
+      return target;
+    });
+  });
+
+  ipcMain.handle("file:auto-export", (_e, req: AutoExportRequest) => {
+    if (!req || (req.extension !== "png" && req.extension !== "svg") || !isData(req.data)) throw new Error("invalid auto-export request");
+    assertString(req.path, "path");
+    if (!allowedPaths.has(req.path)) throw new Error("path was not opened or chosen by the user");
+    const target = siblingPath(req.path, req.extension);
+    writeBinary(target, req.data);
+    return target;
+  });
+
+  ipcMain.handle("clipboard:write", async (_e, req: ClipboardRequest) => {
+    if (!req || typeof req !== "object") throw new Error("invalid clipboard request");
+    if (req.png) {
+      if (!isData(req.png)) throw new Error("invalid image");
+      await clipboard.write([new ClipboardItem({ "image/png": new Blob([req.png], { type: "image/png" }) })]);
+    } else if (typeof req.text === "string") {
+      await clipboard.writeText(req.text);
+    } else {
+      throw new Error("nothing to copy");
+    }
   });
 
   ipcMain.handle("test:write-file", (_e, filePath: unknown, data: ArrayBuffer | string) => {

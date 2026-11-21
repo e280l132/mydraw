@@ -69,8 +69,13 @@ export function AppMenu({ settings, onCommand, onSettings }: Props) {
         Save as…
       </MainMenu.Item>
       <MainMenu.Item icon={<ExportIcon />} onSelect={() => onCommand({ type: "export" })} shortcut="⇧⌘E">
-        Export image…
+        Export…
       </MainMenu.Item>
+      <MainMenu.Group title="Copy as">
+        <MainMenu.Item onSelect={() => onCommand({ type: "copyAs", format: "png" })}>PNG image</MainMenu.Item>
+        <MainMenu.Item onSelect={() => onCommand({ type: "copyAs", format: "svg" })}>SVG</MainMenu.Item>
+        <MainMenu.Item onSelect={() => onCommand({ type: "copyAs", format: "mermaid" })}>Mermaid</MainMenu.Item>
+      </MainMenu.Group>
       <MainMenu.Item icon={<CloseTabIcon />} onSelect={() => onCommand({ type: "closeTab" })} shortcut="⌘W">
         Close tab
       </MainMenu.Item>

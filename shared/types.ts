@@ -16,6 +16,8 @@ export interface Settings {
   recentFiles: string[];
   /** Stencil library folder; null means the default (~/Documents/mydraw/Library). */
   libraryPath: string | null;
+  /** Per file (absolute path): also write a PNG or SVG next to the .excalidraw file on every save. */
+  autoExport: Record<string, "png" | "svg">;
 }
 
 export interface OpenedFile {
@@ -51,10 +53,29 @@ export interface SaveStencilPayload {
 
 export type UnsavedChoice = "save" | "discard" | "cancel";
 
+export type ExportExtension = "png" | "jpg" | "webp" | "svg" | "html" | "mmd" | "csv" | "md";
+
 export interface ExportFileRequest {
   defaultName: string;
-  extension: "png" | "jpg" | "svg";
+  extension: ExportExtension;
   data: ArrayBuffer | string;
+}
+
+/** One file per frame: the user picks a folder, files are named after the frames. */
+export interface ExportFilesRequest {
+  files: { name: string; extension: ExportExtension; data: ArrayBuffer | string }[];
+}
+
+export interface AutoExportRequest {
+  /** The .excalidraw file the image belongs to (must have been opened or saved by the user). */
+  path: string;
+  extension: "png" | "svg";
+  data: ArrayBuffer | string;
+}
+
+export interface ClipboardRequest {
+  text?: string;
+  png?: ArrayBuffer;
 }
 
 /** Commands sent from native menus to the renderer. */
@@ -64,6 +85,7 @@ export type MenuCommand =
   | { type: "save" }
   | { type: "saveAs" }
   | { type: "export" }
+  | { type: "copyAs"; format: "png" | "svg" | "mermaid" }
   | { type: "closeTab" }
   | { type: "nextTab" }
   | { type: "prevTab" }
@@ -91,6 +113,11 @@ export interface MydrawBridge {
   saveFile(path: string, content: string): Promise<void>;
   saveFileAs(defaultName: string, content: string): Promise<string | null>;
   exportFile(req: ExportFileRequest): Promise<string | null>;
+  /** Batch export (every frame): asks for a folder, returns the written paths or null if cancelled. */
+  exportFiles(req: ExportFilesRequest): Promise<string[] | null>;
+  /** Write the image next to the saved drawing (auto-export on save). Returns the path written. */
+  autoExportFile(req: AutoExportRequest): Promise<string>;
+  copyToClipboard(req: ClipboardRequest): Promise<void>;
   writeFileForTest(path: string, data: ArrayBuffer | string): Promise<void>;
   writeRecovery(entry: RecoveryEntry): Promise<void>;
   deleteRecovery(tabId: string): Promise<void>;

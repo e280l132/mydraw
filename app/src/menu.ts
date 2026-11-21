@@ -39,7 +39,15 @@ export function buildMenu(settings: Settings, h: MenuHandlers): void {
           click: (item) => h.updateSettings({ autosave: item.checked }),
         },
         { type: "separator" },
-        { label: "Export Image…", accelerator: "CmdOrCtrl+Shift+E", click: cmd({ type: "export" }) },
+        { label: "Export…", accelerator: "CmdOrCtrl+Shift+E", click: cmd({ type: "export" }) },
+        {
+          label: "Copy As",
+          submenu: [
+            { label: "PNG Image", click: cmd({ type: "copyAs", format: "png" }) },
+            { label: "SVG", click: cmd({ type: "copyAs", format: "svg" }) },
+            { label: "Mermaid", click: cmd({ type: "copyAs", format: "mermaid" }) },
+          ],
+        },
         { type: "separator" },
         { label: "Close Tab", accelerator: "CmdOrCtrl+W", click: cmd({ type: "closeTab" }) },
         ...(isMac ? [] : [{ type: "separator" as const }, { role: "quit" as const }]),

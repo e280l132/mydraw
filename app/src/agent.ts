@@ -3,11 +3,11 @@
 // at a time (see web/src/agent/executor.ts).
 import { app, ipcMain, type BrowserWindow } from "electron";
 import path from "node:path";
-import { exportFormatForPath, type AgentCommand, type AgentReply } from "../../shared/agent";
+import { AGENT_EXPORT_FORMATS, exportFormatForPath, type AgentCommand, type AgentReply } from "../../shared/agent";
 import { normalizeSpec, type DiagramSpec } from "../../shared/diagram";
 import { findStencil as lookupStencil, searchItems, type LibraryItem } from "../../shared/library";
 import { findTemplate, TEMPLATES } from "../../shared/templates";
-import { ensureExtension } from "../../shared/names";
+import { batchFileStems, ensureExtension } from "../../shared/names";
 import type { OpenedFile } from "../../shared/types";
 import { writeBinary } from "./files";
 import type { LibraryStore } from "./library";
@@ -166,13 +166,28 @@ export function setupAgent(deps: AgentDeps): (method: string, params: Record<str
       }
       case "export": {
         const target = absPath(params.path, "path");
-        const format = (typeof params.format === "string" ? params.format : null) ?? exportFormatForPath(target);
-        if (!format || exportFormatForPath(`x.${format}`) === null) {
-          throw new Error("format must be png, jpg, svg or excalidraw (or use a path with that extension)");
+        const scope = params.scope === undefined ? "all" : params.scope;
+        const batch = scope === "frames";
+        const format = (typeof params.format === "string" ? params.format : null) ?? (batch ? null : exportFormatForPath(target));
+        if (!format || !(AGENT_EXPORT_FORMATS as readonly string[]).includes(format)) {
+          throw new Error(`format must be one of ${AGENT_EXPORT_FORMATS.join(", ")}${batch ? " (required with scope frames)" : " (or use a path with that extension)"}`);
         }
-        const out = (await renderer("render_export", { ...params, format })) as { data: ArrayBuffer | string };
-        writeBinary(target, out.data);
-        return { path: target, format, bytes: typeof out.data === "string" ? Buffer.byteLength(out.data) : out.data.byteLength };
+        const out = (await renderer("render_export", { ...params, format })) as {
+          data?: ArrayBuffer | string;
+          files?: { name: string; extension: string; data: ArrayBuffer | string }[];
+        };
+        if (out.files) {
+          // scope "frames": `path` is a folder, one file per frame.
+          const stems = batchFileStems(out.files.map((f) => f.name));
+          const written = out.files.map((f, i) => {
+            const file = path.join(target, `${stems[i]}.${f.extension}`);
+            writeBinary(file, f.data);
+            return { frame: f.name, path: file };
+          });
+          return { format, files: written };
+        }
+        writeBinary(target, out.data!);
+        return { path: target, format, bytes: typeof out.data === "string" ? Buffer.byteLength(out.data) : out.data!.byteLength };
       }
       case "screenshot": {
         const out = (await renderer("render_export", {

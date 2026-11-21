@@ -86,6 +86,10 @@ function unquote(t: string): string {
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/&quot;/g, '"')
     .replace(/&amp;/g, "&")
+    // Mermaid entity codes: #quot; #amp; #lt; #gt; and numeric #124;
+    .replace(/#(quot|amp|lt|gt|\d{1,6});/g, (_m, c: string) =>
+      c === "quot" ? '"' : c === "amp" ? "&" : c === "lt" ? "<" : c === "gt" ? ">" : String.fromCodePoint(Number(c)),
+    )
     .trim();
 }
 

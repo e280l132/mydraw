@@ -8,6 +8,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autosave: true,
   recentFiles: [],
   libraryPath: null,
+  autoExport: {},
 };
 
 const THEMES: ThemeSetting[] = ["system", "light", "dark"];
@@ -15,7 +16,7 @@ const STYLES: DrawingStyle[] = ["clean", "sketch"];
 
 /** Merge untrusted JSON (settings file or a renderer patch) onto a base, keeping only valid values. */
 export function mergeSettings(base: Settings, raw: unknown): Settings {
-  const out: Settings = { ...base, recentFiles: [...base.recentFiles] };
+  const out: Settings = { ...base, recentFiles: [...base.recentFiles], autoExport: { ...base.autoExport } };
   if (!raw || typeof raw !== "object") return out;
   const r = raw as Record<string, unknown>;
   if (THEMES.includes(r.theme as ThemeSetting)) out.theme = r.theme as ThemeSetting;
@@ -26,6 +27,12 @@ export function mergeSettings(base: Settings, raw: unknown): Settings {
   }
   if (r.libraryPath === null || (typeof r.libraryPath === "string" && r.libraryPath.startsWith("/"))) {
     out.libraryPath = r.libraryPath as string | null;
+  }
+  if (r.autoExport && typeof r.autoExport === "object" && !Array.isArray(r.autoExport)) {
+    out.autoExport = {};
+    for (const [p, v] of Object.entries(r.autoExport as Record<string, unknown>)) {
+      if (p.startsWith("/") && (v === "png" || v === "svg")) out.autoExport[p] = v;
+    }
   }
   return out;
 }

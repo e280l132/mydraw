@@ -51,6 +51,15 @@ Roadmap and phase status: `plan.md`. Read it before starting a phase.
 - `auto_layout` moves an existing legend to the bottom-right below the new layout (whole-drawing runs only). `layoutGraph` runs `avoidTitleStrips` on orthogonal routes: a run through a zone title is nudged past it, or jogged around it when an end point is pinned to its node.
 - Legend rows: icon nodes (kind or stencil name), and shapes/arrows with `customData.mydrawKind` (`kind` in build_diagram). Legend elements carry `mydrawLegend`; `add_legend` replaces old ones.
 
+## Export (Phase 6, part 1)
+- Renderer: `web/src/exportImage.ts` (`renderExport`, `renderFrameExports`, `renderClipboard`, `listFrames/findFrame`, `exportElements(api, scope, ids, frameId)`). Formats: png, jpg, webp (`exportToCanvas` → `toBlob('image/webp')`), svg, html, mermaid, csv, markdown. Frame scope exports the frame + children with `exportingFrame` (Excalidraw ignores padding then). Previews are always PNG (text formats return text). `FORMAT_EXTENSION` maps mermaid → `.mmd`, markdown → `.md`.
+- Pure logic in `shared/` (vitest in `tests/export.test.ts`): `sceneGraph.ts` (`extractGraph`: nodes = icon nodes + shapes with a label or user customData, zones, bound arrows; legend/deleted/decoration skipped), `mermaidWriter.ts` (`toMermaid`; labels quoted, escaped with Mermaid entity codes `#quot; #124; #37;`, which `unquote` in `shared/mermaid.ts` decodes; ids from label slugs, unique, never reserved words), `inventory.ts` (`toCsv` neutralises formula cells with a leading `'`, `toMarkdownTable`; aliases ip/ipAddress/address, hostname/host/fqdn, notes/note/description), `htmlExport.ts` (`buildHtml`, `sanitizeSvg`; CSP meta, no external requests).
+- Inventory columns come from `customData` keys that don't start with `mydraw` (`build_diagram` `data` writes them).
+- Main (`app/src/main.ts`): `file:export` (save dialog, any `ExportExtension`), `file:export-files` (folder picker, one file per frame, names via `batchFileStems`), `file:auto-export` (writes `<file>.png|svg` only for a path in `allowedPaths`; `siblingPath`), `clipboard:write` (Electron 45's clipboard API is promise-based: `clipboard.write([new ClipboardItem(...)])`).
+- Auto-export (dialog section "Keep an image up to date", with help text naming the real file): `settings.autoExport` = `{ [absolute .excalidraw path]: "png" | "svg" }`, toggled in the export dialog; `autoExport()` in `App.tsx` runs after every successful save (autosave too) with the dialog's last-used options; failures toast but never fail the save.
+- MCP `export`: `format` (or path extension), `scope` all|selection|frame|frames, `frame` (name or id), `ids`, `padding`, `scale`, `background` (false = transparent), `darkMode`, `quality`, `embedScene`. `scope: "frames"` takes a folder as `path` and returns `{files:[{frame,path}]}`. Mermaid/CSV/Markdown error if the scope has no nodes (nothing is written). `.excalidraw` export is whole-drawing only.
+- Test hook `__mydrawTest.command(cmd)` runs a `MenuCommand` (smoke uses it for Copy As and reads the system clipboard via `app.evaluate`).
+
 ## Colors and styles (Phase 4)
 - `shared/palettes.ts`: two palettes only: `basic` (~45 named colors; ramp-named ones equal the ramp's 500) and `ramp` (22 hues x 10 shades, generated from `HUES`). `resolveColor` is the one place color names become hex (names before hex, so "red" is never read as hex). Use `requireColor` for agent input.
 - `shared/styles.ts`: `BUILTIN_THEMES` (19, categories Classic/Light/Dark/Technical/Color), `BUILTIN_PRESETS` (~37, categories Zones/Links/Status/Emphasis/Text), `normalizeStyle/Preset/Theme/Library` (validate untrusted input), `stylePatch(style, kind)`. Theme re-inks only strokes equal to some theme's ink (`inkColors(themes)`, includes user themes), so custom colors survive theme switches.
@@ -65,7 +74,7 @@ Roadmap and phase status: `plan.md`. Read it before starting a phase.
 2. Shapes with labels in one `add_elements` call (give your own ids like `"web1"` so you can refer to them); arrows as `{type:"arrow", from, to, label}` in the same call or via `connect`.
 3. Icons: `search_stencils "ec2"` → `place_stencil {id, right_of: "web1", label: "web-1"}`; connect to the returned `node` id. Zones: `create_zone {label, ids}`. Connectors: `routing: "elbow" | "curved"`.
 4. `screenshot` to check the layout; fix with `move` / `update_elements`; `zoom_to_fit` so the user sees it.
-5. `save {path}` and `export {path: ".../x.png"}`.
+5. `save {path}` and `export {path: ".../x.png"}`; other formats by extension (`.webp .svg .html .mmd .csv .md`), `scope: "frame"`/`"frames"` for frames, `get_scene` first to see frame names.
 
 ## Conventions
 - Excalidraw is pinned to `0.18.1`. Import types from `@excalidraw/excalidraw/types` and `@excalidraw/excalidraw/element/types`.

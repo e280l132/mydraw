@@ -26,7 +26,7 @@ npm run smoke      # builds, then drives the real app with Playwright (save, aut
 - Autosave for saved files (File → Autosave, on by default).
 - Crash recovery: unsaved drawings are written to the app data folder and restored on next launch.
 - File watching: if a drawing changes on disk, it reloads (or asks first when you have unsaved edits).
-- Export image (⇧⌘E): PNG, JPG, SVG; whole drawing or selection; 1–4× scale; padding; background; dark mode; JPG quality; embed the editable drawing in PNG/SVG.
+- Export (⇧⌘E): PNG, JPG, WebP, SVG, a single-file HTML viewer (pan/zoom, links), Mermaid flowchart, and a CSV / Markdown inventory (name, kind, type, zone, IP, hostname, notes). Whole drawing, selection, one frame or every frame (one file each); 1–4× scale; padding; background (off = transparent); dark mode; JPG/WebP quality; embed the editable drawing in PNG/SVG. **Keep an image up to date** (export dialog, per drawing, default Off): choose PNG or SVG and every save also rewrites e.g. `network.png` next to `network.excalidraw`, so README/docs images never go stale. File → Copy As: PNG, SVG or Mermaid.
 - View → Theme (System/Light/Dark) and Drawing Style (Clean = sharp edges, no roughness, Nunito; Sketch = hand-drawn).
 - Works offline: Excalidraw fonts are served locally.
 
