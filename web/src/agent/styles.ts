@@ -70,7 +70,7 @@ export function styleElements(
       if (tp.fontSize !== undefined) t.fontSize = tp.fontSize;
       if (opts.inkTo) {
         if (isInk(text.strokeColor)) t.strokeColor = opts.inkTo;
-      } else if (tp.strokeColor !== undefined && !node) t.strokeColor = tp.strokeColor;
+      } else if (tp.strokeColor !== undefined) t.strokeColor = tp.strokeColor; // an icon node: stroke colors its caption
       if (tp.opacity !== undefined) t.opacity = tp.opacity;
       if (Object.keys(t).length) {
         put(text.id, t);

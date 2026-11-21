@@ -25,7 +25,7 @@ import { AppMenu } from "./AppMenu";
 import { drawingStyleAppState } from "./drawingStyle";
 import { ExportDialog } from "./ExportDialog";
 import { PacksDialog, RenameDialog, SaveStencilDialog } from "./library/dialogs";
-import { CUSTOM_COLOR_KEY, IconColorSection } from "./library/IconColorSection";
+import { CUSTOM_COLOR_KEY } from "./library/IconColorSection";
 import { StyleSection } from "./StyleSection";
 import { followZones, type Positions } from "./zoneFollow";
 import { colorOfElement, elementAt } from "./library/pickColor";
@@ -515,40 +515,9 @@ export function App() {
     };
   }, [picking, setCustomColor, showToast]);
 
-  // The "Icon color" section lives inside Excalidraw's properties panel (left side). Excalidraw has
-  // no API for adding panel sections, so we keep a host <div> at the top of its panel column and
+  // The "Colors & styles" section lives inside Excalidraw's properties panel (left side). Excalidraw
+  // has no API for adding panel sections, so we keep a host <div> at the top of its panel column and
   // render into it with a portal; a MutationObserver re-attaches it when Excalidraw re-renders.
-  const [iconHost, setIconHost] = useState<HTMLElement | null>(null);
-  const showIconSection = icons.count > 0 || icons.raster > 0;
-  useEffect(() => {
-    const root = contentRef.current;
-    if (!root) return;
-    if (!showIconSection) {
-      root.querySelectorAll(".md-iconcolor-host").forEach((n) => n.remove());
-      setIconHost(null);
-      return;
-    }
-    const attach = () => {
-      const column = root.querySelector<HTMLElement>(".md-drawing:not([style*='none']) .App-menu__left .panelColumn");
-      if (!column) return setIconHost(null);
-      let host = column.querySelector<HTMLElement>(":scope > .md-iconcolor-host");
-      if (!host) {
-        root.querySelectorAll(".md-iconcolor-host").forEach((n) => n.remove());
-        host = document.createElement("div");
-        host.className = "md-iconcolor-host";
-        column.prepend(host);
-      } else if (column.firstElementChild !== host) {
-        column.prepend(host);
-      }
-      setIconHost((prev) => (prev === host ? prev : host));
-    };
-    attach();
-    const mo = new MutationObserver(attach);
-    mo.observe(root, { childList: true, subtree: true });
-    return () => mo.disconnect();
-  }, [showIconSection, activeId]);
-
-  // Palette / presets / theme section: same trick, host sits right under the icon color section.
   const [styleHost, setStyleHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
     const root = contentRef.current;
@@ -562,11 +531,7 @@ export function App() {
         host = document.createElement("div");
         host.className = "md-style-host";
       }
-      const iconHostEl = column.querySelector<HTMLElement>(":scope > .md-iconcolor-host");
-      if (host.parentElement !== column || (iconHostEl ? host.previousElementSibling !== iconHostEl : column.firstElementChild !== host)) {
-        if (iconHostEl) iconHostEl.after(host);
-        else column.prepend(host);
-      }
+      if (column.firstElementChild !== host) column.prepend(host);
       // Our Colors tab replaces Excalidraw's Stroke and Background rows (same job, bigger palettes).
       column.querySelectorAll<HTMLElement>(".color-picker__top-picks").forEach((picks) => {
         let section: HTMLElement | null = picks;
@@ -1163,18 +1128,7 @@ export function App() {
             onLibraryChange={onLibraryChange}
           />
         ))}
-        {styleHost && createPortal(<StyleSection api={apis.current.get(activeId)} tick={selTick} onToast={showToast} custom={customColor} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} />, styleHost)}
-        {iconHost && showIconSection && createPortal(
-            <IconColorSection
-              selection={icons}
-              onColor={recolorIcons}
-              custom={customColor}
-              onCustomChange={setCustomColor}
-              onPick={() => setPicking((v) => !v)}
-              picking={picking}
-            />,
-            iconHost,
-          )}
+        {styleHost && createPortal(<StyleSection api={apis.current.get(activeId)} tick={selTick} onToast={showToast} custom={customColor} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} />, styleHost)}
       </div>
       {panelOpen && (
         <StencilPanel

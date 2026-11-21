@@ -7,8 +7,9 @@ import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/t
 import { ColorPicker, EyedropperIcon } from "./library/IconColorSection";
 import { paletteById, resolveColor, shadesOf } from "../../shared/palettes";
 import { FONTS, type StylePreset, type StyleSpec, type Theme } from "../../shared/styles";
+import type { IconSelection } from "./library/iconColor";
 import { applyThemeToScene, styleElements, type StyleResult } from "./agent/styles";
-import { withGroupsAndLabels } from "./agent/sceneOps";
+import { isIconNode, withGroupsAndLabels } from "./agent/sceneOps";
 import {
   allPresets,
   allThemes,
@@ -33,10 +34,14 @@ interface Props {
   /** Start / stop the canvas eyedropper (copies an item's color into the custom swatch). */
   onPick(): void;
   picking: boolean;
+  /** SVG icons in the selection: the Icon target recolors them (they have no stroke or fill). */
+  icons: IconSelection;
+  /** Recolor the selected icons; null restores their original colors. `preview` = live drag update. */
+  onIconColor(color: string | null, preview?: boolean): void;
 }
 
 type Tab = "colors" | "presets" | "themes";
-type Target = "stroke" | "fill";
+type Target = "stroke" | "fill" | "icon";
 
 function commit(api: ExcalidrawImperativeAPI, r: StyleResult, appState?: Partial<AppState>) {
   const byId = new Map(r.changed.map((e) => [e.id, e]));
@@ -368,10 +373,10 @@ function ThemeEditor({
 
 // ---------- section ----------
 
-export function StyleSection({ api, tick, onToast, custom: customColor, onCustomChange, onPick, picking }: Props) {
+export function StyleSection({ api, tick, onToast, custom: customColor, onCustomChange, onPick, picking, icons, onIconColor }: Props) {
   useStyleLibrary();
   const [tab, setTab] = useState<Tab>("colors");
-  const [target, setTarget] = useState<Target>("stroke");
+  const [wanted, setTarget] = useState<Target | null>(null);
   const [base, setBase] = useState<string | null>(null); // the basic color the shades ramp from
   const [custom, setCustom] = useState(false);
   const [wholeDrawing, setWholeDrawing] = useState(true);
@@ -385,6 +390,22 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
   const selected = useMemo(() => (api ? api.getSceneElements().filter((e) => api.getAppState().selectedElementIds[e.id]) : []), [api, tick]);
   const styleable = selected.filter((e) => e.type !== "image");
   const first = styleable[0];
+  // Icons are recolored, not stroked: with only icons selected the Icon target is the only one that
+  // does anything; with none selected it can't be used.
+  const hasIcons = icons.count > 0;
+  // Fill only exists on shapes: not on text, arrows, lines, or icon nodes (their container is a
+  // borderless frame; stroke colors their caption). With nothing selected the tool defaults apply.
+  const iconOnly = hasIcons && styleable.every((e) => isIconNode(e) || (e.type === "text" && !!(e as { containerId?: string | null }).containerId));
+  const noSelection = !styleable.length && !hasIcons;
+  const canFill = noSelection || styleable.some((e) => !isIconNode(e) && (e.type === "rectangle" || e.type === "ellipse" || e.type === "diamond" || e.type === "freedraw"));
+  const canStroke = noSelection || styleable.length > 0;
+  // Which property the swatches set. Automatic (icons -> Icon, else Stroke) until the user picks one
+  // for this selection.
+  const auto: Target = iconOnly || (hasIcons && !canStroke) ? "icon" : "stroke";
+  const asked = wanted ?? auto;
+  const target: Target = asked === "icon" && !hasIcons ? "stroke" : asked === "fill" && !canFill ? auto : asked === "stroke" && !canStroke ? auto : asked;
+
+  useEffect(() => setTarget(null), [tick]); // a new selection starts on the automatic target
 
   const toggle = (key: string) =>
     setOpen((prev) => {
@@ -421,9 +442,10 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
       commit(a, r);
     });
 
-  const applyColor = (color: string) => {
+  const applyColor = (color: string, preview = false) => {
     const c = resolveColor(color);
     if (!c) return onToast(`"${color}" isn't a color`, true);
+    if (target === "icon") return onIconColor(c, preview);
     applyStyle(target === "stroke" ? { strokeColor: c } : { backgroundColor: c });
   };
 
@@ -443,7 +465,16 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
 
   // ----- colors tab -----
   const basics = useMemo(() => Object.entries(paletteById("basic")!.colors).map(([name, color]) => ({ name, color })), []);
-  const current = first ? (target === "stroke" ? first.strokeColor : first.backgroundColor) : null;
+  const current =
+    target === "icon"
+      ? icons.color && icons.color !== "original"
+        ? icons.color
+        : null
+      : first
+        ? target === "stroke"
+          ? first.strokeColor
+          : first.backgroundColor
+        : null;
   const pickerValue = current && current !== "transparent" && resolveColor(current) ? current : "#1971c2";
   // Shades ramp off the chosen basic color; before one is chosen, off the selection's current color.
   const shadeBase = base ?? (current && current !== "transparent" ? resolveColor(current) : null) ?? customColor;
@@ -453,12 +484,22 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
   const colorsTab = (
     <>
       <div className="md-iconcolor-actions md-seg">
-        <button className={`md-chip${target === "stroke" ? " on" : ""}`} onClick={() => setTarget("stroke")}>
+        <button className={`md-chip${target === "stroke" ? " on" : ""}`} disabled={!canStroke} onClick={() => setTarget("stroke")}>
           Stroke
         </button>
-        <button className={`md-chip${target === "fill" ? " on" : ""}`} onClick={() => setTarget("fill")}>
+        <button
+          className={`md-chip${target === "fill" ? " on" : ""}`}
+          disabled={!canFill}
+          title={canFill ? undefined : "The selection has no fill (text, lines, arrows and icons don't)"}
+          onClick={() => setTarget("fill")}
+        >
           Fill
         </button>
+        {hasIcons && (
+          <button className={`md-chip${target === "icon" ? " on" : ""}`} onClick={() => setTarget("icon")} title="Recolor the selected SVG icons">
+            Icon
+          </button>
+        )}
       </div>
       <div className="md-iconcolor-grid">
         {basics.map((s) => (
@@ -521,11 +562,28 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
           <EyedropperIcon />
         </button>
       </div>
+      {target === "icon" && (
+        <div className="md-iconcolor-actions md-seg">
+          <button className={`md-chip${icons.color === "original" ? " on" : ""}`} onClick={() => onIconColor(null)} title="Put the icons back to their real colors">
+            Original colors
+          </button>
+        </div>
+      )}
+      {!styleable.length && !hasIcons && (
+        <div className="md-iconcolor-note">
+          {icons.raster > 0 ? "PNG/JPG images can't be recolored. Use SVG icons." : "Select shapes or SVG icons to color them."}
+        </div>
+      )}
+      {target === "icon" && icons.raster > 0 && (
+        <div className="md-iconcolor-note">
+          {icons.raster} PNG/JPG image{icons.raster > 1 ? "s" : ""} in the selection can't be recolored.
+        </div>
+      )}
       {picking && <div className="md-iconcolor-note">Click an icon or shape to copy its color · Esc to cancel</div>}
       {custom && (
         <ColorPicker
           value={customColor ?? pickerValue}
-          onPreview={() => undefined}
+          onPreview={(hex) => target === "icon" && applyColor(hex, true)}
           onCommit={(hex) => {
             onCustomChange(hex);
             setBase(hex);

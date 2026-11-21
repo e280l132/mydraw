@@ -181,12 +181,15 @@ await waitFor(() => {
 }, "autosaved file contains image + embedded file");
 await page.fill(".md-panel-search input", "");
 
-step("recolor icons from the properties panel: swatch, custom picker (live), Original, undo");
+step("recolor icons from the Colors tab (Icon target): swatch, any-color picker (live), Original, undo");
 await t((x) => x.selectImages());
-const SECTION = ".md-drawing:not([style*='none']) .App-menu__left .md-iconcolor";
-await page.waitForSelector(SECTION);
+const SECTION = ".md-drawing:not([style*='none']) .App-menu__left .md-style";
+await page.waitForSelector(`${SECTION} .md-chip:text-is('Icon')`);
 assert.match(await t((x) => x.iconSelection()), /^2:0:original$/, "two SVG icons selected, original colors");
-await page.click(`${SECTION} [aria-label="Blue"]`);
+assert.equal(await page.locator(`${SECTION} .md-chip:text-is('Icon')`).getAttribute("class").then((c) => c.includes("on")), true, "Icon target is active when only icons are selected");
+assert.equal(await page.locator(`${SECTION} .md-chip:text-is('Fill')`).isDisabled(), true, "Fill is disabled when only icons are selected (it would do nothing)");
+assert.equal(await page.locator(".md-drawing:not([style*='none']) .App-menu__left .md-iconcolor").count(), 0, "no separate icon color section any more");
+await page.click(`${SECTION} .md-iconcolor-grid [aria-label="blue"]`);
 await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "#1971c2"), "icons recolored blue");
 await waitFor(() => {
   const d = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -195,7 +198,7 @@ await waitFor(() => {
 }, "recolor autosaved with its file");
 
 // Custom picker: drag across the color square; icons follow live, then the color is committed.
-await page.click(`${SECTION} >> text=Custom`);
+await page.click(`${SECTION} >> text=Any color`);
 const sv = await page.waitForSelector(`${SECTION} .md-picker-sv`);
 const box = await sv.boundingBox();
 await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
