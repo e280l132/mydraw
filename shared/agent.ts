@@ -30,7 +30,7 @@ export interface AgentCommand {
 export type AgentReply = { id: number; ok: true; result: unknown } | { id: number; ok: false; error: string };
 
 /** Formats the `export` tool can write, and the file extension each gets by default. */
-export const AGENT_EXPORT_FORMATS = ["png", "jpg", "webp", "svg", "html", "mermaid", "csv", "markdown", "excalidraw"] as const;
+export const AGENT_EXPORT_FORMATS = ["png", "jpg", "webp", "svg", "html", "pdf", "pptx", "drawio", "mermaid", "csv", "markdown", "excalidraw"] as const;
 export type AgentExportFormat = (typeof AGENT_EXPORT_FORMATS)[number];
 
 export const AGENT_EXPORT_EXTENSION: Record<AgentExportFormat, string> = {
@@ -39,6 +39,9 @@ export const AGENT_EXPORT_EXTENSION: Record<AgentExportFormat, string> = {
   webp: "webp",
   svg: "svg",
   html: "html",
+  pdf: "pdf",
+  pptx: "pptx",
+  drawio: "drawio",
   mermaid: "mmd",
   csv: "csv",
   markdown: "md",
@@ -46,6 +49,13 @@ export const AGENT_EXPORT_EXTENSION: Record<AgentExportFormat, string> = {
 };
 
 export const AGENT_EXPORT_SCOPES = ["all", "selection", "frame", "frames"] as const;
+
+/**
+ * Formats with pages: with scope "frames" they write ONE file with a page (PDF), slide (PPTX) or
+ * diagram page (draw.io) per frame, instead of one file per frame.
+ */
+export const PAGED_FORMATS = ["pdf", "pptx", "drawio"] as const;
+export const isPagedFormat = (f: string): boolean => (PAGED_FORMATS as readonly string[]).includes(f);
 
 /** Format implied by a file name (`.mmd`/`.mermaid` -> mermaid, `.md` -> markdown, `.jpeg` -> jpg). */
 export function exportFormatForPath(p: string): AgentExportFormat | null {
@@ -56,5 +66,6 @@ export function exportFormatForPath(p: string): AgentExportFormat | null {
   if (ext === "mermaid") return "mermaid";
   if (ext === "htm") return "html";
   if (ext === "markdown") return "markdown";
+  if (ext === "dio" || ext === "xml") return "drawio";
   return (Object.keys(AGENT_EXPORT_EXTENSION) as AgentExportFormat[]).find((f) => AGENT_EXPORT_EXTENSION[f] === ext) ?? null;
 }

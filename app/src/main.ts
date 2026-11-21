@@ -1,7 +1,6 @@
-import { BrowserWindow, ClipboardItem, app, clipboard, dialog, ipcMain, nativeTheme, net, protocol, shell } from "electron";
+import { BrowserWindow, ClipboardItem, app, clipboard, dialog, ipcMain, nativeTheme, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { batchFileStems, ensureExtension, siblingPath } from "../../shared/names";
 import type { AutoExportRequest, ClipboardRequest, ExportExtension, ExportFileRequest, ExportFilesRequest, OpenedFile, RecoveryEntry, Settings, UnsavedChoice } from "../../shared/types";
 import {
@@ -15,6 +14,8 @@ import {
   writeRecovery,
 } from "./files";
 import { CONTROL_FILE } from "../../shared/agent";
+import { APP_ORIGIN, registerSchemes, serveApp } from "./appProtocol";
+import { registerPdfIpc } from "./pdf";
 import { setupAgent } from "./agent";
 import { removeControlFile, startControlServer, writeControlFile } from "./control";
 import { LIBRARY_SCHEME, setupLibrary } from "./library-ipc";
@@ -28,13 +29,9 @@ const isTest = process.env.MYDRAW_TEST === "1";
 const devUrl = process.env.MYDRAW_DEV_URL;
 if (process.env.MYDRAW_USER_DATA) app.setPath("userData", process.env.MYDRAW_USER_DATA);
 
-const APP_ORIGIN = "app://mydraw";
 const webRoot = path.join(app.getAppPath(), "web", "dist");
 
-protocol.registerSchemesAsPrivileged([
-  { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true } },
-  { scheme: LIBRARY_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
-]);
+registerSchemes([{ scheme: LIBRARY_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 
 let win: BrowserWindow | null = null;
 let allowClose = false;
@@ -173,6 +170,9 @@ function registerIpc(): void {
     webp: { name: "WebP image", extensions: ["webp"] },
     svg: { name: "SVG image", extensions: ["svg"] },
     html: { name: "HTML page", extensions: ["html"] },
+    pdf: { name: "PDF document", extensions: ["pdf"] },
+    pptx: { name: "PowerPoint presentation", extensions: ["pptx"] },
+    drawio: { name: "draw.io diagram", extensions: ["drawio"] },
     mmd: { name: "Mermaid flowchart", extensions: ["mmd"] },
     csv: { name: "CSV inventory", extensions: ["csv"] },
     md: { name: "Markdown table", extensions: ["md"] },
@@ -381,12 +381,7 @@ if (!isTest && !app.requestSingleInstanceLock()) {
       ...(fs.existsSync(iconPng) ? { iconPath: iconPng } : {}),
     });
 
-    protocol.handle("app", (req) => {
-      const { pathname } = new URL(req.url);
-      const file = path.normalize(path.join(webRoot, decodeURIComponent(pathname)));
-      if (!file.startsWith(webRoot + path.sep)) return new Response("forbidden", { status: 403 });
-      return net.fetch(pathToFileURL(file).toString());
-    });
+    serveApp(webRoot);
 
     const settings = getSettings();
     applyNativeTheme(settings);
@@ -398,6 +393,7 @@ if (!isTest && !app.requestSingleInstanceLock()) {
     });
 
     registerIpc();
+    registerPdfIpc();
     const store = setupLibrary(() => win, settings, (patch) => updateSettings(patch));
     createWindow();
     void startAgentControl(store);

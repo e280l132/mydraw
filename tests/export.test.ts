@@ -186,7 +186,9 @@ describe("file naming and formats", () => {
     expect(exportFormatForPath("x.csv")).toBe("csv");
     expect(exportFormatForPath("x.html")).toBe("html");
     expect(exportFormatForPath("x.jpeg")).toBe("jpg");
-    expect(exportFormatForPath("x.pdf")).toBeNull();
+    expect(exportFormatForPath("x.pdf")).toBe("pdf");
+    expect(exportFormatForPath("x.dio")).toBe("drawio");
+    expect(exportFormatForPath("x.gif")).toBeNull();
     expect(AGENT_EXPORT_FORMATS).toContain("markdown");
   });
 });

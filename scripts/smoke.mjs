@@ -2,6 +2,7 @@
 // including the MCP server driving the app (Phase 2).
 // Usage: npm run smoke   (set SMOKE_SCREENSHOTS=<dir> to keep screenshots)
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -123,6 +124,18 @@ await page.waitForSelector(".md-export-preview .md-export-text", { timeout: 1000
 assert.ok((await page.textContent(".md-export-text")).startsWith("flowchart"), "Mermaid preview");
 await page.click('.md-export-options .md-seg button:text-is("CSV")');
 await waitFor(async () => (await page.textContent(".md-export-text").catch(() => ""))?.startsWith("name,kind,type"), "CSV preview");
+// Paged formats: option rows and a PNG preview.
+await page.click('.md-export-options .md-seg button:text-is("PDF")');
+await page.waitForSelector('.md-export-options button:text-is("Fit to content")');
+await page.click('.md-export-options button:text-is("A4")');
+assert.equal(await page.isEnabled('.md-export-options label.md-check:has-text("Actual size") input'), true, "actual size is available for A4");
+await page.waitForSelector(".md-export-preview img", { timeout: 10000 });
+await page.click('.md-export-options .md-seg button:text-is("PowerPoint")');
+await page.waitForSelector('.md-export-options button:text-is("4:3")');
+await page.click('.md-export-options .md-seg button:text-is("draw.io")');
+await page.waitForSelector('.md-export-options small:has-text("draw.io cells")');
+assert.equal(await page.$('.md-export-options label:text-is("Padding (px)")'), null, "draw.io has no picture options");
+await page.click('.md-export-options .md-seg button:text-is("PNG")');
 await page.keyboard.press("Escape");
 
 step("in-app menu: recent files, theme, drawing style, autosave");
@@ -770,6 +783,61 @@ assert.ok(emptySel.isError && /no nodes/.test(emptySel.content[0].text), "invent
 assert.ok(!fs.existsSync(path.join(outDir, "e.csv")), "nothing is written on error");
 await call("select", { ids: [] });
 
+// PDF, PPTX, draw.io (Phase 6 part 2).
+step("MCP: export PDF, PPTX and draw.io; frames become pages/slides");
+const pdfPages = (f) => {
+  const b = fs.readFileSync(f);
+  assert.equal(b.subarray(0, 5).toString("latin1"), "%PDF-", `${f}: PDF magic`);
+  return (b.toString("latin1").match(/\/Type\s*\/Page\b/g) ?? []).length;
+};
+const mediaBoxes = (f) => [...fs.readFileSync(f).toString("latin1").matchAll(/\/MediaBox\s*\[([^\]]*)\]/g)].map((m) => m[1].trim().split(/\s+/).map(Number));
+const zipSlides = (f) => {
+  const b = fs.readFileSync(f);
+  assert.equal(b.subarray(0, 2).toString("latin1"), "PK", `${f}: zip magic`);
+  return new Set(b.toString("latin1").match(/ppt\/slides\/slide\d+\.xml/g) ?? []).size;
+};
+const pdfAll = path.join(outDir, "all.pdf");
+const pdfRes = await call("export", { path: pdfAll });
+assert.equal(pdfPages(pdfAll), 1, "whole drawing = one PDF page");
+assert.equal(pdfRes.pages, 1);
+assert.ok(fs.readFileSync(pdfAll).length > 1000);
+const pdfFrames = path.join(outDir, "frames.pdf");
+const pf = await call("export", { path: pdfFrames, scope: "frames" });
+assert.equal(pf.path, pdfFrames, "paged formats write one file for scope frames");
+assert.equal(pdfPages(pdfFrames), 2, "one PDF page per frame");
+const pdfA4 = path.join(outDir, "a4.pdf");
+await call("export", { path: pdfA4, pageSize: "a4", darkMode: true });
+const [a4Box] = mediaBoxes(pdfA4);
+assert.ok(Math.abs(Math.max(a4Box[2], a4Box[3]) - 841.9) < 1.5 && Math.abs(Math.min(a4Box[2], a4Box[3]) - 595.3) < 1.5, `A4 page, got ${a4Box}`);
+const pdfLetter = path.join(outDir, "letter.pdf");
+await call("export", { path: pdfLetter, pageSize: "letter", actualSize: true, scope: "frame", frame: "Prod" });
+assert.equal(pdfPages(pdfLetter), 1);
+assert.deepEqual(mediaBoxes(pdfLetter)[0].slice(2).sort((a, b) => a - b), [612, 792], "Letter page");
+const badPdf = await callRaw("export", { path: path.join(outDir, "bad.pdf"), actualSize: true });
+assert.ok(badPdf.isError && /actualSize needs/.test(badPdf.content[0].text), "actualSize without a sheet size is refused");
+
+const pptxAll = path.join(outDir, "all.pptx");
+await call("export", { path: pptxAll, slideSize: "4:3" });
+assert.equal(zipSlides(pptxAll), 1, "whole drawing = one slide");
+assert.ok(fs.readFileSync(pptxAll).toString("latin1").includes("ppt/media/"), "slide carries the picture");
+const pptxFrames = path.join(outDir, "frames.pptx");
+const ppf = await call("export", { path: pptxFrames, scope: "frames" });
+assert.equal(ppf.pages, 2);
+assert.equal(zipSlides(pptxFrames), 2, "one slide per frame");
+
+const drawioFile = path.join(outDir, "diagram.drawio");
+const dr = await call("export", { path: drawioFile });
+const drawioXml = fs.readFileSync(drawioFile, "utf8");
+execFileSync("xmllint", ["--noout", drawioFile]); // well-formed XML (throws otherwise)
+assert.ok(drawioXml.includes("<mxfile") && drawioXml.includes("<mxGraphModel"), "draw.io mxfile");
+assert.ok(/<object label="Web \| 1"[^>]* ip="10\.0\.0\.5"/.test(drawioXml), "node properties as <object> attributes");
+assert.ok(drawioXml.includes("container=1") && drawioXml.includes("edge=\"1\""), "zones as containers, edges");
+assert.equal(dr.pages, 1);
+const drawioFrames = path.join(outDir, "frames.drawio");
+await call("export", { path: drawioFrames, scope: "frames" });
+assert.equal((fs.readFileSync(drawioFrames, "utf8").match(/<diagram /g) ?? []).length, 2, "one draw.io page per frame");
+const exportsFile = (await call("save", { path: path.join(work, "exports-test.excalidraw") })).path;
+
 // Clipboard (File > Copy As ...): text and image.
 const clip = (fn) => app.evaluate(fn);
 await t((x) => x.command({ type: "copyAs", format: "mermaid" }));
@@ -782,6 +850,61 @@ await waitFor(async () => clip(async ({ clipboard }) => (await clipboard.has("im
 await client.close();
 
 app.process().kill("SIGKILL");
+
+// ---------- mydraw CLI (headless; the app is closed now) ----------
+step("CLI: export and convert with the app closed");
+const cli = (...args) => {
+  const r = spawnSync(process.execPath, [path.join(root, "bin", "mydraw.mjs"), ...args], { cwd: work, encoding: "utf8", timeout: 120000 });
+  return { code: r.status, out: r.stdout, err: r.stderr };
+};
+const help = cli("help");
+assert.equal(help.code, 0);
+assert.ok(help.out.includes("mydraw export"), "CLI help");
+assert.equal(cli("export").code, 2, "usage error exit code");
+
+const cliJpg = path.join(work, "cli-prod.jpg");
+let r = cli("export", exportsFile, "--format", "jpg", "--scale", "2", "--frame", "Prod", "-o", cliJpg);
+assert.equal(r.code, 0, r.err);
+assert.deepEqual([...fs.readFileSync(cliJpg).subarray(0, 3)], [0xff, 0xd8, 0xff], "CLI JPG magic");
+r = cli("export", exportsFile, "--frame", "Nope", "-o", path.join(work, "nope.png"));
+assert.equal(r.code, 1);
+assert.ok(/no frame "Nope"/.test(r.err), r.err);
+
+r = cli("export", exportsFile, "--scope", "frames", "--format", "pdf", "--page", "a4", "-o", path.join(work, "cli.pdf"));
+assert.equal(r.code, 0, r.err);
+assert.ok(r.out.includes("2 pages"));
+assert.equal(pdfPages(path.join(work, "cli.pdf")), 2, "CLI PDF, one page per frame");
+r = cli("export", exportsFile, "--scope", "frames", "-f", "pptx", "-o", path.join(work, "cli.pptx"), "--slides", "4:3", "--dark");
+assert.equal(r.code, 0, r.err);
+assert.equal(zipSlides(path.join(work, "cli.pptx")), 2, "CLI PPTX slides");
+r = cli("export", exportsFile, "--scope", "frames", "-o", path.join(work, "cli-frames"), "--format", "webp", "--no-background");
+assert.equal(r.code, 0, r.err);
+assert.deepEqual(fs.readdirSync(path.join(work, "cli-frames")).sort(), ["Prod.webp", "Staging.webp"]);
+r = cli("export", exportsFile, "-f", "csv");
+assert.equal(r.code, 0, r.err);
+assert.ok(fs.readFileSync(path.join(work, "exports-test.csv"), "utf8").startsWith("name,kind,type,zone"), "CLI default output next to the input");
+
+// draw.io -> excalidraw keeps the node labels (and the properties).
+const labelsOf = (file) => {
+  const els = JSON.parse(fs.readFileSync(file, "utf8")).elements.filter((e) => !e.isDeleted);
+  const byId = new Map(els.map((e) => [e.id, e]));
+  return els
+    .filter((e) => e.type === "text" && e.containerId && ["rectangle", "ellipse", "diamond"].includes(byId.get(e.containerId)?.type))
+    .map((e) => e.text)
+    .sort();
+};
+const converted = path.join(work, "converted.excalidraw");
+r = cli("convert", drawioFile, "--to", "excalidraw", "-o", converted);
+assert.equal(r.code, 0, r.err);
+assert.deepEqual(labelsOf(converted), labelsOf(exportsFile), "draw.io round trip keeps the node labels");
+assert.ok(labelsOf(converted).includes("Web | 1"));
+const convEls = JSON.parse(fs.readFileSync(converted, "utf8")).elements;
+assert.ok(convEls.some((e) => e.customData?.ip === "10.0.0.5"), "properties survive the round trip");
+assert.ok(convEls.filter((e) => e.customData?.mydrawZone).length === 2, "zones survive the round trip");
+assert.ok(convEls.filter((e) => e.type === "arrow" && e.startBinding && e.endBinding).length >= 2, "bound edges survive");
+r = cli("convert", drawioFile, "--to", "drawio");
+assert.equal(r.code, 1);
+assert.ok(/refusing to overwrite/.test(r.err), "never overwrites the input");
 
 assert.deepEqual(errors, [], "no uncaught page errors");
 console.log(`\nAll smoke checks passed. Screenshots in ${shots}`);

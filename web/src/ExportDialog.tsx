@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import { isPagedFormat } from "../../shared/agent";
 import { siblingPath } from "../../shared/names";
 import {
   DEFAULT_EXPORT_OPTIONS,
@@ -22,6 +23,9 @@ const FORMAT_LABEL: Record<ExportFormat, string> = {
   webp: "WebP",
   svg: "SVG",
   html: "HTML",
+  pdf: "PDF",
+  pptx: "PowerPoint",
+  drawio: "draw.io",
   mermaid: "Mermaid",
   csv: "CSV",
   markdown: "Markdown",
@@ -63,8 +67,10 @@ export function ExportDialog({ api, title, filePath, autoExport, onAutoExport, o
   const selectionAvailable = hasSelection(api);
   const frameId = opts.frameId ?? frames[0]?.id;
   const isText = TEXT_FORMATS.includes(opts.format);
-  const isPicture = !isText;
-  const canScale = opts.format === "png" || opts.format === "jpg" || opts.format === "webp";
+  const paged = isPagedFormat(opts.format);
+  // draw.io is a diagram file, not a picture: no padding/background/dark mode.
+  const isPicture = !isText && opts.format !== "drawio";
+  const canScale = opts.format === "png" || opts.format === "jpg" || opts.format === "webp" || opts.format === "pptx";
   const set = <K extends keyof ExportOptions>(k: K, v: ExportOptions[K]) => setOpts((o) => ({ ...o, [k]: v }));
 
   let count = 0;
@@ -131,7 +137,7 @@ export function ExportDialog({ api, title, filePath, autoExport, onAutoExport, o
     setError(null);
     try {
       const run = { ...opts, frameId };
-      if (opts.scope === "frames") {
+      if (opts.scope === "frames" && !paged) {
         const files = await renderFrameExports(api, run);
         const saved = await window.mydraw.exportFiles({ files });
         if (saved) {
@@ -144,7 +150,7 @@ export function ExportDialog({ api, title, filePath, autoExport, onAutoExport, o
       const name = opts.scope === "frame" ? `${title} - ${frames.find((f) => f.id === frameId)?.name ?? "frame"}` : title;
       const saved = await window.mydraw.exportFile({ defaultName: name, extension: out.extension, data: out.data });
       if (saved) {
-        onDone(`Exported ${saved}`);
+        onDone(`Exported ${saved}${out.warnings?.length ? ` (${out.warnings.join("; ")})` : ""}`);
         onClose();
       }
     } catch (e) {
@@ -207,7 +213,61 @@ export function ExportDialog({ api, title, filePath, autoExport, onAutoExport, o
                 ))}
               </select>
             )}
-            {opts.scope === "frames" && <small>One file per frame, written to a folder you choose.</small>}
+            {opts.scope === "frames" && (
+              <small>
+                {opts.format === "pdf"
+                  ? "One PDF, one page per frame."
+                  : opts.format === "pptx"
+                    ? "One presentation, one slide per frame."
+                    : opts.format === "drawio"
+                      ? "One draw.io file, one page per frame."
+                      : "One file per frame, written to a folder you choose."}
+              </small>
+            )}
+
+            {opts.format === "pdf" && (
+              <>
+                <label>Page size</label>
+                <div className="md-seg">
+                  {(
+                    [
+                      ["fit", "Fit to content"],
+                      ["a4", "A4"],
+                      ["letter", "Letter"],
+                    ] as const
+                  ).map(([v, l]) => (
+                    <button key={v} className={opts.pageSize === v ? "on" : ""} onClick={() => set("pageSize", v)}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                <label className="md-check">
+                  <input
+                    type="checkbox"
+                    checked={opts.actualSize && opts.pageSize !== "fit"}
+                    disabled={opts.pageSize === "fit"}
+                    onChange={(e) => set("actualSize", e.target.checked)}
+                  />
+                  Actual size <small>{opts.pageSize === "fit" ? "(the page is the drawing's size)" : "(100%, may span several sheets; off = fit to the sheet)"}</small>
+                </label>
+              </>
+            )}
+
+            {opts.format === "pptx" && (
+              <>
+                <label>Slide size</label>
+                <div className="md-seg">
+                  {(["16:9", "4:3"] as const).map((v) => (
+                    <button key={v} className={opts.slideSize === v ? "on" : ""} onClick={() => set("slideSize", v)}>
+                      {v}
+                    </button>
+                  ))}
+                </div>
+                <small>Each slide is a picture of {opts.scope === "frames" ? "one frame" : "the drawing"}.</small>
+              </>
+            )}
+
+            {opts.format === "drawio" && <small>Shapes, text, arrows, zones (as containers) and icons (as images) become editable draw.io cells. Approximate: hand-drawn styles map to draw.io's sketch style.</small>}
 
             {canScale && (
               <>
@@ -289,7 +349,7 @@ export function ExportDialog({ api, title, filePath, autoExport, onAutoExport, o
         <div className="md-modal-actions">
           <button onClick={onClose}>Cancel</button>
           <button className="primary" disabled={!count || busy} onClick={doExport}>
-            {busy ? "Exporting…" : opts.scope === "frames" ? `Export ${frames.length} frames…` : `Export ${FORMAT_LABEL[opts.format]}…`}
+            {busy ? "Exporting…" : opts.scope === "frames" && !paged ? `Export ${frames.length} frames…` : `Export ${FORMAT_LABEL[opts.format]}…`}
           </button>
         </div>
       </div>

@@ -11,7 +11,8 @@ import { allPresets, allThemes, deletePreset, deleteTheme, findPreset, findTheme
 import { applyThemeToScene, styleElements } from "./styles";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState, BinaryFileData, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import type { AgentCommand } from "../../../shared/agent";
+import { isPagedFormat, type AgentCommand } from "../../../shared/agent";
+import { PDF_PAGE_SIZES } from "../../../shared/pdfLayout";
 import { center, placeBeside, type Box, type Side } from "../../../shared/geometry";
 import type { LibraryItem } from "../../../shared/library";
 import type { OpenedFile } from "../../../shared/types";
@@ -76,6 +77,10 @@ export interface AgentHost {
 
 const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const PLACE_GAP = 80;
+
+function fail(message: string): never {
+  throw new Error(message);
+}
 
 function strArray(v: unknown, name: string): string[] {
   if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) throw new Error(`${name} must be an array of ids`);
@@ -414,8 +419,12 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
           darkMode: p.darkMode === true,
           quality: typeof p.quality === "number" ? Math.min(Math.max(p.quality, 0.1), 1) : DEFAULT_EXPORT_OPTIONS.quality,
           embedScene: p.embedScene === true,
+          pageSize: p.pageSize === undefined ? "fit" : (PDF_PAGE_SIZES.find((x) => x === p.pageSize) ?? fail("pageSize must be fit, a4 or letter")),
+          actualSize: p.actualSize === true,
+          slideSize: p.slideSize === undefined ? "16:9" : p.slideSize === "4:3" || p.slideSize === "16:9" ? p.slideSize : fail('slideSize must be "16:9" or "4:3"'),
         };
-        if (scope === "frames") {
+        if (format === "pdf" && opts.actualSize && opts.pageSize === "fit") throw new Error("actualSize needs pageSize a4 or letter");
+        if (scope === "frames" && !isPagedFormat(format)) {
           const files = await renderFrameExports(api, opts);
           return { files };
         }
@@ -423,7 +432,7 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
           throw new Error(scope === "selection" && !ids ? "nothing to export: nothing is selected" : "nothing to export: the drawing is empty");
         }
         const out = await renderExport(api, opts, typeof p.maxSize === "number" ? p.maxSize : undefined, ids);
-        return { data: out.data };
+        return { data: out.data, pages: out.pages, warnings: out.warnings };
       }
 
       case "get_scene": {

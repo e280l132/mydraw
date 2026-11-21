@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
-import { CONTROL_FILE, type ControlInfo, type RpcResponse } from "../../shared/agent";
+import { AGENT_EXPORT_FORMATS, CONTROL_FILE, type ControlInfo, type RpcResponse } from "../../shared/agent";
 
 const VERSION = "0.5.0";
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -205,23 +205,27 @@ tool(
   [
     "Export a drawing (format from `format` or the path's extension).",
     "Pictures: png, jpg, webp (transparent with background:false), svg, html (one self-contained file: embedded SVG, pan/zoom, clickable links).",
+    "Documents: pdf (vector; pageSize fit = page is the drawing's size (default), a4 or letter = scaled to fit the sheet, or actualSize:true = 100% over several sheets), pptx (one picture per slide; slideSize 16:9 or 4:3), drawio (draw.io/diagrams.net file: editable shapes, text, edges, zones as containers, icons as embedded images; approximate, `warnings` lists what was skipped).",
     "Text from the diagram structure: mermaid (flowchart .mmd; zones become subgraphs; re-readable by mermaid_to_scene), csv and markdown (inventory: one row per node with name, kind, type, zone, ip, hostname, notes from customData).",
     "excalidraw writes the whole drawing.",
-    "Content: scope all (default), selection, frame (+ `frame` name or id) or frames (every frame: `path` is then a folder, one file per frame named after it, `format` required). Optional ids export only those elements (with their groups and labels).",
+    "Content: scope all (default), selection, frame (+ `frame` name or id) or frames (every frame: pdf/pptx/drawio write ONE file with a page/slide per frame; other formats take a folder as `path`, one file per frame named after it, `format` required). Optional ids export only those elements (with their groups and labels).",
   ].join(" "),
   {
-    path: z.string().describe("Absolute output path (a folder when scope is frames)"),
-    format: z.enum(["png", "jpg", "webp", "svg", "html", "mermaid", "csv", "markdown", "excalidraw"]).optional(),
+    path: z.string().describe("Absolute output path (a folder when scope is frames, except for pdf/pptx/drawio)"),
+    format: z.enum(AGENT_EXPORT_FORMATS).optional(),
     drawing,
     ids: ids.optional(),
     scope: z.enum(["all", "selection", "frame", "frames"]).optional(),
     frame: z.string().optional().describe("Frame name or id (scope frame)"),
-    scale: z.number().int().min(1).max(4).optional().describe("PNG/JPG/WebP pixel scale, default 2"),
+    scale: z.number().int().min(1).max(4).optional().describe("PNG/JPG/WebP/PPTX pixel scale, default 2"),
     padding: z.number().optional().describe("Pixels around the content, default 20 (0-500)"),
     background: z.boolean().optional().describe("Include background (default true; JPG always has one; false = transparent PNG/WebP/SVG)"),
-    darkMode: z.boolean().optional().describe("Dark theme for png/jpg/webp/svg/html"),
+    darkMode: z.boolean().optional().describe("Dark theme for png/jpg/webp/svg/html/pdf/pptx"),
     quality: z.number().min(0.1).max(1).optional().describe("JPG/WebP quality, default 0.92"),
     embedScene: z.boolean().optional().describe("Embed the editable scene in PNG/SVG"),
+    pageSize: z.enum(["fit", "a4", "letter"]).optional().describe("PDF page size, default fit (page = drawing)"),
+    actualSize: z.boolean().optional().describe("PDF on a4/letter at 100% instead of fitted (may span several sheets)"),
+    slideSize: z.enum(["16:9", "4:3"]).optional().describe("PPTX slide size, default 16:9"),
   },
   call("export"),
 );

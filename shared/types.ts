@@ -53,7 +53,7 @@ export interface SaveStencilPayload {
 
 export type UnsavedChoice = "save" | "discard" | "cancel";
 
-export type ExportExtension = "png" | "jpg" | "webp" | "svg" | "html" | "mmd" | "csv" | "md";
+export type ExportExtension = "png" | "jpg" | "webp" | "svg" | "html" | "pdf" | "pptx" | "drawio" | "mmd" | "csv" | "md";
 
 export interface ExportFileRequest {
   defaultName: string;
@@ -118,6 +118,8 @@ export interface MydrawBridge {
   /** Write the image next to the saved drawing (auto-export on save). Returns the path written. */
   autoExportFile(req: AutoExportRequest): Promise<string>;
   copyToClipboard(req: ClipboardRequest): Promise<void>;
+  /** Print an HTML document (built by shared/pdfLayout.ts) to PDF in a hidden window; returns the PDF. */
+  printPdf(html: string): Promise<Uint8Array>;
   writeFileForTest(path: string, data: ArrayBuffer | string): Promise<void>;
   writeRecovery(entry: RecoveryEntry): Promise<void>;
   deleteRecovery(tabId: string): Promise<void>;

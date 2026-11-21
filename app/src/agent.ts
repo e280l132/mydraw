@@ -3,7 +3,7 @@
 // at a time (see web/src/agent/executor.ts).
 import { app, ipcMain, type BrowserWindow } from "electron";
 import path from "node:path";
-import { AGENT_EXPORT_FORMATS, exportFormatForPath, type AgentCommand, type AgentReply } from "../../shared/agent";
+import { AGENT_EXPORT_FORMATS, exportFormatForPath, isPagedFormat, type AgentCommand, type AgentReply } from "../../shared/agent";
 import { normalizeSpec, type DiagramSpec } from "../../shared/diagram";
 import { findStencil as lookupStencil, searchItems, type LibraryItem } from "../../shared/library";
 import { findTemplate, TEMPLATES } from "../../shared/templates";
@@ -167,16 +167,25 @@ export function setupAgent(deps: AgentDeps): (method: string, params: Record<str
       case "export": {
         const target = absPath(params.path, "path");
         const scope = params.scope === undefined ? "all" : params.scope;
-        const batch = scope === "frames";
-        const format = (typeof params.format === "string" ? params.format : null) ?? (batch ? null : exportFormatForPath(target));
+        const fromPath = exportFormatForPath(target);
+        // scope "frames": `path` is a folder (one file per frame) unless the format has pages
+        // (pdf/pptx/drawio write one file with a page per frame).
+        const format =
+          (typeof params.format === "string" ? params.format : null) ??
+          (scope !== "frames" || (fromPath && isPagedFormat(fromPath)) ? fromPath : null);
+        const batch = scope === "frames" && !!format && !isPagedFormat(format);
         if (!format || !(AGENT_EXPORT_FORMATS as readonly string[]).includes(format)) {
-          throw new Error(`format must be one of ${AGENT_EXPORT_FORMATS.join(", ")}${batch ? " (required with scope frames)" : " (or use a path with that extension)"}`);
+          throw new Error(
+            `format must be one of ${AGENT_EXPORT_FORMATS.join(", ")}${scope === "frames" ? " (required with scope frames unless the path ends in .pdf, .pptx or .drawio)" : " (or use a path with that extension)"}`,
+          );
         }
         const out = (await renderer("render_export", { ...params, format })) as {
           data?: ArrayBuffer | string;
           files?: { name: string; extension: string; data: ArrayBuffer | string }[];
+          pages?: number;
+          warnings?: string[];
         };
-        if (out.files) {
+        if (out.files && batch) {
           // scope "frames": `path` is a folder, one file per frame.
           const stems = batchFileStems(out.files.map((f) => f.name));
           const written = out.files.map((f, i) => {
@@ -186,8 +195,15 @@ export function setupAgent(deps: AgentDeps): (method: string, params: Record<str
           });
           return { format, files: written };
         }
-        writeBinary(target, out.data!);
-        return { path: target, format, bytes: typeof out.data === "string" ? Buffer.byteLength(out.data) : out.data!.byteLength };
+        if (out.data === undefined) throw new Error("export produced no data");
+        writeBinary(target, out.data);
+        return {
+          path: target,
+          format,
+          bytes: typeof out.data === "string" ? Buffer.byteLength(out.data) : out.data.byteLength,
+          ...(out.pages !== undefined ? { pages: out.pages } : {}),
+          ...(out.warnings?.length ? { warnings: out.warnings } : {}),
+        };
       }
       case "screenshot": {
         const out = (await renderer("render_export", {

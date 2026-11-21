@@ -24,6 +24,7 @@ const bridge: MydrawBridge = {
   exportFiles: (req) => ipcRenderer.invoke("file:export-files", req),
   autoExportFile: (req) => ipcRenderer.invoke("file:auto-export", req),
   copyToClipboard: (req) => ipcRenderer.invoke("clipboard:write", req),
+  printPdf: (html) => ipcRenderer.invoke("pdf:print", html),
   writeFileForTest: (path, data) => ipcRenderer.invoke("test:write-file", path, data),
   writeRecovery: (entry) => ipcRenderer.invoke("recovery:write", entry),
   deleteRecovery: (tabId) => ipcRenderer.invoke("recovery:delete", tabId),

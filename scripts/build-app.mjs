@@ -10,6 +10,7 @@ export const buildOptions = {
   entryPoints: {
     main: path.join(root, "app/src/main.ts"),
     preload: path.join(root, "app/src/preload.ts"),
+    cli: path.join(root, "app/src/cli.ts"),
   },
   outdir: path.join(root, "app/dist"),
   outExtension: { ".js": ".cjs" },

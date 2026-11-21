@@ -74,7 +74,7 @@ function asText(v: unknown): string {
   return JSON.stringify(v);
 }
 
-function userData(el: SceneEl): Record<string, string> {
+export function userData(el: SceneEl): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(el.customData ?? {})) {
     if (!k.startsWith("mydraw") && v != null && v !== "") out[k] = asText(v);

@@ -89,7 +89,8 @@ describe("exportFormatForPath", () => {
     expect(exportFormatForPath("/a/b.PNG")).toBe("png");
     expect(exportFormatForPath("/a/b.jpeg")).toBe("jpg");
     expect(exportFormatForPath("/a/b.excalidraw")).toBe("excalidraw");
-    expect(exportFormatForPath("/a/b.pdf")).toBeNull();
+    expect(exportFormatForPath("/a/b.pdf")).toBe("pdf");
+    expect(exportFormatForPath("/a/b.gif")).toBeNull();
     expect(exportFormatForPath("/a/b")).toBeNull();
   });
 });
