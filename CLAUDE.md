@@ -37,10 +37,32 @@ Roadmap and phase status: `plan.md`. Read it before starting a phase.
 - MCP finds the app via `MYDRAW_USER_DATA` (default `~/Library/Application Support/mydraw`). If it isn't running it launches `/Applications/mydraw.app` (or `MYDRAW_APP`), else the dev build with the branded Electron (`npm run build` first). `MYDRAW_NO_LAUNCH=1` disables launching (smoke test).
 - Register: `claude mcp add --scope user mydraw -- node ~/Projects/mydraw/mcp/dist/index.js`.
 
+## Diagram generation (Phase 5)
+- `shared/diagram.ts`: `DiagramSpec` (nodes, edges, zones, direction, algorithm, routing, legend), `normalizeSpec` (validates agent input, fills edge ids), zone palette/tints, `uniquifySpec` (renames ids that clash with the drawing; used for Mermaid and templates).
+- `shared/layout.ts`: ELK via `elkjs/lib/elk.bundled.js` (no worker). Zones are compound nodes (`INCLUDE_CHILDREN`), coordinates absolute (`elk.json.shapeCoords/edgeCoords: ROOT`). ELK can ignore a compound's minimum size with cross-hierarchy edges, so zones are widened afterwards.
+- `shared/routing.ts`: `elbowRoute` (simple orthogonal router used by `connect`/reroute), `tidyRoute` + `inset` (clean ELK routes: drop collinear points, give end runs room, stop 5px short), `curvedPoints`, `fixedPointFor`.
+- `shared/mermaid.ts`: own flowchart parser -> DiagramSpec (same layout/zones as build_diagram). Non-flowchart Mermaid goes through `@excalidraw/mermaid-to-excalidraw` (dynamic import, renderer).
+- `shared/templates.ts`: starter specs. Icons are names or `Collection:query` (`findStencil` in `shared/library.ts`); missing packs fall back to shapes with a warning.
+- `web/src/agent/diagram.ts`: `makeIconNode`, `makeZone`, `buildDiagram`, `buildLegend`, `autoLayout`. Main (`app/src/agent.ts`) validates specs and resolves icons, the renderer builds and commits (one undo step).
+- **Icon node** = borderless container rectangle (caption = bound text, `verticalAlign: bottom`) + image, grouped; `customData.mydrawNode = "icon"`, `mydrawStencil`. Arrows bind to the container so they never cross the caption; `bindTarget` redirects an image/caption id to its node. `recolor`/`get_color` on a node act on its image. `get_scene` shows it as `type: "icon-node"` and hides the image. A node placed across a zone/frame border gets a fill in the canvas color (`mask`).
+- **Zone** = locked tinted rectangle (`customData.mydrawZone`) + title text (`mydrawZoneTitle`), grouped. Membership (also of nested zones) is `customData.mydrawZoneId`; `withGroupsAndLabels` brings a zone's contents, so `move` carries them. Deleting a zone keeps the contents (they move up to the parent zone). Zones go behind their members (`commit(..., beforeId)` inserts with `index: null`). Dragging a zone by hand does not move its contents (it is locked by default).
+- **Elbow arrows**: Excalidraw re-routes `elbowed` arrows itself when the user drags a bound shape, but only with `fixedPoint` bindings (ratio of the bound box, 5px outside, `gap: 0`). `restoreElements` (raw_update/set_scene of new arrows) drops such bindings, so build them with `connectorElements`. Agent moves re-route with our own `elbowRoute`. Lines can't be Excalidraw elbow arrows: an elbow line is a plain line with `customData.mydrawRouting`. Curved = round arrow with 3 points (`mydrawRouting: "curved"`).
+- Excalidraw puts an arrow label at the middle point (odd count) or the middle of the middle segment (`labelPoint`); `convertToExcalidrawElements` shifts multi-point arrows, so `connectorElements` re-applies the route.
+- Legend rows: icon nodes (kind or stencil name), and shapes/arrows with `customData.mydrawKind` (`kind` in build_diagram). Legend elements carry `mydrawLegend`; `add_legend` replaces old ones.
+
+## Colors and styles (Phase 4)
+- `shared/palettes.ts`: two palettes only: `basic` (~45 named colors; ramp-named ones equal the ramp's 500) and `ramp` (22 hues x 10 shades, generated from `HUES`). `resolveColor` is the one place color names become hex (names before hex, so "red" is never read as hex). Use `requireColor` for agent input.
+- `shared/styles.ts`: `BUILTIN_THEMES` (19, categories Classic/Light/Dark/Technical/Color), `BUILTIN_PRESETS` (~37, categories Zones/Links/Status/Emphasis/Text), `normalizeStyle/Preset/Theme/Library` (validate untrusted input), `stylePatch(style, kind)`. Theme re-inks only strokes equal to some theme's ink (`inkColors(themes)`, includes user themes), so custom colors survive theme switches.
+- **Persistence**: user presets/themes are global, not per drawing: `app/src/styles-store.ts` keeps `<userData>/styles.json` (IPC `styles:get/save`, bridge `getStyleLibrary/saveStyleLibrary`), `web/src/styleStore.ts` is the renderer cache (`stylesReady`, `allPresets/allThemes`, `savePreset/saveTheme/delete*`). A saved entry with a built-in's id overrides it; deleting it restores the built-in. The old localStorage key `mydraw.stylePresets` is migrated once.
+- `web/src/agent/styles.ts`: `styleElements` / `applyThemeToScene` go through `applyUpdates` (text re-measure, label re-fit in a second pass), so one call = one undo step. Icon-node containers are left alone; images and frames are skipped.
+- `web/src/StyleSection.tsx`: panel section (tabs Colors / Presets / Themes; collapsible groups; Manage mode with edit/delete; editors; `ColorPicker` from `IconColorSection` for any color), portaled into a host under the icon color host (MutationObserver in `App.tsx`). Don't give it the class `md-iconcolor` (smoke selectors use it).
+- MCP: `list_palettes`, `list_themes` (themes + presets), `apply_theme`, `apply_style_preset`, `save_style_preset`, `delete_style_preset`, `save_theme`, `delete_theme`.
+
 ## How to drive mydraw (for Claude)
+0. A whole diagram: `build_diagram` (or `mermaid_to_scene`, `apply_template`); then refine with the steps below and `auto_layout` to tidy.
 1. `list_drawings` / `new_drawing` / `open_drawing`; `get_scene` for ids.
 2. Shapes with labels in one `add_elements` call (give your own ids like `"web1"` so you can refer to them); arrows as `{type:"arrow", from, to, label}` in the same call or via `connect`.
-3. Icons: `search_stencils "ec2"` → `place_stencil {id, right_of: "web1", label: "web-1"}`; connect to the returned `icon` id.
+3. Icons: `search_stencils "ec2"` → `place_stencil {id, right_of: "web1", label: "web-1"}`; connect to the returned `node` id. Zones: `create_zone {label, ids}`. Connectors: `routing: "elbow" | "curved"`.
 4. `screenshot` to check the layout; fix with `move` / `update_elements`; `zoom_to_fit` so the user sees it.
 5. `save {path}` and `export {path: ".../x.png"}`.
 

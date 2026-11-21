@@ -13,7 +13,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { CONTROL_FILE, type ControlInfo, type RpcResponse } from "../../shared/agent";
 
-const VERSION = "0.2.0";
+const VERSION = "0.5.0";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..");
 const userData = process.env.MYDRAW_USER_DATA || path.join(os.homedir(), "Library", "Application Support", "mydraw");
@@ -151,7 +151,9 @@ const server = new McpServer(
       "mydraw is a local Excalidraw desktop app. These tools edit the open drawings live.",
       "Workflow: list_drawings / new_drawing / open_drawing -> get_scene to see ids -> add_elements, place_stencil, connect -> screenshot to check the result -> save / export.",
       "Coordinates are scene pixels (y grows downward). Each tool call is one undo step for the user.",
-      "Icons (AWS, Azure, GCP, Kubernetes, network, logos) come from the stencil library: search_stencils then place_stencil; connect arrows to the returned icon id.",
+      "For a whole diagram use build_diagram (nodes, edges, zones -> automatic ELK layout, icons, elbow arrows, legend) or mermaid_to_scene / apply_template; then refine with the element tools.",
+      "Icons (AWS, Azure, GCP, Kubernetes, network, logos) come from the stencil library: search_stencils then place_stencil (or `icon` on a build_diagram node); connect arrows to the returned node id.",
+      "Zones (VPC, subnet, VLAN, ...) are locked tinted boxes; moving a zone moves what is inside it.",
       "Every tool takes an optional `drawing` (tab id, file path or title); default is the active drawing.",
     ].join("\n"),
   },
@@ -251,7 +253,7 @@ tool(
     "Add elements from Excalidraw element skeletons (all added as one undo step). Each needs type, x, y; id optional (returned).",
     'Shapes: {type:"rectangle"|"ellipse"|"diamond", x, y, width, height, label:"text" or {text, fontSize}, strokeColor, backgroundColor, fillStyle:"solid"|"hachure"|"cross-hatch", strokeWidth, strokeStyle:"solid"|"dashed"|"dotted", roundness:{type:3}|null}.',
     'Text: {type:"text", x, y, text, fontSize, textAlign}. Frames: {type:"frame", x, y, width, height, name, children:[ids]}.',
-    'Arrows/lines: {type:"arrow"|"line", from:id, to:id, label} draws a bound connector edge to edge (ids may be earlier in the same call or already in the drawing); or give x, y, points:[[0,0],[dx,dy],...] for a free line.',
+    'Arrows/lines: {type:"arrow"|"line", from:id, to:id, label, routing:"straight"|"elbow"|"curved"} draws a bound connector edge to edge (ids may be earlier in the same call or already in the drawing); or give x, y, points:[[0,0],[dx,dy],...] for a free line.',
     "Colors are hex. Unset style fields use the drawing's current style.",
   ].join("\n"),
   { drawing, elements: z.array(loose) },
@@ -259,12 +261,13 @@ tool(
 );
 tool(
   "connect",
-  "Draw an arrow (or line) between two elements, edge to edge, bound so it follows them when moved.",
+  "Draw an arrow (or line) between two elements, edge to edge, bound so it follows them when moved. routing: straight (default), elbow (right angles, re-routes itself when shapes move) or curved.",
   {
     drawing,
     from: z.string(),
     to: z.string(),
     label: z.string().optional(),
+    routing: z.enum(["straight", "elbow", "curved"]).optional(),
     type: z.enum(["arrow", "line"]).optional(),
     id: z.string().optional(),
     startArrowhead: z.enum(["arrow", "bar", "dot", "circle", "triangle", "diamond"]).nullable().optional(),
@@ -285,7 +288,7 @@ tool(
   "update_elements",
   [
     "Change elements: [{id, ...fields}]. Fields: x, y, dx, dy, width, height, angle, strokeColor, backgroundColor, fillStyle, strokeWidth, strokeStyle, roughness, opacity, roundness, text, fontSize, fontFamily, textAlign, link, locked, name (frames), startArrowhead, endArrowhead,",
-    "label (shape/arrow label text; null removes it), data (merged into custom properties, e.g. {ip, hostname}).",
+    "label (shape/arrow label text, icon-node caption or zone title; null removes it), data (merged into custom properties, e.g. {ip, hostname}), routing (arrows: straight|elbow|curved).",
     "Moved or resized shapes keep their label centred and their arrows attached.",
   ].join(" "),
   { drawing, updates: z.array(loose) },
@@ -311,6 +314,126 @@ tool("zoom_to_fit", "Scroll and zoom the view to fit the whole drawing or the gi
 tool("undo", "Undo the last change(s) in a drawing (each tool call is one step).", { drawing, steps: z.number().int().optional() }, call("undo"));
 tool("redo", "Redo undone change(s).", { drawing, steps: z.number().int().optional() }, call("redo"));
 
+// diagrams
+const lineStyle = z.enum(["solid", "dashed", "dotted"]);
+const node = z
+  .object({
+    id: z.string().describe("Your id for the node (becomes the element id)"),
+    label: z.string().optional().describe("Text in the shape, or the icon's caption. Default: the id. \n for line breaks"),
+    icon: z.string().optional().describe('Stencil id, name or search ("Amazon EC2", "AWS:Amazon RDS", "Network:router"). Falls back to a shape if not found'),
+    iconColor: z.string().optional().describe("Recolor an SVG icon (hex)"),
+    shape: z.enum(["rectangle", "ellipse", "diamond"]).optional().describe("For nodes without an icon (default rectangle)"),
+    zone: z.string().optional().describe("Id of the zone the node sits in"),
+    color: z.string().optional().describe("Stroke/text color (hex)"),
+    fill: z.string().optional().describe("Fill color (hex), default white"),
+    width: z.number().optional(),
+    height: z.number().optional(),
+    kind: z.string().optional().describe('Category for the legend, e.g. "Server"'),
+    data: z.record(z.string(), z.any()).optional().describe("Custom properties, e.g. {ip, hostname}"),
+    link: z.string().optional(),
+  })
+  .describe("A node: a shape with a label, or an icon with a caption");
+const zone = z.object({
+  id: z.string(),
+  label: z.string().optional().describe("Title shown in the zone's top-left corner"),
+  parent: z.string().optional().describe("Enclosing zone id (zones nest: cloud > VPC > subnet)"),
+  color: z.string().optional().describe("Border/title color (hex); fill defaults to a light tint of it"),
+  fill: z.string().optional(),
+  style: lineStyle.optional(),
+  locked: z.boolean().optional().describe("Default true (users can't drag it by accident)"),
+});
+const edge = z.object({
+  id: z.string().optional(),
+  from: z.string().describe("Node or zone id"),
+  to: z.string().describe("Node or zone id"),
+  label: z.string().optional(),
+  color: z.string().optional(),
+  style: lineStyle.optional(),
+  width: z.number().optional().describe("Stroke width, default 2"),
+  arrow: z.enum(["end", "both", "none"]).optional().describe("Arrowheads, default end"),
+  routing: z.enum(["elbow", "straight", "curved"]).optional(),
+  kind: z.string().optional().describe('Category for the legend, e.g. "Replication"'),
+});
+const layoutOpts = {
+  direction: z.enum(["right", "down", "left", "up"]).optional().describe("Flow direction, default right"),
+  algorithm: z.enum(["layered", "tree", "radial", "force", "grid"]).optional().describe("Default layered (best for flows and networks)"),
+  spacing: z.number().optional().describe("Space between nodes, default 60"),
+  routing: z.enum(["elbow", "straight", "curved"]).optional().describe("Connector style, default elbow"),
+};
+const placeOpts = {
+  x: z.number().optional().describe("Top-left corner; default right of the existing content"),
+  y: z.number().optional(),
+  title: z.string().optional().describe("Title text above the diagram"),
+  legend: z.union([z.boolean(), z.string()]).optional().describe("Add a legend (true or its title)"),
+  zoom: z.boolean().optional().describe("Zoom the view to the new diagram (default true)"),
+};
+tool(
+  "build_diagram",
+  [
+    "Build a whole diagram in one step (one undo step): nodes (shapes or stencil icons with captions), edges (bound arrows) and zones (nested tinted boxes like VPC > subnet),",
+    "laid out automatically with ELK (layered by default) and connected with elbow arrows that re-route when nodes move. The main 'draw me X' tool.",
+    "Ids you give become element ids. Returns ids, bounds and warnings (e.g. icons not found). Check the result with screenshot.",
+  ].join(" "),
+  {
+    drawing,
+    nodes: z.array(node),
+    edges: z.array(edge).optional(),
+    zones: z.array(zone).optional(),
+    ...layoutOpts,
+    iconSize: z.number().optional().describe("Icon size (longest side), default 64"),
+    ...placeOpts,
+  },
+  call("build_diagram"),
+);
+tool(
+  "mermaid_to_scene",
+  "Turn Mermaid text into a diagram. Flowcharts (flowchart/graph: shapes, labelled links, subgraphs -> zones, style/classDef colors) get the same ELK layout and elbow arrows as build_diagram; other Mermaid types (sequence, class, ...) are converted by Mermaid itself.",
+  { drawing, mermaid: z.string(), ...layoutOpts, ...placeOpts },
+  call("mermaid_to_scene"),
+);
+tool("list_templates", "List starter diagram templates (3-tier web app, AWS VPC, GCP project, home network, k8s cluster, homelab).", {}, call("list_templates"), {
+  readOnlyHint: true,
+});
+tool(
+  "apply_template",
+  "Insert a starter diagram template (see list_templates). Icons come from the stencil library; missing packs fall back to plain shapes (reported in warnings). Edit the result with the element tools.",
+  { drawing, name: z.string(), ...layoutOpts, ...placeOpts },
+  call("apply_template"),
+);
+tool(
+  "create_zone",
+  "Draw a zone (VPC, subnet, VLAN, rack, ...): a tinted box with a title, around the given elements (ids, with padding) or at x/y/width/height. Placed behind its contents and locked; moving the zone moves its contents. Nested automatically when the members share a zone, or via parent.",
+  {
+    drawing,
+    label: z.string().optional(),
+    ids: ids.optional(),
+    id: z.string().optional(),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    width: z.number().optional(),
+    height: z.number().optional(),
+    parent: z.string().optional(),
+    color: z.string().optional().describe("Border/title color (hex), default blue"),
+    fill: z.string().optional().describe("Fill (hex), default a light tint of color"),
+    style: lineStyle.optional(),
+    padding: z.number().optional().describe("Space around the members, default 24"),
+    locked: z.boolean().optional(),
+  },
+  call("create_zone"),
+);
+tool(
+  "add_legend",
+  "Add (or replace) a legend: one row per icon type (stencil name or kind) and per shape/arrow kind (set `kind` in build_diagram, or data.mydrawKind). Default position: under the diagram, right-aligned.",
+  { drawing, ids: ids.optional().describe("Only these elements (default all)"), title: z.string().optional(), x: z.number().optional(), y: z.number().optional(), replace: z.boolean().optional() },
+  call("add_legend"),
+);
+tool(
+  "auto_layout",
+  "Re-arrange existing shapes, icon nodes, groups and zones with ELK, using their arrows as edges (keeps the top-left corner). Optional ids limit it to part of the drawing; routing switches all affected arrows.",
+  { drawing, ids: ids.optional(), ...layoutOpts },
+  call("auto_layout"),
+);
+
 // stencils
 tool(
   "search_stencils",
@@ -323,9 +446,10 @@ tool("list_collections", "List stencil collections (AWS, Azure, GCP, Kubernetes,
 tool(
   "place_stencil",
   [
-    "Insert a stencil by id (from search_stencils). Icons get a label under them (item name, custom text, or false for none).",
-    "Position: x/y (centre of the icon), or right_of/left_of/above/below an element id (gap default 80, icon centres aligned), or inside a frame id. Default: right of everything.",
-    "Optional color (hex, recolors SVG icons) and size (icon's longest side, default 64). Returns the new ids; connect arrows to `icon`.",
+    "Insert a stencil by id (from search_stencils). Icons become an icon node: icon + caption (item name, custom text, or false for none); arrows connect to the node so they never cross the caption.",
+    "Position: x/y (centre of the icon), or right_of/left_of/above/below an element id (gap default 80, icon centres aligned), or inside a frame/zone id. Default: right of everything.",
+    "Optional color (hex, recolors SVG icons) and size (icon's longest side, default 64). A node placed across a zone border gets a canvas-colored backing so the border line doesn't cross it (mask:false to turn off).",
+    "Returns `node` (connect arrows to it), `icon` (the image) and `label`.",
   ].join(" "),
   {
     drawing,
@@ -341,6 +465,7 @@ tool(
     label: z.union([z.string(), z.literal(false)]).optional(),
     color: z.string().optional(),
     size: z.number().optional(),
+    mask: z.boolean().optional(),
   },
   call("place_stencil"),
 );
@@ -368,6 +493,75 @@ tool(
   call("recolor"),
 );
 tool("get_color", "Read an element's real color (dominant color for icons).", { drawing, id: z.string() }, call("get_color"), { readOnlyHint: true });
+
+// palettes, themes, style presets
+tool(
+  "list_palettes",
+  "List color palettes and how to write colors. Everywhere a color is accepted (recolor, add_elements, update_elements, place_stencil, build_diagram) you can use hex (#ff9900), a ramp name (blue-600; plain 'blue' = blue-500; 22 hues x shades 50..900), a basic name (red, navy, mint, charcoal, ...) or 'transparent'. Pass palette:'ramp' to list every ramp name.",
+  { palette: z.string().optional().describe("basic | ramp") },
+  call("list_palettes"),
+  { readOnlyHint: true },
+);
+tool(
+  "list_themes",
+  "List themes and style presets, each with its category (built-in and user-saved; they are the same in every drawing).",
+  {},
+  call("list_themes"),
+  { readOnlyHint: true },
+);
+tool(
+  "apply_theme",
+  "Restyle a drawing with a theme (one undo step): roughness, corner roundness, font and stroke width of shapes, text and connectors, default-ink strokes re-inked, and (whole drawing only) the canvas background. Custom fills and colors are kept. Also sets defaults for new shapes. ids limits it to those elements (and their groups); background:false keeps the canvas color. Theme names: see list_themes.",
+  { drawing, theme: z.string(), ids: ids.optional(), background: z.boolean().optional() },
+  call("apply_theme"),
+);
+tool(
+  "apply_style_preset",
+  "Apply a named style preset (see list_themes; e.g. 'DMZ', 'Critical') or an inline style to elements. Labels follow. style fields: strokeColor, backgroundColor (names or hex), fillStyle, strokeWidth, strokeStyle (solid|dashed|dotted), roughness, opacity (0-100), roundness (sharp|round), fontFamily, fontSize.",
+  {
+    drawing,
+    ids,
+    preset: z.string().optional(),
+    style: z.record(z.string(), z.unknown()).optional(),
+  },
+  call("apply_style_preset"),
+);
+tool(
+  "save_style_preset",
+  "Save a style preset (kept across sessions, available in every drawing): either from an element's current look (id) or an inline style. Saving under a built-in's name overrides it.",
+  {
+    drawing,
+    name: z.string(),
+    category: z.string().optional().describe("Group in the panel (default 'My presets')"),
+    id: z.string().optional().describe("Copy the style of this element"),
+    style: z.record(z.string(), z.unknown()).optional(),
+    description: z.string().optional(),
+  },
+  call("save_style_preset"),
+);
+tool("delete_style_preset", "Delete a user-saved style preset (built-ins can only be overridden).", { drawing, name: z.string() }, call("delete_style_preset"), {
+  destructiveHint: true,
+});
+tool(
+  "save_theme",
+  "Save a custom theme (kept across sessions, available in every drawing). background and ink are colors; fontFamily one of virgil, helvetica, cascadia, excalifont, nunito, lilita-one, comic-shanns, liberation.",
+  {
+    drawing,
+    name: z.string(),
+    category: z.string().optional().describe("Group in the panel (default 'My themes')"),
+    background: z.string(),
+    ink: z.string(),
+    fontFamily: z.string().optional(),
+    roughness: z.number().optional().describe("0 none, 1 some, 2 lots"),
+    roundness: z.enum(["sharp", "round"]).optional(),
+    strokeWidth: z.number().optional(),
+    description: z.string().optional(),
+  },
+  call("save_theme"),
+);
+tool("delete_theme", "Delete a user-saved theme (built-ins can't be deleted).", { drawing, name: z.string() }, call("delete_theme"), {
+  destructiveHint: true,
+});
 
 // escape hatches
 tool(

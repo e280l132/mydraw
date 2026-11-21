@@ -79,6 +79,9 @@ export interface MydrawBridge {
   isTest: boolean;
   getSettings(): Promise<Settings>;
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
+  /** The user's saved style presets and themes (global, shared by every drawing). */
+  getStyleLibrary(): Promise<import("./styles").StyleLibrary>;
+  saveStyleLibrary(lib: import("./styles").StyleLibrary): Promise<import("./styles").StyleLibrary>;
   openDialog(): Promise<OpenedFile[]>;
   /** Files passed on the command line or via Finder before the UI was ready. */
   takePendingFiles(): Promise<OpenedFile[]>;

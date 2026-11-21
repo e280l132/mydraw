@@ -26,6 +26,7 @@ import { drawingStyleAppState } from "./drawingStyle";
 import { ExportDialog } from "./ExportDialog";
 import { PacksDialog, RenameDialog, SaveStencilDialog } from "./library/dialogs";
 import { CUSTOM_COLOR_KEY, IconColorSection } from "./library/IconColorSection";
+import { StyleSection } from "./StyleSection";
 import { colorOfElement, elementAt } from "./library/pickColor";
 import { normalizeHex } from "../../shared/colorMath";
 import { IconRecolorSession, NO_ICONS, iconSelection, recolorSelectedIcons, type IconSelection } from "./library/iconColor";
@@ -189,6 +190,8 @@ export function App() {
   }, []);
   const [picking, setPicking] = useState(false);
   const iconsKey = useRef("");
+  const selKey = useRef("");
+  const [selTick, setSelTick] = useState(0);
 
   // Refs hold the latest values for callbacks fired by Excalidraw, IPC and timers.
   const tabsRef = useRef<Tab[]>([]);
@@ -324,6 +327,11 @@ export function App() {
       if (appState.isLoading) return;
       if (id === activeRef.current) {
         const sel = appState.viewModeEnabled ? NO_ICONS : iconSelection(elements, appState, files);
+        const sk = Object.keys(appState.selectedElementIds).sort().join(",");
+        if (sk !== selKey.current) {
+          selKey.current = sk;
+          setSelTick((n) => n + 1);
+        }
         const key = `${sel.count}:${sel.raster}:${sel.color}`;
         if (key !== iconsKey.current) {
           iconsKey.current = key;
@@ -535,6 +543,39 @@ export function App() {
     mo.observe(root, { childList: true, subtree: true });
     return () => mo.disconnect();
   }, [showIconSection, activeId]);
+
+  // Palette / presets / theme section: same trick, host sits right under the icon color section.
+  const [styleHost, setStyleHost] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!root) return;
+    const attach = () => {
+      const column = root.querySelector<HTMLElement>(".md-drawing:not([style*='none']) .App-menu__left .panelColumn");
+      if (!column) return setStyleHost(null);
+      let host = column.querySelector<HTMLElement>(":scope > .md-style-host");
+      if (!host) {
+        root.querySelectorAll(".md-style-host").forEach((n) => n.remove());
+        host = document.createElement("div");
+        host.className = "md-style-host";
+      }
+      const iconHostEl = column.querySelector<HTMLElement>(":scope > .md-iconcolor-host");
+      if (host.parentElement !== column || (iconHostEl ? host.previousElementSibling !== iconHostEl : column.firstElementChild !== host)) {
+        if (iconHostEl) iconHostEl.after(host);
+        else column.prepend(host);
+      }
+      // Our Colors tab replaces Excalidraw's Stroke and Background rows (same job, bigger palettes).
+      column.querySelectorAll<HTMLElement>(".color-picker__top-picks").forEach((picks) => {
+        let section: HTMLElement | null = picks;
+        while (section && section.parentElement !== column) section = section.parentElement;
+        if (section && !section.classList.contains("md-style-host")) section.classList.add("md-native-color");
+      });
+      setStyleHost((prev) => (prev === host ? prev : host));
+    };
+    attach();
+    const mo = new MutationObserver(attach);
+    mo.observe(root, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, [activeId]);
 
   const openSaveStencil = useCallback(() => {
     const api = apis.current.get(activeRef.current);
@@ -1039,6 +1080,11 @@ export function App() {
           y: ((y1 + y2) / 2 + st.scrollY) * st.zoom.value + st.offsetTop,
         };
       },
+      /** Screen position of a scene point (for dragging things in tests). */
+      toScreen: (x: number, y: number) => {
+        const st = api().getAppState();
+        return { x: (x + st.scrollX) * st.zoom.value + st.offsetLeft, y: (y + st.scrollY) * st.zoom.value + st.offsetTop };
+      },
       recolor: (color: string | null, preview = false) => recolorSelectedIcons(api(), color, preview),
       selectImages: () =>
         api().updateScene({
@@ -1051,6 +1097,23 @@ export function App() {
             ),
           } as Partial<AppState> as AppState,
         }),
+      selectType: (type: string) =>
+        api().updateScene({
+          appState: {
+            selectedElementIds: Object.fromEntries(
+              api()
+                .getSceneElements()
+                .filter((e) => e.type === type)
+                .map((e) => [e.id, true]),
+            ),
+          } as Partial<AppState> as AppState,
+        }),
+      elementProps: (type: string) =>
+        api()
+          .getSceneElements()
+          .filter((e) => e.type === type)
+          .map((e) => ({ id: e.id, strokeColor: e.strokeColor, backgroundColor: e.backgroundColor, roughness: e.roughness, strokeStyle: e.strokeStyle })),
+      viewBackground: () => api().getAppState().viewBackgroundColor,
       imageColors: () =>
         api()
           .getSceneElements()
@@ -1096,6 +1159,7 @@ export function App() {
             onLibraryChange={onLibraryChange}
           />
         ))}
+        {styleHost && createPortal(<StyleSection api={apis.current.get(activeId)} tick={selTick} onToast={showToast} custom={customColor} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} />, styleHost)}
         {iconHost && showIconSection && createPortal(
             <IconColorSection
               selection={icons}

@@ -235,6 +235,32 @@ await page.screenshot({ path: path.join(shots, "eyedropper.png") });
 await page.click(`${SECTION} >> text=Original`);
 await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "original"), "back to original colors");
 
+step("properties panel: palette swatch, style preset and theme act on the selection");
+await t((x) => x.addSample("Styled"));
+await t((x) => x.selectType("rectangle"));
+const STYLE = ".md-drawing:not([style*='none']) .App-menu__left .md-style";
+await page.waitForSelector(STYLE);
+await page.click(`${STYLE} .md-swatch[title='orange']`);
+await waitFor(async () => (await t((x) => x.elementProps("rectangle"))).every((e) => e.strokeColor === "#f08c00"), "palette swatch sets stroke");
+await page.waitForSelector(`${STYLE} .md-shades .md-shade`);
+assert.equal(await page.locator(`${STYLE} .md-shades .md-shade`).count(), 10, "ten shades ramp off the chosen basic color");
+await page.screenshot({ path: path.join(shots, "style-colors.png") });
+await page.click(`${STYLE} .md-shade[title='orange 800']`);
+await waitFor(async () => (await t((x) => x.elementProps("rectangle"))).every((e) => e.strokeColor !== "#f08c00"), "shade applied");
+await page.click(`${STYLE} [role=tab]:text-is('Presets')`);
+await page.click(`${STYLE} .md-group-head:has-text('Zones')`);
+await page.click(`${STYLE} .md-chip:text-is('DMZ')`);
+await waitFor(async () => (await t((x) => x.elementProps("rectangle"))).every((e) => e.strokeStyle === "dashed"), "DMZ preset applied");
+await page.click(`${STYLE} [role=tab]:text-is('Themes')`);
+await page.click(`${STYLE} .md-group-head:has-text('Technical')`);
+await page.click(`${STYLE} .md-chip:text-is('Blueprint')`);
+await waitFor(async () => (await t((x) => x.viewBackground())) === "#0b3a75", "theme changes the canvas");
+await page.screenshot({ path: path.join(shots, "style-panel.png") });
+await page.keyboard.press("Escape");
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*='none']) .excalidraw-container")?.focus());
+await page.keyboard.press("Meta+Z");
+await waitFor(async () => (await t((x) => x.viewBackground())) === "#ffffff", "theme is one undo step");
+
 step("save selection as stencil; it appears in the library");
 // Excalidraw handles keys only when its canvas has focus: click an empty spot first.
 await page.click(".md-drawing:not([style*='none']) canvas.interactive", { position: { x: 900, y: 700 } });
@@ -340,12 +366,17 @@ assert.equal(webFull.element.roughness, 0, "new shapes use the Clean drawing sty
 const found = await call("search_stencils", { query: "testrouter" });
 assert.equal(found.items[0].name, "TestRouter");
 const placed = await call("place_stencil", { id: found.items[0].id, right_of: "db", label: "edge-rtr", color: "#e8590c" });
-assert.ok(placed.icon && placed.label, "stencil placed with icon + label");
+assert.ok(placed.node && placed.icon && placed.label, "stencil placed as an icon node with icon + caption");
 scene = await call("get_scene");
-assert.equal(el(placed.icon).icon.color, "#e8590c", "stencil recolored on insert");
-assert.ok(el(placed.icon).x > el("db").x + el("db").width, "stencil is right of db");
-assert.ok(Math.abs(el(placed.icon).y + el(placed.icon).height / 2 - (el("db").y + el("db").height / 2)) < 1, "centres aligned");
+assert.equal(el(placed.node).type, "icon-node");
+assert.equal(el(placed.node).icon.color, "#e8590c", "stencil recolored on insert");
+assert.ok(el(placed.node).x > el("db").x + el("db").width, "stencil is right of db");
+const [iconFull] = await call("get_element", { id: placed.icon });
+assert.ok(Math.abs(iconFull.element.y + iconFull.element.height / 2 - (el("db").y + el("db").height / 2)) < 1, "centres aligned");
+// Connecting to the image binds to the node, so the arrow stops at the node's edge (clear of the caption).
 const link = await call("connect", { from: "db", to: placed.icon, style: { strokeStyle: "dashed" } });
+scene = await call("get_scene");
+assert.equal(el(link.id).to, placed.node, "arrow bound to the icon node");
 
 await call("update_elements", { updates: [{ id: "db", dy: 200 }] });
 scene = await call("get_scene");
@@ -383,11 +414,11 @@ const stencil = await call("save_as_stencil", { name: "Web box", ids: ["web"] })
 assert.ok(fs.existsSync(path.join(libraryDir, stencil.id)), "agent saved a stencil");
 
 // move takes the stencil's whole group (icon + label) along, and its arrow follows.
-const iconBefore = el(placed.icon);
+const nodeBefore = el(placed.node);
 const moved = await call("move", { ids: [placed.icon], dx: 100 });
-assert.ok(moved.moved.includes(placed.label), "label moves with its icon");
+assert.ok(moved.moved.includes(placed.node), "the whole icon node moves");
 scene = await call("get_scene");
-assert.equal(el(placed.icon).x, iconBefore.x + 100);
+assert.equal(el(placed.node).x, nodeBefore.x + 100);
 const g = await call("group", { ids: ["web", "db"] });
 scene = await call("get_scene");
 assert.ok(el("web").groupIds.includes(g.groupId) && el("db").groupIds.includes(g.groupId));
@@ -404,7 +435,8 @@ scene = await call("get_scene");
 assert.equal(el("inzone").x, 40, "frame contents move with the frame");
 await call("delete_elements", { ids: [placed.icon] });
 scene = await call("get_scene");
-assert.ok(!el(placed.label), "stencil caption deleted with its icon");
+assert.ok(!el(placed.node), "icon node deleted with its icon");
+assert.equal((await callRaw("get_element", { id: placed.label })).isError, true, "caption deleted too");
 const exp = await callRaw("export", { path: path.join(work, "part.excalidraw"), ids: ["web"] });
 assert.ok(exp.isError, "partial .excalidraw export is refused");
 
@@ -415,6 +447,159 @@ assert.ok(!el("db") && !el("a1").to, "deleted shape is gone and its arrow came l
 const bad = await callRaw("connect", { from: "nope", to: "web" });
 assert.ok(bad.isError && /no element/.test(bad.content[0].text), "errors are reported to the agent");
 await page.screenshot({ path: path.join(shots, "mcp-diagram.png") });
+
+step("MCP: build_diagram lays out nodes, icons, zones and elbow arrows with a legend");
+await call("new_drawing", { title: "Generated" });
+const built = await call("build_diagram", {
+  zones: [
+    { id: "net", label: "Network" },
+    { id: "lan", label: "LAN", parent: "net" },
+  ],
+  nodes: [
+    { id: "inet", label: "Internet", shape: "ellipse" },
+    { id: "rtr", label: "Router", icon: "TestRouter", zone: "net" },
+    { id: "srv", label: "Server", zone: "lan", kind: "Server" },
+    { id: "nas", label: "NAS", zone: "lan", kind: "Server", icon: "Azure:nothing" },
+  ],
+  edges: [
+    { from: "inet", to: "rtr", label: "WAN" },
+    { from: "rtr", to: "srv" },
+    { from: "rtr", to: "nas", style: "dashed", kind: "Backup" },
+  ],
+  legend: true,
+});
+assert.deepEqual(built.nodes, ["inet", "rtr", "srv", "nas"]);
+assert.ok(built.warnings?.some((w) => w.includes("Azure:nothing")), "missing icon reported");
+scene = await call("get_scene");
+assert.equal(el("rtr").type, "icon-node", "icon node from the library");
+assert.equal(el("lan").type, "zone");
+assert.equal(el("lan").zone, "net", "nested zone");
+assert.equal(el("srv").zone, "lan");
+const inside = (a, b) => a.x >= b.x && a.y >= b.y && a.x + a.width <= b.x + b.width && a.y + a.height <= b.y + b.height;
+assert.ok(inside(el("srv"), el("lan")) && inside(el("lan"), el("net")), "nodes inside their zones");
+assert.ok(!inside(el("inet"), el("net")), "node outside the zone stays outside");
+assert.equal(el("e1").routing, "elbow");
+assert.equal(el("e1").from, "inet");
+assert.ok(built.legend, "legend added");
+const [e2Full] = await call("get_element", { id: "e2" });
+assert.ok(e2Full.element.elbowed && e2Full.element.startBinding.fixedPoint, "elbow arrow with fixed-point bindings");
+// Moving a zone moves its contents; the arrow into it follows.
+const srvBefore = el("srv");
+await call("move", { ids: ["lan"], dy: 60 });
+scene = await call("get_scene");
+assert.equal(Math.round(el("srv").y - srvBefore.y), 60, "zone contents move with the zone");
+
+step("MCP: zones, legends, Mermaid, templates, auto layout, routed connectors");
+const z = await call("create_zone", { label: "Outside", ids: ["inet"], color: "#e8590c" });
+scene = await call("get_scene");
+assert.ok(inside(el("inet"), el(z.zone)) && el("inet").zone === z.zone, "zone drawn around its member");
+const curved = await call("connect", { from: "inet", to: "srv", routing: "curved" });
+scene = await call("get_scene");
+assert.equal(el(curved.id).routing, "curved");
+assert.equal(el(curved.id).points.length, 3);
+await call("update_elements", { updates: [{ id: curved.id, routing: "elbow" }] });
+scene = await call("get_scene");
+assert.equal(el(curved.id).routing, "elbow");
+const leg = await call("add_legend", { title: "Key" });
+assert.equal(leg.replaced > 0, true, "add_legend replaces the old legend");
+const mer = await call("mermaid_to_scene", { mermaid: "flowchart TD\n  A[Client] -->|req| B(API)\n  subgraph be [Backend]\n    B --> C[(DB)]\n  end" });
+assert.equal(mer.parsedAs, "flowchart");
+scene = await call("get_scene");
+assert.equal(el(mer.zones[0]).label, "Backend");
+const again = await call("mermaid_to_scene", { mermaid: "graph LR; A-->B" });
+assert.ok(again.nodes.every((id) => id !== "A" && id !== "B"), "clashing Mermaid ids are renamed");
+const seq = await call("mermaid_to_scene", { mermaid: "sequenceDiagram\n  Alice->>Bob: Hi" });
+assert.equal(seq.parsedAs, "mermaid");
+assert.ok((await call("list_templates")).some((t) => t.name === "home-network"));
+await call("new_drawing", { title: "Template" });
+const tpl = await call("apply_template", { name: "three-tier-web" });
+assert.ok(tpl.nodes.includes("db1") && tpl.zones.includes("data"));
+const laid = await call("auto_layout", { direction: "down" });
+assert.ok(laid.nodes >= 8 && laid.zones === 3, "auto_layout found nodes and zones");
+scene = await call("get_scene");
+assert.ok(el("users").y < el("db1").y, "laid out top to bottom");
+const tplPath = (await call("save", { path: path.join(work, "template") })).path;
+const tplSaved = JSON.parse(fs.readFileSync(tplPath, "utf8"));
+assert.ok(tplSaved.elements.some((e) => e.elbowed && e.startBinding?.fixedPoint), "elbow arrows saved");
+await page.screenshot({ path: path.join(shots, "mcp-generated.png") });
+
+step("MCP: palettes, color names, themes and style presets");
+const pals = await call("list_palettes");
+assert.deepEqual(pals.map((p) => p.id), ["basic", "ramp"]);
+assert.ok(Object.keys((await call("list_palettes", { palette: "ramp" }))[0].colors).length === 220, "full ramp listed on request");
+await call("new_drawing", { title: "Styles" });
+await call("add_elements", {
+  elements: [
+    { id: "s1", type: "rectangle", x: 0, y: 0, width: 160, height: 80, label: "App", strokeColor: "tangerine-600", backgroundColor: "blue-100" },
+    { id: "s2", type: "rectangle", x: 300, y: 0, width: 160, height: 80, label: "Edge" },
+    { id: "s3", type: "arrow", from: "s1", to: "s2", label: "https" },
+    { id: "s4", type: "text", x: 0, y: 160, text: "Notes" },
+  ],
+});
+scene = await call("get_scene");
+assert.match(el("s1").stroke ?? el("s1").strokeColor, /^#[0-9a-f]{6}$/, "color name resolved");
+await call("apply_style_preset", { ids: ["s2"], preset: "DMZ" });
+await call("apply_style_preset", { ids: ["s3"], preset: "Critical" });
+await call("recolor", { ids: ["s4"], color: "teal-600" });
+let th = await call("apply_theme", { theme: "blueprint" });
+assert.equal(th.background, "#0b3a75");
+assert.ok(th.restyled >= 4);
+const themed = await call("export", { path: path.join(work, "blueprint.excalidraw") });
+const bp = JSON.parse(fs.readFileSync(themed.path ?? path.join(work, "blueprint.excalidraw"), "utf8"));
+assert.equal(bp.appState.viewBackgroundColor, "#0b3a75", "canvas takes the theme background");
+const bpText = bp.elements.find((e) => e.id === "s4");
+assert.equal(bpText.fontFamily, 3, "text moved to Cascadia");
+const bpBox = bp.elements.find((e) => e.id === "s1");
+assert.match(bpBox.strokeColor, /^#[0-9a-f]{6}$/);
+assert.notEqual(bpBox.strokeColor, "#e8f1ff", "custom colors survive a theme");
+assert.equal(bpBox.roughness, 0);
+await call("undo");
+th = await call("apply_theme", { theme: "sketch" });
+assert.ok(th.restyled >= 4);
+await call("save_style_preset", { name: "Orange box", id: "s1" });
+assert.ok((await call("list_themes")).presets.some((p) => p.title === "Orange box"));
+await call("apply_style_preset", { ids: ["s4"], preset: "orange box" });
+await call("save_theme", { name: "Smoke theme", category: "Smoke", background: "navy", ink: "#ffffff", roundness: "round" });
+const stylesFile = path.join(userData, "styles.json");
+await waitFor(() => fs.existsSync(stylesFile), "styles.json written");
+const savedStyles = JSON.parse(fs.readFileSync(stylesFile, "utf8"));
+assert.ok(savedStyles.presets.some((p) => p.title === "Orange box" && p.category === "My presets"), "preset persisted to the app's styles file");
+assert.ok(savedStyles.themes.some((t) => t.id === "smoke-theme" && t.background === "#0b2e6f"), "theme persisted");
+await call("new_drawing", { title: "Another drawing" });
+const lists = await call("list_themes");
+assert.ok(lists.presets.some((p) => p.title === "Orange box") && lists.themes.some((t) => t.title === "Smoke theme"), "saved styles are available in every drawing");
+assert.ok(lists.presets.length >= 30 && lists.themes.length >= 15, "plenty of built-ins");
+await call("apply_theme", { theme: "smoke theme" });
+await call("delete_theme", { name: "Smoke theme" });
+await call("delete_style_preset", { name: "Orange box" });
+await assert.rejects(() => call("delete_style_preset", { name: "DMZ" }), /built in/);
+assert.ok(!JSON.parse(fs.readFileSync(stylesFile, "utf8")).presets.some((p) => p.title === "Orange box"), "deleted preset removed from disk");
+await assert.rejects(() => call("apply_theme", { theme: "nope" }), /unknown theme/);
+await assert.rejects(() => call("recolor", { ids: ["s4"], color: "bluish" }), /palette name/);
+await page.screenshot({ path: path.join(shots, "mcp-themes.png") });
+
+step("MCP: review fixes (second diagram, legend, zone styling, zone colors, elbow, zone title)");
+await call("new_drawing", { title: "Fixes" });
+const d1 = await call("build_diagram", { nodes: [{ id: "a" }, { id: "b" }], edges: [{ from: "a", to: "b" }] });
+const d2 = await call("build_diagram", { nodes: [{ id: "c" }, { id: "d" }], edges: [{ from: "c", to: "d", label: "x" }] });
+assert.notDeepEqual(d1.edges, d2.edges, "second diagram gets its own edge ids");
+const lg = await call("build_diagram", { nodes: [{ id: "p" }, { id: "q" }], edges: [{ from: "p", to: "q" }], legend: true });
+assert.ok(lg.nodes.includes("p") && lg.warnings?.some((w) => /legend/.test(w)), "empty legend warns instead of failing the build");
+await call("create_zone", { id: "zc", label: "Named", ids: ["p", "q"], color: "blue-600" });
+scene = await call("get_scene");
+assert.match(el("zc").stroke ?? el("zc").strokeColor, /^#[0-9a-f]{6}$/, "create_zone accepts color names");
+const beforeInner = JSON.stringify(el("p"));
+await call("apply_style_preset", { ids: ["zc"], preset: "DMZ" });
+scene = await call("get_scene");
+assert.equal(JSON.stringify(el("p")), beforeInner, "styling a zone leaves its contents alone");
+await call("add_elements", { elements: [{ id: "fa", type: "arrow", x: 0, y: 600, points: [[0, 0], [120, 90]] }] });
+await call("update_elements", { updates: [{ id: "fa", routing: "elbow" }] });
+const rawFa = JSON.parse(fs.readFileSync((await call("save", { path: path.join(work, "fixes") })).path, "utf8")).elements.find((e) => e.id === "fa");
+assert.ok(rawFa.points.every((pt, i, all) => i === 0 || pt[0] === all[i - 1][0] || pt[1] === all[i - 1][1]), "free elbow arrow is orthogonal");
+await call("create_zone", { id: "zn", x: 600, y: 600, width: 200, height: 120 });
+await call("update_elements", { updates: [{ id: "zn", label: "Late title" }] });
+scene = await call("get_scene");
+assert.ok(JSON.stringify(scene).includes("Late title"), "label added to a zone without a title");
 await client.close();
 
 app.process().kill("SIGKILL");

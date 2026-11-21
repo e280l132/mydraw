@@ -3,7 +3,13 @@
 // is one undo step and never overwrites edits the user made in the meantime (elements are merged
 // by id).
 import { CaptureUpdateAction, convertToExcalidrawElements, newElementWith, restoreElements } from "@excalidraw/excalidraw";
-import type { ExcalidrawElement, ExcalidrawImageElement } from "@excalidraw/excalidraw/element/types";
+import { normalizeSpec, tint, uniquifySpec, type DiagramSpec } from "../../../shared/diagram";
+import { isFlowchart, parseMermaidFlowchart } from "../../../shared/mermaid";
+import { PALETTES, requireColor, resolveColor } from "../../../shared/palettes";
+import { FONTS, normalizeStyle, type StyleSpec } from "../../../shared/styles";
+import { allPresets, allThemes, deletePreset, deleteTheme, findPreset, findTheme, savePreset, saveTheme, stylesReady } from "../styleStore";
+import { applyThemeToScene, styleElements } from "./styles";
+import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState, BinaryFileData, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { AgentCommand } from "../../../shared/agent";
 import { center, placeBeside, type Box, type Side } from "../../../shared/geometry";
@@ -13,17 +19,24 @@ import { DEFAULT_EXPORT_OPTIONS, exportElements, renderExport, type ExportFormat
 import { isRecolorableIcon, recoloredIcon } from "../library/iconColor";
 import { colorOfElement } from "../library/pickColor";
 import { cloneForInsert, loadStencil } from "../library/stencilContent";
+import { autoLayout, buildDiagram, buildLegend, loadIconImage, makeIconNode, makeZone, zoneTitleSize } from "./diagram";
 import { trueColorFile } from "../library/trueColor";
 import { serializeScene } from "../scene";
 import {
   applyUpdates,
+  bindTarget,
   boundsOf,
   boundTextOf,
   boxOf,
+  iconImageOf,
+  isIconNode,
+  isZone,
+  zoneOf,
   buildElements,
   deleteElements,
   describe,
   listable,
+  parseRouting,
   randomId,
   withGroupsAndLabels,
   type El,
@@ -69,13 +82,30 @@ function liveMap(api: ExcalidrawImperativeAPI): ElMap {
   return new Map(api.getSceneElements().map((e) => [e.id, e]));
 }
 
-/** Apply changed + added elements as one undoable scene update. */
-function commit(api: ExcalidrawImperativeAPI, changed: readonly El[], added: readonly El[] = []): void {
+/**
+ * Apply changed + added elements as one undoable scene update. Added elements go on top, or just
+ * below `beforeId` (zones go behind their contents).
+ */
+function commit(api: ExcalidrawImperativeAPI, changed: readonly El[], added: readonly El[] = [], beforeId?: string): void {
   if (!changed.length && !added.length) return;
   const byId = new Map(changed.map((e) => [e.id, e]));
-  api.updateScene({
-    elements: [...api.getSceneElementsIncludingDeleted().map((e) => byId.get(e.id) ?? e), ...added],
-    captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+  const current = api.getSceneElementsIncludingDeleted().map((e) => byId.get(e.id) ?? e);
+  const at = beforeId ? current.findIndex((e) => e.id === beforeId) : -1;
+  // Excalidraw orders by fractional index; dropping the index of moved/new elements makes it
+  // re-derive them from the array order.
+  const elements = at >= 0 ? [...current.slice(0, at), ...added.map((e) => ({ ...e, index: null }) as El), ...current.slice(at)] : [...current, ...added];
+  api.updateScene({ elements, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+}
+
+/** Elements whose box crosses the border of a zone or frame (rather than sitting inside or outside it). */
+function crossesBorder(box: Box, scene: readonly El[]): boolean {
+  return scene.some((z) => {
+    if (z.isDeleted || !(isZone(z) || z.type === "frame" || z.type === "magicframe")) return false;
+    const inX = box.x < z.x + z.width && box.x + box.width > z.x;
+    const inY = box.y < z.y + z.height && box.y + box.height > z.y;
+    if (!inX || !inY) return false;
+    const inside = box.x >= z.x && box.y >= z.y && box.x + box.width <= z.x + z.width && box.y + box.height <= z.y + z.height;
+    return !inside;
   });
 }
 
@@ -145,114 +175,111 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
 
   // ---------- stencils ----------
 
-  async function placeStencil(api: ExcalidrawImperativeAPI, p: Params) {
-    const item = p.item as LibraryItem;
-    const st = api.getAppState();
-    const opts = { fontFamily: st.currentItemFontFamily as number, strokeColor: st.currentItemStrokeColor };
-    const content = await loadStencil(item, { ...opts, label: false });
+  /** Where to put content (`box`, anchored on `anchor`) for place_stencil's position options. */
+  function placement(api: ExcalidrawImperativeAPI, p: Params, box: Box, anchor: Box): { dx: number; dy: number; frameId: string | null; zone: string | null } {
     const scene = api.getSceneElements();
-    let elements = cloneForInsert(content.elements);
-    if (!elements.length) throw new Error(`stencil "${item.name}" is empty`);
-    const files = new Map<string, BinaryFileData>(content.files.map((f) => [f.id, trueColorFile(f)]));
-    const isIcon = item.kind === "svg" || item.kind === "png";
-    let image = isIcon ? (elements.find((e) => e.type === "image") as ExcalidrawImageElement | undefined) : undefined;
-
-    // Size (icons): longest side in px.
-    if (image && typeof p.size === "number" && p.size > 0) {
-      const k = p.size / Math.max(image.width, image.height);
-      image = newElementWith(image, { width: image.width * k, height: image.height * k });
-      elements = elements.map((e) => (e.id === image!.id ? image! : e));
-    }
-    // Color (SVG icons).
-    if (typeof p.color === "string") {
-      if (!HEX.test(p.color)) throw new Error("color must be a hex color like #ff9900");
-      if (!image || !files.get(image.fileId!) || !isRecolorableIcon(image, Object.fromEntries(files))) {
-        throw new Error("only SVG icons can be recolored");
-      }
-      const r = await recoloredIcon(image, files.get(image.fileId!)!, p.color);
-      if (r.file) files.set(r.file.id, r.file);
-      image = r.element as ExcalidrawImageElement;
-      elements = elements.map((e) => (e.id === image!.id ? image! : e));
-    }
-    // Label under the icon.
-    const labelText = p.label === false || p.label === "" ? null : typeof p.label === "string" ? p.label : isIcon ? item.name : null;
-    let label: El | undefined;
-    if (labelText && image) {
-      const [text] = convertToExcalidrawElements([
-        {
-          type: "text",
-          x: 0,
-          y: 0,
-          text: labelText,
-          fontSize: typeof p.fontSize === "number" ? p.fontSize : 14,
-          fontFamily: opts.fontFamily as never,
-          strokeColor: opts.strokeColor,
-          textAlign: "center",
-        },
-      ]);
-      label = {
-        ...text,
-        x: image.x + (image.width - text.width) / 2,
-        y: image.y + image.height + 6,
-        groupIds: image.groupIds,
-      } as El;
-      elements.push(label);
-    }
-    if (isIcon && image && !image.groupIds.length) {
-      const g = randomId();
-      elements = elements.map((e) => ({ ...e, groupIds: [g] }) as El);
-      image = elements.find((e) => e.id === image!.id) as ExcalidrawImageElement;
-    }
-
-    // Placement.
-    const box = boundsOf(elements);
-    const anchor: Box = image ? boxOf(image) : box;
     const map = liveMap(api);
-    let dx: number;
-    let dy: number;
-    let frameId: string | null = null;
     const side = (["right_of", "left_of", "above", "below"] as Side[]).find((s) => typeof p[s] === "string");
     if (side) {
       const refId = p[side] as string;
       const ref = map.get(refId);
       if (!ref) throw new Error(`no element with id "${refId}"`);
-      const refBox = boundsOf(withGroupsAndLabels([refId], scene));
+      const node = bindTarget(ref, map);
+      const refBox = boundsOf(withGroupsAndLabels([refId], scene).filter((e) => !isZone(e) || e.id === refId));
+      const refAnchor = isIconNode(node) ? boxOf(iconImageOf(node, map) ?? node) : boxOf(ref);
       const gap = typeof p.gap === "number" ? p.gap : PLACE_GAP;
-      ({ dx, dy } = placeBeside(box, anchor, refBox, boxOf(ref), side, gap));
-      frameId = ref.frameId;
-    } else if (typeof p.inside === "string") {
-      const frame = map.get(p.inside);
-      if (!frame || (frame.type !== "frame" && frame.type !== "magicframe")) throw new Error(`"${p.inside}" is not a frame`);
-      const c = center(boxOf(frame));
+      return { ...placeBeside(box, anchor, refBox, refAnchor, side, gap), frameId: ref.frameId, zone: zoneOf(node) };
+    }
+    if (typeof p.inside === "string") {
+      const z = map.get(p.inside);
+      if (!z || !(z.type === "frame" || z.type === "magicframe" || isZone(z))) throw new Error(`"${p.inside}" is not a frame or zone`);
+      const c = center(boxOf(z));
       const a = center(anchor);
-      dx = (typeof p.x === "number" ? p.x : c.x) - a.x;
-      dy = (typeof p.y === "number" ? p.y : c.y) - a.y;
-      frameId = frame.id;
-    } else if (typeof p.x === "number" && typeof p.y === "number") {
+      return {
+        dx: (typeof p.x === "number" ? p.x : c.x) - a.x,
+        dy: (typeof p.y === "number" ? p.y : c.y) - a.y,
+        frameId: isZone(z) ? z.frameId : z.id,
+        zone: isZone(z) ? z.id : null,
+      };
+    }
+    if (typeof p.x === "number" && typeof p.y === "number") {
       const a = center(anchor);
-      dx = p.x - a.x;
-      dy = p.y - a.y;
-    } else if (scene.length) {
+      return { dx: p.x - a.x, dy: p.y - a.y, frameId: null, zone: null };
+    }
+    if (scene.length) {
       // Default: to the right of everything, top-aligned.
       const all = boundsOf(scene);
-      dx = all.x + all.width + PLACE_GAP - box.x;
-      dy = all.y - box.y;
-    } else {
-      dx = -box.x;
-      dy = -box.y;
+      return { dx: all.x + all.width + PLACE_GAP - box.x, dy: all.y - box.y, frameId: null, zone: null };
     }
-    const placed = elements.map((e) => ({ ...e, x: e.x + dx, y: e.y + dy, frameId: frameId ?? e.frameId }) as El);
+    return { dx: -box.x, dy: -box.y, frameId: null, zone: null };
+  }
+
+  async function placeStencil(api: ExcalidrawImperativeAPI, p: Params) {
+    const item = p.item as LibraryItem;
+    const st = api.getAppState();
+    const opts = { fontFamily: st.currentItemFontFamily as number, strokeColor: st.currentItemStrokeColor };
+    const isIcon = item.kind === "svg" || item.kind === "png";
+
+    if (isIcon) {
+      // Icon + caption as one icon node (arrows bind to the node, clear of the caption).
+      const { image, files } = await loadIconImage(item, {
+        ...opts,
+        size: typeof p.size === "number" && p.size > 0 ? p.size : undefined,
+        color: typeof p.color === "string" ? p.color : undefined,
+      });
+      const caption = p.label === false || p.label === "" ? null : typeof p.label === "string" ? p.label : item.name;
+      const build = (x: number, y: number, mask: string | null, zone: string | null) =>
+        makeIconNode({
+          image,
+          caption,
+          fontSize: typeof p.fontSize === "number" ? p.fontSize : undefined,
+          ...opts,
+          x,
+          y,
+          mask,
+          customData: zone ? { mydrawZoneId: zone } : undefined,
+          stencil: { id: item.id, name: item.name },
+        });
+      let els = build(0, 0, null, null);
+      const at = placement(api, p, boundsOf(els), boxOf(els[1]));
+      const box = { ...boundsOf(els), x: els[0].x + at.dx, y: els[0].y + at.dy };
+      // On a zone border, a fill in the canvas color keeps the border line out of icon and caption.
+      const mask = p.mask === false ? null : p.mask === true || crossesBorder(box, api.getSceneElements()) ? st.viewBackgroundColor : null;
+      els = build(box.x, box.y, mask, at.zone).map((e) => ({ ...e, frameId: at.frameId }) as El);
+      commit(api, [], els);
+      api.addFiles(files);
+      host.markStencilUsed(item.id);
+      return {
+        node: els[0].id,
+        icon: els[1].id,
+        label: els[2]?.id ?? null,
+        ids: els.map((e) => e.id),
+        groupId: els[0].groupIds[0],
+        bounds: boundsOf(els),
+        masked: !!mask,
+        hint: `connect arrows to the node id "${els[0].id}"`,
+      };
+    }
+
+    // Saved shape groups and Excalidraw library items: their elements, as saved.
+    const content = await loadStencil(item, { ...opts, label: false });
+    const elements = cloneForInsert(content.elements);
+    if (!elements.length) throw new Error(`stencil "${item.name}" is empty`);
+    if (typeof p.color === "string" || typeof p.size === "number") throw new Error("color and size apply to icons (SVG/PNG stencils) only");
+    const files = new Map<string, BinaryFileData>(content.files.map((f) => [f.id, trueColorFile(f)]));
+    const box = boundsOf(elements);
+    const at = placement(api, p, box, box);
+    const placed = elements.map((e) => ({ ...e, x: e.x + at.dx, y: e.y + at.dy, frameId: at.frameId ?? e.frameId }) as El);
     commit(api, [], placed);
     if (files.size) api.addFiles([...files.values()]);
     host.markStencilUsed(item.id);
-    const placedImage = image && placed.find((e) => e.id === image!.id);
     return {
       ids: placed.map((e) => e.id),
-      icon: placedImage?.id ?? null,
-      label: label?.id ?? null,
+      node: null,
+      icon: null,
+      label: null,
       groupId: placed[0].groupIds.at(-1) ?? null,
       bounds: boundsOf(placed),
-      hint: placedImage ? `connect arrows to the icon id "${placedImage.id}"` : undefined,
     };
   }
 
@@ -274,8 +301,10 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
 
   async function recolor(api: ExcalidrawImperativeAPI, p: Params) {
     const ids = strArray(p.ids, "ids");
-    const color = p.color === null ? null : String(p.color ?? "");
-    if (color !== null && !HEX.test(color)) throw new Error("color must be a hex color like #ff9900, or null for the original icon colors");
+    const color = p.color === null ? null : resolveColor(String(p.color ?? "")) ?? "";
+    if (color !== null && !HEX.test(color)) {
+      throw new Error("color must be a hex color like #ff9900 or a palette name (blue-600, aws.orange), or null for the original icon colors");
+    }
     const map = liveMap(api);
     const files = api.getFiles();
     const changed: El[] = [];
@@ -283,8 +312,10 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
     let icons = 0;
     let shapes = 0;
     for (const id of ids) {
-      const el = map.get(id);
+      let el = map.get(id);
       if (!el) throw new Error(`no element with id "${id}"`);
+      // An icon node is recolored through its image.
+      if (isIconNode(el)) el = iconImageOf(el, map) ?? el;
       if (el.type === "image" && !isRecolorableIcon(el, files)) {
         throw new Error(`"${id}" is a raster image; only SVG icons can be recolored`);
       }
@@ -437,6 +468,7 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
         };
         if (typeof p.id === "string") sk.id = p.id;
         if (typeof p.label === "string" && p.label) sk.label = p.label;
+        if (p.routing !== undefined) sk.routing = p.routing;
         if (sk.type === "arrow") {
           if (p.startArrowhead !== undefined) sk.startArrowhead = p.startArrowhead;
           if (p.endArrowhead !== undefined) sk.endArrowhead = p.endArrowhead;
@@ -595,6 +627,138 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
         return stencilContent(api, p);
       }
 
+      case "list_palettes": {
+        const only = typeof p.palette === "string" ? p.palette.toLowerCase() : null;
+        const list = PALETTES.filter((x) => !only || x.id === only);
+        if (only && !list.length) throw new Error(`no palette "${only}"; have ${PALETTES.map((x) => x.id).join(", ")}`);
+        return list.map((x) => ({
+          id: x.id,
+          title: x.title,
+          description: x.description,
+          // The ramp is large: only list its names when asked for it.
+          colors: x.id === "ramp" && !only ? "(pass palette:\"ramp\" for all names)" : x.colors,
+        }));
+      }
+
+      case "list_themes":
+        await stylesReady;
+        return {
+          themes: allThemes().map((t) => ({
+            id: t.id,
+            title: t.title,
+            category: t.category,
+            description: t.description,
+            background: t.background,
+            ink: t.ink,
+            font: t.fontFamily,
+            roughness: t.roughness,
+            roundness: t.roundness,
+            strokeWidth: t.strokeWidth,
+            builtin: !!t.builtin,
+          })),
+          presets: allPresets().map((x) => ({ id: x.id, title: x.title, category: x.category, description: x.description, style: x.style, builtin: !!x.builtin })),
+        };
+
+      case "apply_theme": {
+        const { api } = await target(p);
+        await stylesReady;
+        const theme = findTheme(String(p.theme ?? ""));
+        if (!theme) throw new Error(`unknown theme "${p.theme}"; have ${allThemes().map((t) => t.id).join(", ")}`);
+        const ids = p.ids === undefined ? null : strArray(p.ids, "ids");
+        const scene = api.getSceneElements();
+        const only = ids ? withGroupsAndLabels(ids, scene, { contents: false }) : undefined;
+        const r = applyThemeToScene(theme, scene, api.getAppState(), only, allThemes());
+        const whole = !ids && p.background !== false;
+        const byId = new Map(r.changed.map((e) => [e.id, e]));
+        const current = api.getSceneElementsIncludingDeleted().map((e) => byId.get(e.id) ?? e);
+        api.updateScene({
+          elements: [...current, ...r.added],
+          appState: {
+            ...(whole ? { viewBackgroundColor: theme.background } : {}),
+            currentItemRoughness: theme.roughness,
+            currentItemRoundness: theme.roundness === "round" ? "round" : "sharp",
+            currentItemFontFamily: FONTS[theme.fontFamily],
+            currentItemStrokeWidth: theme.strokeWidth,
+          } as Partial<AppState> as AppState,
+          captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        });
+        return { theme: theme.id, restyled: r.count, background: whole ? theme.background : undefined };
+      }
+
+      case "apply_style_preset": {
+        const { api } = await target(p);
+        let style: StyleSpec;
+        let name: string;
+        if (typeof p.preset === "string") {
+          await stylesReady;
+          const preset = findPreset(p.preset);
+          if (!preset) throw new Error(`no style preset "${p.preset}"; list_themes shows them`);
+          style = preset.style;
+          name = preset.title;
+        } else {
+          style = normalizeStyle(p.style);
+          name = "custom style";
+        }
+        const scene = api.getSceneElements();
+        const ids = strArray(p.ids, "ids");
+        const r = styleElements(withGroupsAndLabels(ids, scene, { contents: false }), style, scene, api.getAppState());
+        commit(api, r.changed, r.added);
+        return { preset: name, restyled: r.count };
+      }
+
+      case "save_style_preset": {
+        const { api } = await target(p);
+        let style: StyleSpec;
+        if (typeof p.id === "string") {
+          const el = liveMap(api).get(p.id) as (El & Record<string, unknown>) | undefined;
+          if (!el) throw new Error(`no element with id "${p.id}"`);
+          style = {
+            strokeColor: el.strokeColor,
+            ...(el.type !== "text" && el.type !== "arrow" && el.type !== "line"
+              ? { backgroundColor: el.backgroundColor, fillStyle: el.fillStyle as StyleSpec["fillStyle"] }
+              : {}),
+            strokeWidth: el.strokeWidth,
+            strokeStyle: el.strokeStyle as StyleSpec["strokeStyle"],
+            opacity: el.opacity,
+          };
+        } else style = normalizeStyle(p.style);
+        const preset = await savePreset({ title: p.name, category: p.category, description: p.description, style });
+        return { saved: preset.id, category: preset.category, style: preset.style };
+      }
+
+      case "delete_style_preset": {
+        await stylesReady;
+        const preset = findPreset(String(p.name ?? ""));
+        if (!preset) throw new Error(`no style preset "${p.name}"`);
+        if (preset.builtin) throw new Error(`"${preset.title}" is built in and can't be deleted (save one with the same name to override it)`);
+        await deletePreset(preset.id);
+        return { deleted: preset.id };
+      }
+
+      case "save_theme": {
+        const t = await saveTheme({
+          title: p.name,
+          category: p.category,
+          description: p.description,
+          background: p.background,
+          ink: p.ink,
+          fontFamily: p.fontFamily,
+          roughness: p.roughness,
+          roundness: p.roundness,
+          strokeWidth: p.strokeWidth,
+        });
+        return { saved: t.id, category: t.category };
+      }
+
+      case "delete_theme": {
+        await stylesReady;
+        const t = findTheme(String(p.name ?? ""));
+        if (!t) throw new Error(`no theme "${p.name}"`);
+        if (t.builtin) throw new Error(`"${t.title}" is built in and can't be deleted`);
+        await deleteTheme(t.id);
+        return { deleted: t.id };
+      }
+
       case "recolor": {
         const { api } = await target(p);
         return recolor(api, p);
@@ -602,14 +766,161 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
 
       case "get_color": {
         const { api } = await target(p);
-        const el = liveMap(api).get(String(p.id ?? ""));
+        const map = liveMap(api);
+        let el = map.get(String(p.id ?? ""));
         if (!el) throw new Error(`no element with id "${p.id}"`);
+        if (isIconNode(el)) el = iconImageOf(el, map) ?? el;
         return { color: await colorOfElement(api, el) };
+      }
+
+      case "build_diagram": {
+        const { api } = await target(p);
+        // Main has already validated the spec and resolved icons; normalize again so the renderer
+        // never trusts its input blindly.
+        let spec = normalizeSpec(p.spec);
+        if (p.renameOnClash) spec = uniquifySpec(spec, new Set(api.getSceneElementsIncludingDeleted().map((e) => e.id)));
+        return buildAndCommit(api, spec, (p.items ?? {}) as Record<string, LibraryItem | null>, p.zoom !== false);
+      }
+
+      case "mermaid_to_scene": {
+        const { api } = await target(p);
+        const src = String(p.mermaid ?? "");
+        if (!src.trim()) throw new Error("mermaid text is empty");
+        if (isFlowchart(src)) {
+          const spec = parseMermaidFlowchart(src);
+          for (const k of ["direction", "algorithm", "routing", "spacing", "x", "y", "title", "legend"] as const) {
+            if (p[k] !== undefined) (spec as unknown as Params)[k] = p[k];
+          }
+          const unique = uniquifySpec(normalizeSpec(spec), new Set(api.getSceneElementsIncludingDeleted().map((e) => e.id)));
+          return { ...(await buildAndCommit(api, unique, {}, p.zoom !== false)), parsedAs: "flowchart" };
+        }
+        // Other diagram types: Mermaid's own renderer via Excalidraw's converter.
+        const { parseMermaidToExcalidraw } = await import("@excalidraw/mermaid-to-excalidraw");
+        let parsed;
+        try {
+          parsed = await parseMermaidToExcalidraw(src);
+        } catch (e) {
+          throw new Error(`Mermaid could not parse this: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        let els = convertToExcalidrawElements(parsed.elements as never, { regenerateIds: true }) as El[];
+        if (!els.length) throw new Error("the Mermaid diagram produced no elements");
+        const b = boundsOf(els);
+        const scene = api.getSceneElements();
+        const o =
+          typeof p.x === "number" || typeof p.y === "number"
+            ? { x: typeof p.x === "number" ? p.x : 0, y: typeof p.y === "number" ? p.y : 0 }
+            : scene.length
+              ? { x: boundsOf(scene).x + boundsOf(scene).width + PLACE_GAP, y: boundsOf(scene).y }
+              : { x: 0, y: 0 };
+        els = els.map((e) => ({ ...e, x: e.x + o.x - b.x, y: e.y + o.y - b.y }) as El);
+        commit(api, [], els);
+        const files = Object.values(parsed.files ?? {}) as BinaryFileData[];
+        if (files.length) api.addFiles(files);
+        if (p.zoom !== false) api.scrollToContent(els as ExcalidrawElement[], { fitToContent: true, animate: false });
+        return { parsedAs: "mermaid", ids: listable(els).map((e) => e.id), bounds: boundsOf(els) };
+      }
+
+      case "create_zone": {
+        const { api } = await target(p);
+        return createZone(api, p);
+      }
+
+      case "add_legend": {
+        const { api } = await target(p);
+        const scene = api.getSceneElements();
+        const st = api.getAppState();
+        const scope = Array.isArray(p.ids) ? withGroupsAndLabels(strArray(p.ids, "ids"), scene) : scene;
+        const old = scene.filter((e) => e.customData?.mydrawLegend);
+        const legend = buildLegend(scope, {
+          title: typeof p.title === "string" && p.title ? p.title : "Legend",
+          fontFamily: st.currentItemFontFamily as number,
+          roughness: st.currentItemRoughness,
+          ink: st.currentItemStrokeColor,
+          x: typeof p.x === "number" ? p.x : undefined,
+          y: typeof p.y === "number" ? p.y : undefined,
+        });
+        commit(api, p.replace === false ? [] : old.map((e) => newElementWith(e, { isDeleted: true })), legend);
+        return { legend: legend[0].id, ids: legend.map((e) => e.id), replaced: p.replace === false ? 0 : old.length, bounds: boundsOf(legend) };
+      }
+
+      case "auto_layout": {
+        const { api } = await target(p);
+        const r = await autoLayout(api.getSceneElements(), api.getAppState(), {
+          ids: Array.isArray(p.ids) ? strArray(p.ids, "ids") : undefined,
+          direction: p.direction as never,
+          algorithm: p.algorithm as never,
+          spacing: typeof p.spacing === "number" ? p.spacing : undefined,
+          routing: p.routing === undefined ? undefined : parseRouting(p.routing, "elbow"),
+        });
+        commit(api, r.changed, r.added);
+        return r.result;
       }
 
       default:
         throw new Error(`unknown method "${method}"`);
     }
+  }
+
+  async function buildAndCommit(api: ExcalidrawImperativeAPI, spec: DiagramSpec, items: Record<string, LibraryItem | null>, zoom: boolean) {
+    const b = await buildDiagram(api.getSceneElementsIncludingDeleted(), api.getAppState(), spec, items);
+    commit(api, [], b.added);
+    // Files after the scene update, so Excalidraw starts loading them (see CLAUDE.md).
+    if (b.files.length) api.addFiles(b.files);
+    if (zoom) api.scrollToContent(b.added as ExcalidrawElement[], { fitToContent: true, animate: false });
+    return b.result;
+  }
+
+  function createZone(api: ExcalidrawImperativeAPI, p: Params) {
+    const scene = api.getSceneElements();
+    const st = api.getAppState();
+    const map = liveMap(api);
+    const font = st.currentItemFontFamily as number;
+    const label = typeof p.label === "string" && p.label ? p.label : null;
+    const id = typeof p.id === "string" && p.id ? p.id : randomId();
+    if (api.getSceneElementsIncludingDeleted().some((e) => e.id === id || e.id === `${id}.title`)) throw new Error(`id "${id}" is already used in this drawing`);
+    const pad = typeof p.padding === "number" ? p.padding : 24;
+    const { titleHeight, minWidth } = zoneTitleSize(label ?? undefined, font);
+    const memberIds = Array.isArray(p.ids) ? strArray(p.ids, "ids") : [];
+    const members = memberIds.map((m) => {
+      const el = map.get(m);
+      if (!el) throw new Error(`no element with id "${m}"`);
+      return bindTarget(el, map);
+    });
+    let box: Box;
+    if (members.length) {
+      const b = boundsOf(withGroupsAndLabels(members.map((m) => m.id), scene));
+      box = { x: b.x - pad, y: b.y - pad - titleHeight, width: Math.max(b.width + pad * 2, minWidth), height: b.height + pad * 2 + titleHeight };
+    } else if ([p.x, p.y, p.width, p.height].every((v) => typeof v === "number")) {
+      box = { x: p.x as number, y: p.y as number, width: p.width as number, height: p.height as number };
+    } else throw new Error("give ids of the elements inside the zone, or x, y, width and height");
+    let parent: string | null = typeof p.parent === "string" ? p.parent : null;
+    if (parent && !isZone(map.get(parent))) throw new Error(`"${parent}" is not a zone`);
+    if (!parent && members.length) {
+      const zs = new Set(members.map((m) => zoneOf(m)));
+      if (zs.size === 1) parent = [...zs][0];
+    }
+    const stroke = typeof p.color === "string" ? requireColor(p.color, "color") : "#1971c2";
+    const fillColor = typeof p.fill === "string" ? requireColor(p.fill, "fill") : tint(stroke);
+    const zone = makeZone({
+      id,
+      label,
+      box,
+      stroke,
+      fill: fillColor,
+      style: p.style === "dashed" || p.style === "dotted" ? p.style : "solid",
+      strokeWidth: parent ? 1 : 2,
+      roughness: st.currentItemRoughness,
+      fontFamily: font,
+      locked: p.locked !== false,
+      parent,
+    });
+    const changed = members.map((m) => newElementWith(m, { customData: { ...(m.customData ?? {}), mydrawZoneId: id } }));
+    // Behind its contents: just below the lowest member (or on top when it has none).
+    const order = api.getSceneElementsIncludingDeleted();
+    const memberSet = new Set(withGroupsAndLabels(members.map((m) => m.id), scene).map((e) => e.id));
+    const first = order.find((e) => memberSet.has(e.id));
+    commit(api, changed, zone, first?.id);
+    return { zone: id, title: zone[1]?.id ?? null, members: members.map((m) => m.id), parent, bounds: box };
   }
 
   function addRawFiles(api: ExcalidrawImperativeAPI, files: unknown) {

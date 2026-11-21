@@ -4,7 +4,9 @@
 import { app, ipcMain, type BrowserWindow } from "electron";
 import path from "node:path";
 import { exportFormatForPath, type AgentCommand, type AgentReply } from "../../shared/agent";
-import { searchItems, type LibraryItem } from "../../shared/library";
+import { normalizeSpec, type DiagramSpec } from "../../shared/diagram";
+import { findStencil as lookupStencil, searchItems, type LibraryItem } from "../../shared/library";
+import { findTemplate, TEMPLATES } from "../../shared/templates";
 import { ensureExtension } from "../../shared/names";
 import type { OpenedFile } from "../../shared/types";
 import { writeBinary } from "./files";
@@ -84,8 +86,31 @@ export function setupAgent(deps: AgentDeps): (method: string, params: Record<str
     return item;
   }
 
+  /** Validate a diagram and look up its icons in the library; then build it in the renderer. */
+  function buildDiagram(spec: DiagramSpec, params: Record<string, unknown>, renameOnClash = false) {
+    const items: Record<string, LibraryItem | null> = {};
+    const all = deps.store.getIndex().items;
+    for (const n of spec.nodes) if (n.icon && !(n.icon in items)) items[n.icon] = lookupStencil(all, n.icon, true);
+    return renderer("build_diagram", { drawing: params.drawing, zoom: params.zoom, spec, items, renameOnClash });
+  }
+
   return async (method, params) => {
     switch (method) {
+      // ----- diagrams -----
+      case "build_diagram":
+        return buildDiagram(normalizeSpec(params.diagram ?? params), params);
+      case "list_templates":
+        return TEMPLATES.map((t) => ({ name: t.name, title: t.title, description: t.description }));
+      case "apply_template": {
+        const t = findTemplate(str(params.name, "name"));
+        if (!t) throw new Error(`no template "${params.name}" (templates: ${TEMPLATES.map((x) => x.name).join(", ")})`);
+        const spec: Record<string, unknown> = structuredClone(t.spec) as unknown as Record<string, unknown>;
+        for (const k of ["x", "y", "direction", "algorithm", "routing", "spacing", "legend", "title", "iconSize"]) {
+          if (params[k] !== undefined) spec[k] = params[k];
+        }
+        return buildDiagram(normalizeSpec(spec), params, true);
+      }
+
       case "ping":
         return { app: "mydraw", version: app.getVersion(), pid: process.pid, ready: deps.isRendererReady() };
 

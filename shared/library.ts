@@ -130,6 +130,28 @@ export function searchItems(items: readonly LibraryItem[], query: string, limit 
     .map((r) => r.item);
 }
 
+/**
+ * Find the stencil an agent means: an exact item id, an exact name (case-insensitive), or the best
+ * search hit. "Collection:query" (e.g. "AWS:Amazon EC2", "Network:router") searches one collection.
+ * Only svg/png/stencil items count when `iconsOnly` (diagram nodes need a single icon).
+ */
+export function findStencil(items: readonly LibraryItem[], ref: string, iconsOnly = false): LibraryItem | null {
+  const byId = items.find((i) => i.id === ref);
+  if (byId) return byId;
+  let pool = iconsOnly ? items.filter((i) => i.kind === "svg" || i.kind === "png") : [...items];
+  let query = ref.trim();
+  const colon = query.indexOf(":");
+  if (colon > 0) {
+    const col = query.slice(0, colon).trim().toLowerCase();
+    // An unknown collection (pack not installed) finds nothing.
+    pool = pool.filter((i) => i.collection.toLowerCase() === col);
+    query = query.slice(colon + 1).trim();
+  }
+  if (!query) return null;
+  const q = query.toLowerCase();
+  return pool.find((i) => i.name.toLowerCase() === q) ?? searchItems(pool, query, 1)[0] ?? null;
+}
+
 /** Add `id` to the front of the recent list. */
 export function pushRecent(list: readonly string[], id: string, max = MAX_RECENT_STENCILS): string[] {
   return [id, ...list.filter((x) => x !== id)].slice(0, max);

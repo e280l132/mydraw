@@ -1027,3 +1027,214 @@ body {
 .md-toast.error {
   background: #b3261e;
 }
+
+/* ---------- palette / presets / theme section ---------- */
+
+.md-style .md-seg {
+  margin-top: 0.25rem;
+  width: calc(6 * 1.6rem + 5 * 0.35rem);
+}
+
+.md-style-select,
+.md-style-hex input {
+  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  box-sizing: border-box;
+  margin-top: 0.4rem;
+  height: 1.75rem;
+  padding: 0 0.4rem;
+  border: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.15));
+  border-radius: var(--border-radius-md, 6px);
+  background: var(--input-bg-color, transparent);
+  color: var(--text-primary-color, inherit);
+  font: inherit;
+  font-size: 0.75rem;
+}
+
+.md-style-hex {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.md-style-hex input {
+  flex: 1 1 100%;
+}
+
+.md-style-sub {
+  margin-top: 0.7rem;
+  font-size: 0.7rem;
+  color: var(--color-gray-50, #868e96);
+  float: none;
+  width: 100%;
+}
+
+.md-style-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  margin-top: 0.3rem;
+}
+
+.md-style-item {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.md-style .md-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.md-style-dot {
+  flex: none;
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid;
+  border-radius: 2px;
+  box-sizing: border-box;
+}
+
+.md-chip-x {
+  padding: 0 0.35rem;
+}
+
+.md-chip-link {
+  margin-top: 0.3rem;
+  height: 1.4rem;
+  border: none;
+  padding: 0;
+  color: var(--color-primary, #6965db);
+}
+
+.md-swatch-none {
+  background: linear-gradient(to top right, transparent 46%, #e03131 46%, #e03131 54%, transparent 54%), #fff;
+}
+
+/* ---------- groups, editors, tabs in the style section ---------- */
+
+.md-style .md-tabs .md-chip {
+  font-weight: 600;
+}
+
+.md-group {
+  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  margin-top: 0.3rem;
+  border-top: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.12));
+}
+
+.md-group-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 0.35rem 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary-color, inherit);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.md-group-head .md-badge {
+  margin-left: auto;
+}
+
+.md-group .md-style-list {
+  margin: 0 0 0.4rem;
+}
+
+.md-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  margin-top: 0.4rem;
+  padding: 0.5rem;
+  box-sizing: border-box;
+  border: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.15));
+  border-radius: var(--border-radius-md, 6px);
+}
+
+.md-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.7rem;
+  color: var(--color-gray-50, #868e96);
+}
+
+.md-field input:not([type="color"]),
+.md-field select {
+  width: 100%;
+  box-sizing: border-box;
+  height: 1.6rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.15));
+  border-radius: var(--border-radius-md, 6px);
+  background: var(--input-bg-color, transparent);
+  color: var(--text-primary-color, inherit);
+  font: inherit;
+  font-size: 0.75rem;
+}
+
+.md-field-color {
+  display: flex;
+  gap: 4px;
+}
+
+.md-field-color input[type="color"] {
+  flex: none;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.15));
+  border-radius: var(--border-radius-md, 6px);
+  background: transparent;
+  cursor: pointer;
+}
+
+.md-editor .md-iconcolor-actions {
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+/* Excalidraw's own Stroke/Background rows are replaced by the Colors tab. */
+.md-native-color {
+  display: none !important;
+}
+
+/* Shades row: ten swatches ramping off the chosen basic color */
+.md-shades {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  margin-top: 0.25rem;
+  border-radius: var(--border-radius-md, 6px);
+  overflow: hidden;
+}
+
+.md-shade {
+  width: 100%;
+  height: 1.6rem;
+  border-radius: 0;
+  border: none;
+}
+
+.md-shade.on {
+  box-shadow: inset 0 0 0 2px var(--color-primary, #6965db);
+}
+
+.md-shades-label {
+  margin-top: 0.5rem;
+}
+
+.md-swatch.base {
+  outline: 2px solid var(--color-gray-50, #868e96);
+  outline-offset: 1px;
+}

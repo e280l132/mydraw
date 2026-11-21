@@ -20,6 +20,7 @@ import { removeControlFile, startControlServer, writeControlFile } from "./contr
 import { LIBRARY_SCHEME, setupLibrary } from "./library-ipc";
 import { buildMenu } from "./menu";
 import { getSettings, onSettingsChanged, rememberRecent, updateSettings } from "./settings-store";
+import { getStyleLibrary, saveStyleLibrary } from "./styles-store";
 
 app.setName("mydraw");
 
@@ -116,6 +117,8 @@ function applyNativeTheme(settings: Settings): void {
 function registerIpc(): void {
   ipcMain.handle("settings:get", () => getSettings());
   ipcMain.handle("settings:update", (_e, patch: unknown) => updateSettings(patch));
+  ipcMain.handle("styles:get", () => getStyleLibrary());
+  ipcMain.handle("styles:save", (_e, lib: unknown) => saveStyleLibrary(lib));
 
   ipcMain.handle("file:open-dialog", async () => {
     if (!win) return [];

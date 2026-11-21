@@ -5,6 +5,8 @@ import { convertToExcalidrawElements, getCommonBounds, newElementWith } from "@e
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState } from "@excalidraw/excalidraw/types";
 import { boxFromBounds, connectorEndpoints, outlinePoint, type Box, type OutlineShape, type Point } from "../../../shared/geometry";
+import { requireColor } from "../../../shared/palettes";
+import { curvedPoints, ELBOW_GAP, elbowRoute, fixedPointFor, isOrthogonal, type Routing } from "../../../shared/routing";
 
 export type El = ExcalidrawElement;
 type Loose = Record<string, unknown>;
@@ -42,6 +44,71 @@ export function boundTextOf(el: El, map: ElMap): El | undefined {
   const ref = el.boundElements?.find((b) => b.type === "text");
   const text = ref ? map.get(ref.id) : undefined;
   return text && !text.isDeleted ? text : undefined;
+}
+
+// ---------- icon nodes and zones ----------
+// An icon node is a stencil icon with its caption: a borderless container rectangle (the caption is
+// its bound text, at the bottom) plus the image on top, grouped. Arrows bind to the container, so
+// they stop at the edge of icon + caption instead of crossing the caption.
+// A zone is a locked, tinted rectangle with a title text (VPC, subnet, VLAN, ...); elements inside
+// carry customData.mydrawZoneId, and moving a zone moves them too.
+
+export function isIconNode(el: El | undefined): boolean {
+  return el?.customData?.mydrawNode === "icon";
+}
+
+export function isZone(el: El | undefined): boolean {
+  return !!el?.customData?.mydrawZone;
+}
+
+export function zoneOf(el: El): string | null {
+  return (el.customData?.mydrawZoneId as string | undefined) ?? null;
+}
+
+/** The icon node an element belongs to (its container), if any. */
+export function iconNodeOf(el: El, map: ElMap): El | undefined {
+  if (isIconNode(el)) return el;
+  const g = el.groupIds[0];
+  if (!g || (el.type !== "image" && el.type !== "text")) return undefined;
+  if (el.type === "text" && (el as El & Loose).containerId) return iconNodeOf(map.get((el as El & Loose).containerId as string)!, map);
+  for (const m of map.values()) if (!m.isDeleted && isIconNode(m) && m.groupIds[0] === g) return m;
+  return undefined;
+}
+
+/** The image of an icon node. */
+export function iconImageOf(node: El, map: ElMap): El | undefined {
+  const g = node.groupIds[0];
+  if (!g) return undefined;
+  for (const m of map.values()) if (!m.isDeleted && m.type === "image" && m.groupIds[0] === g) return m;
+  return undefined;
+}
+
+/** The title text of a zone. */
+export function zoneTitleOf(zone: El, map: ElMap): El | undefined {
+  for (const m of map.values()) if (!m.isDeleted && m.type === "text" && m.customData?.mydrawZoneTitle === zone.id) return m;
+  return undefined;
+}
+
+/** Everything inside a zone, including nested zones and their contents. */
+export function zoneContents(zoneId: string, live: readonly El[]): El[] {
+  const out: El[] = [];
+  const zones = [zoneId];
+  const seen = new Set(zones);
+  while (zones.length) {
+    const z = zones.pop()!;
+    for (const el of live) {
+      if (zoneOf(el) !== z || seen.has(el.id)) continue;
+      seen.add(el.id);
+      out.push(el);
+      if (isZone(el)) zones.push(el.id);
+    }
+  }
+  return out;
+}
+
+/** Element an arrow should bind to when asked to connect to `el` (icon image -> its node). */
+export function bindTarget(el: El, map: ElMap): El {
+  return el.type === "image" || el.type === "text" ? (iconNodeOf(el, map) ?? el) : el;
 }
 
 function hasCustomData(el: El): Loose | undefined {
@@ -84,7 +151,37 @@ export function describe(el: El, map: ElMap): Loose {
   }
   if (el.type === "image") {
     o.icon = { color: (el.customData?.mydrawIconColor as string | undefined) ?? "original" };
+    const node = iconNodeOf(el, map);
+    if (node) o.node = node.id;
   }
+  if (isIconNode(el)) {
+    // Present the node as one thing: its caption, its icon, and where to connect.
+    o.type = "icon-node";
+    delete o.strokeColor;
+    delete o.backgroundColor;
+    delete o.fillStyle;
+    delete o.strokeWidth;
+    const img = iconImageOf(el, map);
+    const stencil = el.customData?.mydrawStencil as { name?: string } | undefined;
+    o.icon = {
+      image: img?.id ?? null,
+      stencil: stencil?.name ?? null,
+      color: (img?.customData?.mydrawIconColor as string | undefined) ?? "original",
+    };
+  }
+  if (isZone(el)) {
+    o.type = "zone";
+    const title = zoneTitleOf(el, map) as (El & { text: string }) | undefined;
+    if (title) o.label = title.text;
+  }
+  const zone = zoneOf(el);
+  if (zone) o.zone = zone;
+  if (el.type === "text" && el.customData?.mydrawZoneTitle) o.titleOf = el.customData.mydrawZoneTitle;
+  if (isLinear(el)) {
+    const routing = routingOf(el);
+    if (routing !== "straight") o.routing = routing;
+  }
+  if (el.customData?.mydrawKind) o.kind = el.customData.mydrawKind;
   if (el.type === "frame" || el.type === "magicframe") o.name = e.name ?? null;
   if (el.groupIds.length) o.groupIds = el.groupIds;
   if (el.frameId) o.frameId = el.frameId;
@@ -95,9 +192,25 @@ export function describe(el: El, map: ElMap): Loose {
   return o;
 }
 
-/** Elements worth listing on their own: everything except deleted ones and text bound inside a container. */
+/**
+ * Elements worth listing on their own: everything except deleted ones, text bound inside a
+ * container, zone titles (shown as the zone's label) and icon-node images (shown on the node).
+ */
 export function listable(els: readonly El[]): El[] {
-  return els.filter((el) => !el.isDeleted && !(el.type === "text" && (el as El & Loose).containerId));
+  const nodeGroups = new Set(els.filter((e) => !e.isDeleted && isIconNode(e)).map((e) => e.groupIds[0]));
+  return els.filter(
+    (el) =>
+      !el.isDeleted &&
+      !(el.type === "text" && ((el as El & Loose).containerId || el.customData?.mydrawZoneTitle)) &&
+      !(el.type === "image" && el.groupIds[0] && nodeGroups.has(el.groupIds[0])),
+  );
+}
+
+export function routingOf(el: El): Routing {
+  if ((el as El & { elbowed?: boolean }).elbowed) return "elbow";
+  const r = el.customData?.mydrawRouting;
+  if (r === "curved" || r === "elbow") return r;
+  return "straight";
 }
 
 // ---------- defaults from the drawing's current tool settings ----------
@@ -123,10 +236,13 @@ export function styleDefaults(st: AppState, type: string): Loose {
 
 function withDefaults(sk: Loose, st: AppState): Loose {
   const out: Loose = { ...styleDefaults(st, String(sk.type)), ...sk };
+  for (const k of ["strokeColor", "backgroundColor"]) if (typeof out[k] === "string") out[k] = requireColor(out[k], k);
   const label = sk.label;
   if (typeof label === "string") out.label = { text: label };
   if (out.label && typeof out.label === "object") {
     out.label = { fontFamily: st.currentItemFontFamily, fontSize: st.currentItemFontSize, ...(out.label as Loose) };
+    const lc = (out.label as Loose).strokeColor;
+    if (typeof lc === "string") (out.label as Loose).strokeColor = requireColor(lc, "label color");
   }
   return out;
 }
@@ -188,15 +304,82 @@ function polylineMiddle(x: number, y: number, points: readonly (readonly [number
   return { x, y };
 }
 
+/** Absolute route between two elements for a routing style (`given`: a layout's orthogonal route). */
+export function routeBetween(a: El, b: El, routing: Routing, given?: Point[]): Point[] {
+  if (routing === "elbow") {
+    if (given && given.length >= 2 && isOrthogonal(given)) return given;
+    return elbowRoute(boxOf(a), boxOf(b), ELBOW_GAP).points;
+  }
+  const g = arrowGeometry(a, b);
+  const start = { x: g.x, y: g.y };
+  const end = { x: g.x + g.points[1][0], y: g.y + g.points[1][1] };
+  return routing === "curved" ? curvedPoints(start, end) : [start, end];
+}
+
+/** Element fields for an arrow along absolute `route`. */
+export function arrowShape(route: readonly Point[]): { x: number; y: number; width: number; height: number; points: [number, number][] } {
+  const s = route[0];
+  const points = route.map((p) => [p.x - s.x, p.y - s.y] as [number, number]);
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
+  return { x: s.x, y: s.y, points, width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+}
+
+/** Bindings for an arrow along `route` from `a` to `b` (elbow arrows use Excalidraw's fixed points). */
+export function bindingsFor(route: readonly Point[], a: El | undefined, b: El | undefined, elbowed: boolean): Loose {
+  const bind = (el: El | undefined, p: Point) =>
+    !el
+      ? null
+      : elbowed
+        ? { elementId: el.id, focus: 0, gap: 0, fixedPoint: fixedPointFor(boxOf(el), p) }
+        : { elementId: el.id, focus: 0, gap: BIND_GAP };
+  return { startBinding: bind(a, route[0]), endBinding: bind(b, route[route.length - 1]) };
+}
+
 /**
- * Recompute the ends of an arrow bound to shapes (after a shape moved or resized). A bound end
- * sits on its shape's outline, aimed at the other end. Returns the changed arrow and its label.
+ * Fields that make a connector elbowed / curved / straight. Only arrows can be Excalidraw elbow
+ * arrows; an elbow line is a plain line with orthogonal points (customData.mydrawRouting).
+ */
+export function routingFields(routing: Routing, type: string, customData: Loose | undefined): Loose {
+  const data = { ...(customData ?? {}) };
+  const elbowed = routing === "elbow" && type === "arrow";
+  if (routing === "curved" || (routing === "elbow" && !elbowed)) data.mydrawRouting = routing;
+  else delete data.mydrawRouting;
+  return {
+    elbowed,
+    roundness: routing === "curved" ? { type: 2 } : null,
+    ...(elbowed ? { fixedSegments: null, startIsSpecial: null, endIsSpecial: null } : {}),
+    customData: Object.keys(data).length ? data : undefined,
+  };
+}
+
+/**
+ * Recompute the route of an arrow bound to shapes (after a shape moved or resized). Straight: each
+ * bound end sits on its shape's outline, aimed at the other end. Elbow: a fresh orthogonal route.
+ * Curved: fresh ends with the bend recomputed. Returns the changed arrow and its label.
  */
 export function reroute(arrow: El, map: ElMap): El[] {
   const a = arrow as El & { points: [number, number][]; startBinding: { elementId: string } | null; endBinding: { elementId: string } | null };
   const from = a.startBinding ? map.get(a.startBinding.elementId) : undefined;
   const to = a.endBinding ? map.get(a.endBinding.elementId) : undefined;
   const pts = a.points;
+  const routing = routingOf(arrow);
+  // Elbow/curved arrows are routed even when attached to nothing (e.g. just switched to elbow).
+  if (routing !== "straight") {
+    const startPt: Point = { x: a.x + pts[0][0], y: a.y + pts[0][1] };
+    const endPt: Point = { x: a.x + pts[pts.length - 1][0], y: a.y + pts[pts.length - 1][1] };
+    const pointEl = (p: Point) => ({ ...arrow, x: p.x, y: p.y, width: 0, height: 0, type: "rectangle" }) as El;
+    const route = routeBetween(from ?? pointEl(startPt), to ?? pointEl(endPt), routing);
+    const elbowed = !!(arrow as El & { elbowed?: boolean }).elbowed;
+    const updated = newElementWith(arrow, { ...arrowShape(route), ...bindingsFor(route, from, to, elbowed) } as never);
+    const out: El[] = [updated];
+    const label = boundTextOf(arrow, map);
+    if (label) {
+      const mid = labelPoint(route);
+      out.push(newElementWith(label, { x: mid.x - label.width / 2, y: mid.y - label.height / 2 }));
+    }
+    return out;
+  }
   if (!from && !to) {
     // Not attached to anything: the arrow keeps its geometry, only its label is re-centred.
     const label = boundTextOf(arrow, map);
@@ -299,6 +482,12 @@ export function relabel(container: El, text: string | null, map: ElMap, st: AppS
   let newContainer = Object.keys(grow).length ? newElementWith(container, grow as never) : container;
   newContainer = addBound(newContainer, { id: textEl.id, type: "text" });
   return old ? { changed: [newContainer, textEl], added: [] } : { changed: [newContainer], added: [textEl] };
+}
+
+/** Size of a text in the given font. */
+export function measureText(text: string, fontSize: number, fontFamily: number): { width: number; height: number } {
+  const [t] = convertToExcalidrawElements([{ type: "text", x: 0, y: 0, text, fontSize, fontFamily: fontFamily as never }]);
+  return { width: t.width, height: t.height };
 }
 
 /** Re-measure a standalone text element after its text or font changed. */
@@ -411,26 +600,63 @@ export function buildElements(input: unknown[], scene: readonly El[], st: AppSta
   }
 
   for (const { sk, from, to } of connectors) {
-    const a = assertBindable(current(from), from);
-    const b = assertBindable(current(to), to);
+    const a = bindTarget(assertBindable(current(from), from), map);
+    const b = bindTarget(assertBindable(current(to), to), map);
     if (a.id === b.id) throw new Error(`${sk.type} "${sk.id}": from and to are the same element`);
-    const geo = arrowGeometry(a, b);
-    const made = convertToExcalidrawElements([{ ...sk, ...geo } as never], { regenerateIds: false });
-    const arrow = made.find((e) => e.id === sk.id)!;
-    const bound = newElementWith(arrow, {
-      startBinding: { elementId: a.id, focus: 0, gap: BIND_GAP },
-      endBinding: { elementId: b.id, focus: 0, gap: BIND_GAP },
-    } as never);
-    for (const el of made) {
-      const v = el.id === arrow.id ? bound : el;
+    const routing = parseRouting(sk.routing, "straight");
+    delete sk.routing;
+    const route = (sk.route as Point[] | undefined) ?? undefined;
+    delete sk.route;
+    const made = connectorElements(sk, a, b, routing, route);
+    for (const v of made) {
       added.push(v);
       map.set(v.id, v);
     }
-    replace(addBound(current(a.id)!, { id: arrow.id, type: "arrow" }));
-    replace(addBound(current(b.id)!, { id: arrow.id, type: "arrow" }));
+    replace(addBound(current(a.id)!, { id: sk.id as string, type: "arrow" }));
+    replace(addBound(current(b.id)!, { id: sk.id as string, type: "arrow" }));
   }
 
   return { added, changed: [...changed.values()], ids };
+}
+
+export function parseRouting(v: unknown, fallback: Routing): Routing {
+  if (v === undefined || v === null) return fallback;
+  if (v === "elbow" || v === "straight" || v === "curved") return v;
+  throw new Error('routing must be "straight", "elbow" or "curved"');
+}
+
+/**
+ * A bound connector (arrow or line, plus its label) from `a` to `b`. `sk` is an Excalidraw arrow
+ * skeleton with id and style; `route` an optional absolute route from a layout. Callers add the
+ * arrow to `a` and `b`'s boundElements.
+ */
+export function connectorElements(sk: Loose, a: El, b: El, routing: Routing, route?: Point[]): El[] {
+  const path = routeBetween(a, b, routing, route);
+  const fields = routingFields(routing, String(sk.type), sk.customData as Loose | undefined);
+  const skeleton: Loose = { ...sk, ...arrowShape(path) };
+  if (routing !== "straight") skeleton.roundness = fields.roundness;
+  const made = convertToExcalidrawElements([skeleton as never], { regenerateIds: false });
+  return made.map((el) =>
+    // The converter normalizes points (e.g. shifts the first one); keep our route exactly.
+    el.id === sk.id ? ({ ...el, ...arrowShape(path), ...fields, roundness: (el as El).roundness, ...bindingsFor(path, a, b, fields.elbowed === true) } as El) : el,
+  ).map((el) => {
+    // Re-centre the label on the route.
+    if (el.type !== "text" || (el as El & Loose).containerId !== sk.id) return el;
+    const mid = labelPoint(path);
+    return { ...el, x: mid.x - el.width / 2, y: mid.y - el.height / 2 } as El;
+  });
+}
+
+/**
+ * Where Excalidraw puts an arrow's label: the middle point of an odd number of points, else the
+ * middle of the middle segment.
+ */
+export function labelPoint(route: readonly Point[]): Point {
+  const n = route.length;
+  if (n % 2 === 1) return route[(n - 1) / 2];
+  const a = route[n / 2 - 1];
+  const b = route[n / 2];
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
 // ---------- updates ----------
@@ -489,13 +715,59 @@ export function applyUpdates(updates: unknown[], scene: readonly El[], st: AppSt
     ids.push(id);
     const patch: Loose = {};
     for (const [k, v] of Object.entries(u)) {
-      if (k === "id" || k === "label" || k === "dx" || k === "dy" || k === "data") continue;
+      if (k === "id" || k === "label" || k === "dx" || k === "dy" || k === "data" || k === "routing") continue;
       if (!UPDATABLE.has(k)) throw new Error(`"${k}" can't be updated here (use raw_update for other fields)`);
-      patch[k] = v;
+      patch[k] = (k === "strokeColor" || k === "backgroundColor") && typeof v === "string" ? requireColor(v, k) : v;
     }
     if (typeof u.dx === "number") patch.x = (typeof patch.x === "number" ? patch.x : el.x) + u.dx;
     if (typeof u.dy === "number") patch.y = (typeof patch.y === "number" ? patch.y : el.y) + u.dy;
     if (u.data && typeof u.data === "object") patch.customData = { ...(el.customData ?? {}), ...(u.data as Loose) };
+    if (u.routing !== undefined) {
+      if (!isLinear(el)) throw new Error(`"${id}" is a ${el.type}; routing applies to arrows and lines`);
+      const routing = parseRouting(u.routing, "straight");
+      const f = routingFields(routing, el.type, (patch.customData as Loose | undefined) ?? (el.customData as Loose | undefined));
+      Object.assign(patch, f);
+      if (routing === "straight") {
+        const pts = (el as El & { points: [number, number][] }).points;
+        patch.points = [pts[0], pts[pts.length - 1]];
+      }
+      geometryChanged.add(id);
+    }
+    // Icon node caption: widen the node (around its centre) so the caption stays on one line.
+    if (isIconNode(el) && typeof u.label === "string" && u.label) {
+      const img = iconImageOf(el, map);
+      const st0 = boundTextOf(el, map) as (El & Loose) | undefined;
+      const w = Math.max((img?.width ?? 0) + 8, measureText(u.label, (st0?.fontSize as number) ?? 14, (st0?.fontFamily as number) ?? st.currentItemFontFamily).width + 14);
+      patch.x = (typeof patch.x === "number" ? patch.x : el.x) + (el.width - w) / 2;
+      patch.width = w;
+    }
+    // Zone title lives in its own text element.
+    if (isZone(el) && u.label !== undefined) {
+      const title = zoneTitleOf(el, map);
+      if (title && u.label) set(remeasureText(title, { text: String(u.label) }));
+      else if (title) set(newElementWith(title, { isDeleted: true }));
+      else if (u.label) {
+        // A zone made without a label has no title yet: add one in the zone's group, top left.
+        const [made] = convertToExcalidrawElements(
+          [
+            {
+              type: "text",
+              id: `${el.id}.title`,
+              x: (typeof patch.x === "number" ? patch.x : el.x) + 14,
+              y: (typeof patch.y === "number" ? patch.y : el.y) + 10,
+              text: String(u.label),
+              fontSize: 16,
+              fontFamily: st.currentItemFontFamily as never,
+              strokeColor: el.strokeColor,
+            } as never,
+          ],
+          { regenerateIds: false },
+        );
+        const t = { ...made, locked: el.locked, groupIds: el.groupIds, customData: { mydrawZoneTitle: el.id } } as El;
+        added.push(t);
+        map.set(t.id, t);
+      }
+    }
 
     if (el.type === "text" && Object.keys(patch).some((k) => TEXT_METRICS.has(k)) && !(el as El & Loose).containerId) {
       el = remeasureText(el, patch);
@@ -511,7 +783,7 @@ export function applyUpdates(updates: unknown[], scene: readonly El[], st: AppSt
       const container = map.get(containerId);
       if (container) applyLabel(container, String(patch.text));
     }
-    if (u.label !== undefined) applyLabel(el, u.label === null ? null : String(u.label));
+    if (u.label !== undefined && !isZone(el)) applyLabel(el, u.label === null ? null : String(u.label));
     else if (geometryChanged.has(id) && !isLinear(el) && boundTextOf(el, map)) {
       applyLabel(el, (boundTextOf(el, map) as El & { text: string }).text);
     }
@@ -549,6 +821,18 @@ export function deleteElements(ids: readonly string[], scene: readonly El[]): El
     doomed.add(id);
     const text = boundTextOf(el, map);
     if (text) doomed.add(text.id);
+    // An icon node goes as a whole (container, image, caption); a zone takes its title along.
+    const node = iconNodeOf(el, map);
+    if (node) {
+      for (const m of map.values()) if (m.groupIds[0] === node.groupIds[0] && node.groupIds[0]) doomed.add(m.id);
+      doomed.add(node.id);
+      const caption = boundTextOf(node, map);
+      if (caption) doomed.add(caption.id);
+    }
+    if (isZone(el)) {
+      const title = zoneTitleOf(el, map);
+      if (title) doomed.add(title.id);
+    }
     // A stencil icon's caption is a separate text in the icon's group: it goes with the icon.
     const g = el.groupIds.at(-1);
     if (el.type === "image" && g) {
@@ -573,13 +857,24 @@ export function deleteElements(ids: readonly string[], scene: readonly El[]): El
       if (eb && doomed.has(eb.elementId)) patch.endBinding = null;
     }
     if (el.frameId && doomed.has(el.frameId)) patch.frameId = null;
+    // Contents of a deleted zone stay (like a frame's) and move up to the zone's parent zone.
+    const z = zoneOf(el);
+    if (z && doomed.has(z)) {
+      let parent: string | null = zoneOf(map.get(z)!);
+      while (parent && doomed.has(parent)) parent = zoneOf(map.get(parent)!) ?? null;
+      const data = { ...(el.customData ?? {}) };
+      if (parent) data.mydrawZoneId = parent;
+      else delete data.mydrawZoneId;
+      patch.customData = data;
+    }
     if (Object.keys(patch).length) out.push(newElementWith(el, patch as never));
   }
   return out;
 }
 
 /** Elements plus their bound labels, and every member of the outermost groups they belong to. */
-export function withGroupsAndLabels(ids: readonly string[], scene: readonly El[]): El[] {
+export function withGroupsAndLabels(ids: readonly string[], scene: readonly El[], opts: { contents?: boolean } = {}): El[] {
+  const contents = opts.contents !== false;
   const live = scene.filter((e) => !e.isDeleted);
   const map: ElMap = new Map(live.map((e) => [e.id, e]));
   const groups = new Set<string>();
@@ -593,8 +888,20 @@ export function withGroupsAndLabels(ids: readonly string[], scene: readonly El[]
   for (const el of live) {
     if (el.groupIds.some((g) => groups.has(g))) pick.add(el.id);
   }
+  // A zone brings its title and contents (with their groups).
+  const zones = [...pick].filter((id) => isZone(map.get(id)));
+  if (zones.length) {
+    // (styling passes contents:false: a zone's style must not spill onto what is inside it)
+    const inner = contents ? zones.flatMap((z) => zoneContents(z, live)) : [];
+    const innerGroups = new Set(inner.map((el) => el.groupIds.at(-1)).filter((g): g is string => !!g));
+    for (const el of inner) pick.add(el.id);
+    for (const el of live) {
+      if (el.groupIds.some((g) => innerGroups.has(g))) pick.add(el.id);
+      if (el.type === "text" && el.customData?.mydrawZoneTitle && pick.has(el.customData.mydrawZoneTitle as string)) pick.add(el.id);
+    }
+  }
   // A frame brings its contents (and their groups), like moving or exporting a frame in Excalidraw.
-  const frames = new Set([...pick].filter((id) => map.get(id)!.type === "frame" || map.get(id)!.type === "magicframe"));
+  const frames = new Set(contents ? [...pick].filter((id) => map.get(id)!.type === "frame" || map.get(id)!.type === "magicframe") : []);
   if (frames.size) {
     const inner = live.filter((el) => el.frameId && frames.has(el.frameId));
     const innerGroups = new Set(inner.map((el) => el.groupIds.at(-1)).filter((g): g is string => !!g));

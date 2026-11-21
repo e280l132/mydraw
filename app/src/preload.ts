@@ -12,6 +12,8 @@ const bridge: MydrawBridge = {
   isTest: process.env.MYDRAW_TEST === "1",
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (patch) => ipcRenderer.invoke("settings:update", patch),
+  getStyleLibrary: () => ipcRenderer.invoke("styles:get"),
+  saveStyleLibrary: (lib) => ipcRenderer.invoke("styles:save", lib),
   openDialog: () => ipcRenderer.invoke("file:open-dialog"),
   takePendingFiles: () => ipcRenderer.invoke("file:take-pending"),
   openRecent: (path) => ipcRenderer.invoke("file:open-recent", path),
