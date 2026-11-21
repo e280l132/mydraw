@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizeSpec, tint, zoneColors, zoneDepths } from "../shared/diagram";
 import type { Box } from "../shared/geometry";
-import { layoutGraph, translateLayout } from "../shared/layout";
+import { avoidTitleStrips, layoutGraph, translateLayout } from "../shared/layout";
 import { findStencil, type LibraryItem } from "../shared/library";
 import { isFlowchart, parseMermaidFlowchart, splitStatements } from "../shared/mermaid";
 import { curvedPoints, elbowRoute, fixedPointFor, inset, isOrthogonal, tidyRoute } from "../shared/routing";
@@ -279,5 +279,68 @@ describe("mermaid statement splitting", () => {
     const spec = parseMermaidFlowchart('flowchart LR\n A["read; parse"] --> B');
     expect(spec.nodes.find((n) => n.id === "A")?.label).toBe("read; parse");
     expect(spec.edges).toHaveLength(1);
+  });
+});
+
+describe("edges avoid zone title strips", () => {
+  const zone = { x: 100, y: 100, width: 400, height: 300 };
+  const strip = { id: "z", rect: { x: 100, y: 100, width: 200, height: 40 }, zone };
+
+  it("moves a horizontal run below the title", () => {
+    const route = [{ x: 50, y: 300 }, { x: 80, y: 300 }, { x: 80, y: 120 }, { x: 320, y: 120 }, { x: 320, y: 300 }, { x: 340, y: 300 }];
+    const out = avoidTitleStrips(route, [strip]);
+    for (let i = 0; i + 1 < out.length; i++) {
+      const [a, b] = [out[i], out[i + 1]];
+      const hit = Math.max(a.x, b.x) > 100 && Math.min(a.x, b.x) < 300 && Math.max(a.y, b.y) > 100 && Math.min(a.y, b.y) < 140;
+      expect(hit).toBe(false);
+    }
+    expect(out[0]).toEqual(route[0]);
+    expect(out.at(-1)).toEqual(route.at(-1));
+  });
+
+  it("moves a vertical run right of the title when the end node allows it", () => {
+    const route = [{ x: 150, y: 20 }, { x: 150, y: 200 }];
+    const fromBox = { x: 120, y: 30, width: 300, height: 30 };
+    const toBox = { x: 120, y: 190, width: 300, height: 40 };
+    const out = avoidTitleStrips([{ x: 150, y: 60 }, { x: 150, y: 200 }], [strip], fromBox, toBox);
+    expect(out.every((p) => p.x >= 300)).toBe(true);
+    void route;
+  });
+
+  it("jogs around the title when an end point is pinned to a narrow node", () => {
+    const route = [{ x: 150, y: 20 }, { x: 150, y: 200 }];
+    const toBox = { x: 120, y: 190, width: 60, height: 40 }; // too narrow to slide right
+    const out = avoidTitleStrips(route, [strip], { x: 120, y: 0, width: 60, height: 30 }, toBox);
+    expect(out[0]).toEqual(route[0]);
+    expect(out.at(-1)).toEqual(route[1]);
+    for (let i = 0; i + 1 < out.length; i++) {
+      const [a, b] = [out[i], out[i + 1]];
+      expect(Math.max(a.x, b.x) > 100 && Math.min(a.x, b.x) < 300 && Math.max(a.y, b.y) > 100 && Math.min(a.y, b.y) < 140).toBe(false);
+    }
+  });
+
+  it("layoutGraph routes cross-zone edges clear of titles", async () => {
+    const r = await layoutGraph({
+      direction: "down",
+      nodes: [
+        { id: "src", width: 80, height: 40 },
+        { id: "a", width: 80, height: 40, zone: "z" },
+        { id: "b", width: 80, height: 40, zone: "z" },
+      ],
+      zones: [{ id: "z", titleHeight: 34, minWidth: 160 }],
+      edges: [
+        { id: "e1", from: "src", to: "a" },
+        { id: "e2", from: "src", to: "b" },
+      ],
+    });
+    const z = r.zones.get("z")!;
+    const rect = { x: z.x, y: z.y, width: Math.min(160, z.width), height: 34 };
+    for (const route of r.edges.values()) {
+      for (let i = 0; i + 1 < route.length; i++) {
+        const [a, b] = [route[i], route[i + 1]];
+        const hit = Math.max(a.x, b.x) > rect.x && Math.min(a.x, b.x) < rect.x + rect.width && Math.max(a.y, b.y) > rect.y && Math.min(a.y, b.y) < rect.y + rect.height;
+        expect(hit).toBe(false);
+      }
+    }
   });
 });

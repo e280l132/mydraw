@@ -27,6 +27,7 @@ import { ExportDialog } from "./ExportDialog";
 import { PacksDialog, RenameDialog, SaveStencilDialog } from "./library/dialogs";
 import { CUSTOM_COLOR_KEY, IconColorSection } from "./library/IconColorSection";
 import { StyleSection } from "./StyleSection";
+import { followZones, type Positions } from "./zoneFollow";
 import { colorOfElement, elementAt } from "./library/pickColor";
 import { normalizeHex } from "../../shared/colorMath";
 import { IconRecolorSession, NO_ICONS, iconSelection, recolorSelectedIcons, type IconSelection } from "./library/iconColor";
@@ -191,6 +192,7 @@ export function App() {
   const [picking, setPicking] = useState(false);
   const iconsKey = useRef("");
   const selKey = useRef("");
+  const zonePositions = useRef(new Map<string, Positions>());
   const [selTick, setSelTick] = useState(0);
 
   // Refs hold the latest values for callbacks fired by Excalidraw, IPC and timers.
@@ -325,6 +327,8 @@ export function App() {
   const onChange = useCallback(
     (id: string, elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
       if (appState.isLoading) return;
+      const zoneApi = apis.current.get(id);
+      if (zoneApi) zonePositions.current.set(id, followZones(zoneApi, zonePositions.current.get(id), elements, appState));
       if (id === activeRef.current) {
         const sel = appState.viewModeEnabled ? NO_ICONS : iconSelection(elements, appState, files);
         const sk = Object.keys(appState.selectedElementIds).sort().join(",");

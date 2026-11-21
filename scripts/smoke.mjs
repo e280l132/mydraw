@@ -600,6 +600,36 @@ await call("create_zone", { id: "zn", x: 600, y: 600, width: 200, height: 120 })
 await call("update_elements", { updates: [{ id: "zn", label: "Late title" }] });
 scene = await call("get_scene");
 assert.ok(JSON.stringify(scene).includes("Late title"), "label added to a zone without a title");
+
+step("MCP: zone contents follow the zone; auto_layout moves the legend; edges clear zone titles");
+scene = await call("get_scene");
+const pBefore = el("p").x;
+const zBefore = el("zc").x;
+await call("update_elements", { updates: [{ id: "zc", dx: 200 }] });
+await waitFor(async () => {
+  scene = await call("get_scene");
+  return Math.abs(el("p").x - (pBefore + 200)) < 1;
+}, "zone contents follow the zone");
+assert.ok(Math.abs(el("zc").x - (zBefore + 200)) < 1);
+await call("undo");
+await waitFor(async () => {
+  scene = await call("get_scene");
+  return Math.abs(el("p").x - pBefore) < 1 && Math.abs(el("zc").x - zBefore) < 1;
+}, "one undo puts the zone and its contents back");
+
+await call("new_drawing", { title: "Legend layout" });
+await call("build_diagram", {
+  nodes: [{ id: "k1", kind: "Web" }, { id: "k2", kind: "DB" }, { id: "k3", kind: "Web" }],
+  edges: [{ from: "k1", to: "k2" }, { from: "k1", to: "k3" }],
+  legend: true,
+  direction: "right",
+});
+await call("auto_layout", { direction: "down" });
+const legendFile = JSON.parse(fs.readFileSync((await call("save", { path: path.join(work, "legend-layout") })).path, "utf8"));
+const legendEls = legendFile.elements.filter((e) => e.customData?.mydrawLegend && !e.isDeleted);
+const nodeEls = legendFile.elements.filter((e) => ["k1", "k2", "k3"].includes(e.id));
+assert.ok(legendEls.length > 0, "legend present");
+assert.ok(Math.min(...legendEls.map((e) => e.y)) > Math.max(...nodeEls.map((e) => e.y + e.height)), "legend sits below the laid-out diagram");
 await client.close();
 
 app.process().kill("SIGKILL");

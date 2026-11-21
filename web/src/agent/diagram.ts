@@ -786,10 +786,30 @@ export async function autoLayout(
       changed.set(label.id, newElementWith(label, { x: mid.x - label.width / 2, y: mid.y - label.height / 2 }));
     }
   }
+  const bounds = boundsOf(listable([...after.values()]).filter((e) => owner.has(e.id) || zoneIds.has(e.id)));
+
+  // An existing legend follows the diagram: bottom-right corner, below it (where add_legend puts one).
+  let legends = 0;
+  if (!p.ids?.length) {
+    const byLegend = new Map<string, El[]>();
+    for (const el of after.values()) {
+      if (el.isDeleted || !el.customData?.mydrawLegend) continue;
+      const g = el.groupIds.at(-1) ?? el.id;
+      byLegend.set(g, [...(byLegend.get(g) ?? []), el]);
+    }
+    for (const members of byLegend.values()) {
+      const box = boundsOf(members);
+      const dx = bounds.x + bounds.width - box.width - box.x;
+      const dy = bounds.y + bounds.height + 40 - box.y;
+      if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) continue;
+      for (const m of members) changed.set(m.id, newElementWith(changed.get(m.id) ?? m, { x: m.x + dx, y: m.y + dy }));
+      legends++;
+    }
+  }
   return {
     changed: [...changed.values()],
     added: r.added,
-    result: { nodes: units.length, zones: zones.length, edges: edges.length, bounds: boundsOf(listable([...after.values()]).filter((e) => owner.has(e.id) || zoneIds.has(e.id))) },
+    result: { nodes: units.length, zones: zones.length, edges: edges.length, bounds, legendsMoved: legends || undefined },
   };
 }
 

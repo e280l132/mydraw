@@ -189,6 +189,18 @@ export async function layoutGraph(input: LayoutInput): Promise<LayoutResult> {
   };
   collect(out);
 
+  if (layered) {
+    const strips = zoneList.map((z) => {
+      const b = zones.get(z.id)!;
+      return { id: z.id, rect: { x: b.x, y: b.y, width: Math.min(z.minWidth, b.width), height: z.titleHeight }, zone: b };
+    });
+    for (const e of input.edges ?? []) {
+      const route = edges.get(e.id);
+      if (!route) continue;
+      edges.set(e.id, avoidTitleStrips(route, strips, nodes.get(e.from) ?? zones.get(e.from), nodes.get(e.to) ?? zones.get(e.to)));
+    }
+  }
+
   const all = [...nodes.values(), ...zones.values()];
   const x1 = Math.min(...all.map((b) => b.x));
   const y1 = Math.min(...all.map((b) => b.y));
@@ -210,4 +222,85 @@ export function translateLayout(r: LayoutResult, origin: Point): LayoutResult {
     orthogonal: r.orthogonal,
     bounds: mv(r.bounds),
   };
+}
+
+// ---------- keeping edges out of zone title strips ----------
+
+const STRIP_MARGIN = 8;
+
+interface Strip {
+  id: string;
+  rect: Box;
+  zone: Box;
+}
+
+function crosses(a: Point, b: Point, r: Box): boolean {
+  const x1 = Math.min(a.x, b.x);
+  const x2 = Math.max(a.x, b.x);
+  const y1 = Math.min(a.y, b.y);
+  const y2 = Math.max(a.y, b.y);
+  return x2 > r.x && x1 < r.x + r.width && y2 > r.y && y1 < r.y + r.height;
+}
+
+/**
+ * ELK knows nothing about the zone title text, so an orthogonal route can run through it. Nudge the
+ * offending segment just past the title (down for a horizontal run, right for a vertical one),
+ * moving its neighbours with it. A segment that touches the route's start or end is only moved
+ * along its node's side, so the arrow never detaches; if no clean move exists the route is kept.
+ */
+export function avoidTitleStrips(route: Point[], strips: Strip[], fromBox?: Box, toBox?: Box): Point[] {
+  let pts = route.map((p) => ({ ...p }));
+  for (let round = 0; round < 6; round++) {
+    let moved = false;
+    for (const strip of strips) {
+      const r = strip.rect;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const a = pts[i];
+        const b = pts[i + 1];
+        if (!crosses(a, b, r)) continue;
+        const horizontal = Math.abs(a.y - b.y) < 0.5;
+        const vertical = Math.abs(a.x - b.x) < 0.5;
+        const first = i === 0;
+        const last = i + 1 === pts.length - 1;
+        if (horizontal) {
+          const y = r.y + r.height + STRIP_MARGIN;
+          if (y > strip.zone.y + strip.zone.height - STRIP_MARGIN) continue;
+          // End points stay on their node: only move a point that is an interior bend.
+          if (first || last) continue;
+          a.y = y;
+          b.y = y;
+          moved = true;
+        } else if (vertical) {
+          const x = r.x + r.width + STRIP_MARGIN;
+          if (x > strip.zone.x + strip.zone.width - STRIP_MARGIN) continue;
+          const okEnd = (box: Box | undefined) => !!box && x > box.x + 4 && x < box.x + box.width - 4;
+          if ((first && !okEnd(fromBox)) || (last && !okEnd(toBox))) {
+            // An end point is pinned to its node: jog around the title instead of sliding the run.
+            const down = b.y > a.y;
+            const above = r.y - STRIP_MARGIN;
+            const below = r.y + r.height + STRIP_MARGIN;
+            const y1 = down ? above : below;
+            const y2 = down ? below : above;
+            if ((down && (a.y >= above || b.y <= below)) || (!down && (a.y <= below || b.y >= above))) continue;
+            pts.splice(i + 1, 0, { x: a.x, y: y1 }, { x, y: y1 }, { x, y: y2 }, { x: a.x, y: y2 });
+            moved = true;
+            break;
+          }
+          a.x = x;
+          b.x = x;
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+  // Drop points that became collinear or duplicated.
+  return pts.filter((p, i) => {
+    if (i === 0 || i === pts.length - 1) return true;
+    const q = pts[i - 1];
+    const n = pts[i + 1];
+    const same = Math.abs(p.x - q.x) < 0.5 && Math.abs(p.y - q.y) < 0.5;
+    const line = (Math.abs(q.x - p.x) < 0.5 && Math.abs(p.x - n.x) < 0.5) || (Math.abs(q.y - p.y) < 0.5 && Math.abs(p.y - n.y) < 0.5);
+    return !same && !line;
+  });
 }
