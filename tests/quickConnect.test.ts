@@ -59,6 +59,47 @@ describe("quickConnectBox", () => {
   });
 });
 
+describe("quickConnectBox: inside a container", () => {
+  // A big shape with a small icon in its top-left corner (the user's case).
+  const container = { x: 0, y: 0, width: 400, height: 260 };
+  const icon = { x: 30, y: 30, width: 64, height: 64 };
+  const node = { width: 64, height: 64 };
+  const inside = (b: { x: number; y: number; width: number; height: number }) => b.x >= 0 && b.y >= 0 && b.x + b.width <= 400 && b.y + b.height <= 260;
+
+  it("stays inside the container when there is room, on every side that has room", () => {
+    for (const side of ["right", "bottom"] as const) {
+      const b = quickConnectBox({ source: icon, side, size: node, obstacles: [], within: container });
+      expect(inside(b)).toBe(true);
+    }
+  });
+
+  it("uses a smaller gap rather than leaving the container", () => {
+    // Below the icon there are 260 - 94 = 166px: a 64px node fits with the normal gap (80) only if the margin allows; force a tight container.
+    const tight = { x: 0, y: 0, width: 400, height: 200 };
+    const b = quickConnectBox({ source: icon, side: "bottom", size: node, obstacles: [], within: tight });
+    expect(b.y).toBeGreaterThanOrEqual(94 + 30);
+    expect(b.y + b.height).toBeLessThanOrEqual(200 - 8);
+  });
+
+  it("falls back to placing it outside when the container has no room", () => {
+    const small = { x: 0, y: 0, width: 130, height: 130 };
+    const b = quickConnectBox({ source: icon, side: "bottom", size: node, obstacles: [], within: small });
+    expect(b.y).toBe(94 + QUICK_GAP); // the usual spot, below the container
+    expect(b.y + b.height).toBeGreaterThan(130);
+  });
+
+  it("still avoids other things inside the container", () => {
+    const sibling = { x: 30, y: 174, width: 64, height: 64 }; // where the bottom node would go
+    const b = quickConnectBox({ source: icon, side: "bottom", size: node, obstacles: [sibling], within: container });
+    expect(boxesOverlap(b, sibling, 20)).toBe(false);
+    expect(inside(b)).toBe(true);
+  });
+
+  it("behaves as before without a container", () => {
+    expect(quickConnectBox({ source: src, side: "right", size, obstacles: [] })).toEqual({ x: 340, y: 100, width: 160, height: 80 });
+  });
+});
+
 describe("boxesOverlap", () => {
   it("respects the margin", () => {
     const a = { x: 0, y: 0, width: 10, height: 10 };

@@ -167,9 +167,26 @@ function zoneChain(el: El, map: ElMap): El[] {
   return out;
 }
 
-/** Boxes the new node must keep clear of: everything except arrows, labels and the source's own zones/frame. */
-function obstacleBoxes(source: El, scene: readonly El[], map: ElMap): Box[] {
-  const ancestors = new Set(zoneChain(source, map).map((z) => z.id));
+/**
+ * Shapes, zones and frames drawn around the unit (their box contains it): the unit sits in them.
+ * Innermost first.
+ */
+function containersOf(unit: QuickUnit, scene: readonly El[]): El[] {
+  const own = new Set(unit.members.map((m) => m.id));
+  const u = unit.box;
+  const tol = 1;
+  return scene
+    .filter((el) => {
+      if (el.isDeleted || own.has(el.id)) return false;
+      if (!SHAPES.has(el.type) && el.type !== "frame" && el.type !== "magicframe") return false;
+      return el.x <= u.x + tol && el.y <= u.y + tol && el.x + el.width >= u.x + u.width - tol && el.y + el.height >= u.y + u.height - tol && el.width * el.height > u.width * u.height;
+    })
+    .sort((a, b) => a.width * a.height - b.width * b.height);
+}
+
+/** Boxes the new node must keep clear of: everything except arrows, labels and what the source sits in (zones, frame, shapes around it). */
+function obstacleBoxes(source: El, scene: readonly El[], map: ElMap, around: ReadonlySet<string> = new Set()): Box[] {
+  const ancestors = new Set([...around, ...zoneChain(source, map).map((z) => z.id)]);
   if (source.frameId) ancestors.add(source.frameId);
   const boxes: Box[] = [];
   for (const el of scene) {
@@ -215,11 +232,15 @@ function attach(api: ExcalidrawImperativeAPI, unit: QuickUnit, side: QuickSide, 
   const map = liveMap(scene);
   const st = api.getAppState();
   const [bx1, by1, bx2, by2] = getCommonBounds(els);
+  // A shape (or zone, frame) drawn around the unit is where it lives, not something to avoid: the
+  // copy stays inside it when there is room.
+  const containers = containersOf(unit, scene);
   const box = quickConnectBox({
     source: unit.box,
     side,
     size: { width: bx2 - bx1, height: by2 - by1 },
-    obstacles: obstacleBoxes(unit.primary, scene, map),
+    obstacles: obstacleBoxes(unit.primary, scene, map, new Set(containers.map((c) => c.id))),
+    within: containers[0] ? boxOf(containers[0]) : undefined,
   });
   const dx = box.x - bx1;
   const dy = box.y - by1;

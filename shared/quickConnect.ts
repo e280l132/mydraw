@@ -29,7 +29,19 @@ export interface QuickPlaceInput {
   obstacles: readonly Box[];
   gap?: number;
   margin?: number;
+  /**
+   * The shape the source sits in (a container drawn around it). The new node is kept inside it when
+   * there is room, trying smaller gaps before giving up and placing it outside as usual.
+   */
+  within?: Box;
 }
+
+/** Gaps tried, in order, when the node has to fit inside `within`. */
+const INSIDE_GAPS = [QUICK_GAP, 60, 44, 30];
+/** Free space kept between a node placed inside a container and the container's edge. */
+const INSIDE_PAD = 8;
+
+const insideBox = (b: Box, w: Box, pad: number) => b.x >= w.x + pad && b.y >= w.y + pad && b.x + b.width <= w.x + w.width - pad && b.y + b.height <= w.y + w.height - pad;
 
 /**
  * Box for a new node on `side` of `source`, `gap` away and centred on it (so a connector between
@@ -41,15 +53,31 @@ export function quickConnectBox(o: QuickPlaceInput): Box {
   const gap = o.gap ?? QUICK_GAP;
   const margin = o.margin ?? QUICK_MARGIN;
   const content: Box = { x: 0, y: 0, width: o.size.width, height: o.size.height };
+  const within = o.within;
+  if (within) {
+    for (const g of [gap, ...INSIDE_GAPS.slice(1).filter((x) => x < gap)]) {
+      const found = search(o, content, g, margin, (b) => insideBox(b, within, INSIDE_PAD));
+      if (found) return found;
+    }
+  }
+  return search(o, content, gap, margin, () => true) ?? centred(o, content, gap);
+}
+
+function centred(o: QuickPlaceInput, content: Box, gap: number): Box {
   const { dx, dy } = placeBeside(content, content, o.source, o.source, PLACE_SIDE[o.side], gap);
-  const base: Box = { ...content, x: dx, y: dy };
+  return { ...content, x: dx, y: dy };
+}
+
+/** The nearest spot (by rings of equal distance) where `accept` holds and nothing is overlapped, or null. */
+function search(o: QuickPlaceInput, content: Box, gap: number, margin: number, accept: (b: Box) => boolean): Box | null {
+  const base = centred(o, content, gap);
   const horizontal = o.side === "left" || o.side === "right";
   const outward = o.side === "right" || o.side === "bottom" ? 1 : -1;
   const across = horizontal ? o.size.height : o.size.width;
   const along = horizontal ? o.size.width : o.size.height;
   const acrossStep = Math.max(10, (across + margin) / 2);
   const outStep = Math.max(10, (along + margin) / 2);
-  const free = (b: Box) => !o.obstacles.some((ob) => boxesOverlap(b, ob, margin));
+  const free = (b: Box) => accept(b) && !o.obstacles.some((ob) => boxesOverlap(b, ob, margin));
   const at = (out: number, slide: number): Box =>
     horizontal
       ? { ...base, x: base.x + outward * out * outStep, y: base.y + slide * acrossStep }
@@ -65,7 +93,7 @@ export function quickConnectBox(o: QuickPlaceInput): Box {
       }
     }
   }
-  return base;
+  return null;
 }
 
 export interface Padding {

@@ -1257,6 +1257,51 @@ await waitFor(async () => (await t((x) => x.elementCount())) === gCount, "undone
 await call("select", { ids: [] });
 await waitFor(async () => (await qcHandles()).length === 0, "no selection, no handles");
 
+// A shape around the source is where it lives, not an obstacle: the copy stays inside it when there is room.
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "qcont", x: 700, y: 300, width: 420, height: 260 },
+    { type: "rectangle", id: "qin", x: 730, y: 330, width: 80, height: 60, label: "In" },
+  ],
+});
+const within = (a, b) => a.x >= b.x && a.y >= b.y && a.x + a.width <= b.x + b.width && a.y + a.height <= b.y + b.height;
+for (const side of ["bottom", "right"]) {
+  // Let the handles of whatever was selected before (the undone copy) go away first, so the click lands on qin's.
+  await call("select", { ids: [] });
+  await waitFor(async () => (await qcHandles()).length === 0, "handles gone");
+  await call("select", { ids: ["qin"] });
+  await waitFor(async () => (await qcHandles()).length === 4, `handles on the shape inside a container (${side})`);
+  const n = await t((x) => x.elementCount());
+  await page.click(`.md-qc-handle[data-side="${side}"]`);
+  await waitFor(async () => (await t((x) => x.elementCount())) === n + 3, `copy inside the container (${side})`);
+  scene = await call("get_scene");
+  const arrow = scene.elements.find((e) => e.type === "arrow" && e.from === "qin");
+  const copy = el(arrow.to);
+  assert.ok(within(copy, el("qcont")), `the ${side} copy stays inside the container`);
+  assert.deepEqual([el("qcont").x, el("qcont").y, el("qcont").width, el("qcont").height], [700, 300, 420, 260], "the container is not resized");
+  await call("undo");
+  await waitFor(async () => (await t((x) => x.elementCount())) === n, `${side} copy undone`);
+}
+// No room inside a small container: the copy goes outside it, as before.
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "qsmall", x: 700, y: 620, width: 110, height: 90 },
+    { type: "rectangle", id: "qin2", x: 720, y: 640, width: 50, height: 30, label: "x" },
+  ],
+});
+await call("select", { ids: [] });
+await waitFor(async () => (await qcHandles()).length === 0, "handles gone");
+await call("select", { ids: ["qin2"] });
+await waitFor(async () => (await qcHandles()).length === 4, "handles in the small container");
+const n2 = await t((x) => x.elementCount());
+await page.click('.md-qc-handle[data-side="right"]');
+await waitFor(async () => (await t((x) => x.elementCount())) === n2 + 3, "copy added beside the small container");
+scene = await call("get_scene");
+const arrow2 = scene.elements.find((e) => e.type === "arrow" && e.from === "qin2");
+assert.ok(!within(el(arrow2.to), el("qsmall")) && el(arrow2.to).x >= 810, "with no room inside, the copy goes outside");
+await call("undo");
+await call("select", { ids: [] });
+
 step("Phase 7: diagram lint (⌥⌘L): rules over MCP, fix:true is one undo step, panel rows select and fix");
 await call("new_drawing", { title: "Lint" });
 await call("add_elements", {
