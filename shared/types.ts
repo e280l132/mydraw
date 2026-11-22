@@ -20,6 +20,9 @@ export interface Settings {
   autoExport: Record<string, "png" | "svg">;
 }
 
+/** Outcome of following a drill-down link (see shared/links.ts). */
+export type LinkResult = { type: "opened"; files: OpenedFile[] } | { type: "external" } | { type: "error"; message: string };
+
 export interface OpenedFile {
   path: string;
   content: string;
@@ -94,7 +97,11 @@ export type MenuCommand =
   | { type: "openRecent"; path: string }
   | { type: "clearRecent" }
   | { type: "toggleStencils" }
-  | { type: "saveStencil" };
+  | { type: "saveStencil" }
+  | { type: "commandPalette" }
+  | { type: "findReplace" }
+  | { type: "togglePages" }
+  | { type: "toggleLint" };
 
 export interface MydrawBridge {
   platform: string;
@@ -107,6 +114,10 @@ export interface MydrawBridge {
   openDialog(): Promise<OpenedFile[]>;
   /** Files passed on the command line or via Finder before the UI was ready. */
   takePendingFiles(): Promise<OpenedFile[]>;
+  /** Follow a shape's `link`: opens a web address in the browser or a .excalidraw drawing as a tab. `baseFile` = the drawing holding the link. */
+  openLink(link: string, baseFile: string | null): Promise<LinkResult>;
+  /** Ask for a drawing to link to; returns its absolute path (nothing is opened). */
+  pickDrawingForLink(): Promise<string | null>;
   /** Open a file from the recent list; missing files are dropped from the list. */
   openRecent(path: string): Promise<OpenedFile[]>;
   clearRecent(): Promise<void>;
@@ -161,4 +172,6 @@ export interface MydrawBridge {
   // ----- agent control (MCP) -----
   onAgentCommand(cb: (cmd: AgentCommand) => void): () => void;
   agentReply(reply: AgentReply): void;
+  /** Build a starter template (shared/templates.ts) in the active drawing; icons come from the library. */
+  applyTemplate(name: string): Promise<void>;
 }

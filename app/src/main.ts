@@ -2,7 +2,8 @@ import { BrowserWindow, ClipboardItem, app, clipboard, dialog, ipcMain, nativeTh
 import fs from "node:fs";
 import path from "node:path";
 import { batchFileStems, ensureExtension, siblingPath } from "../../shared/names";
-import type { AutoExportRequest, ClipboardRequest, ExportExtension, ExportFileRequest, ExportFilesRequest, OpenedFile, RecoveryEntry, Settings, UnsavedChoice } from "../../shared/types";
+import { resolveLink } from "../../shared/links";
+import type { AutoExportRequest, ClipboardRequest, ExportExtension, ExportFileRequest, ExportFilesRequest, LinkResult, OpenedFile, RecoveryEntry, Settings, UnsavedChoice } from "../../shared/types";
 import {
   deleteRecovery,
   listRecovery,
@@ -124,6 +125,37 @@ function registerIpc(): void {
       filters: DRAWING_FILTERS,
     });
     return res.canceled ? [] : openPaths(res.filePaths);
+  });
+
+  // Drill-down links (a shape's `link`): http(s) opens in the browser, a .excalidraw path in a tab.
+  // The link text comes from the drawing, so it is validated here (shared/links.ts) and nothing
+  // else is ever opened.
+  ipcMain.handle("link:open", async (e, link: unknown, base: unknown): Promise<LinkResult> => {
+    if (e.sender !== win?.webContents) throw new Error("invalid request");
+    assertString(link, "link");
+    const baseFile = typeof base === "string" && allowedPaths.has(base) ? base : null;
+    const target = resolveLink(link, baseFile);
+    if (target.kind === "error" && typeof base === "string" && base && !baseFile && !/^(https?:|file:|\/|~\/)/i.test(link.trim())) {
+      return { type: "error", message: "mydraw doesn't know where this drawing is saved: save it again, then follow the link" };
+    }
+    if (target.kind === "error") return { type: "error", message: target.message };
+    if (target.kind === "url") {
+      if (!isTest) await shell.openExternal(target.url); // tests must not launch a browser
+      return { type: "external" };
+    }
+    const abs = target.path.startsWith("~/") ? path.join(app.getPath("home"), target.path.slice(2)) : target.path;
+    if (!fs.existsSync(abs)) return { type: "error", message: `Linked drawing not found: ${abs}` };
+    try {
+      return { type: "opened", files: [open(abs)] };
+    } catch (err) {
+      return { type: "error", message: `Could not open ${abs}: ${(err as Error).message}` };
+    }
+  });
+  // Pick a drawing to link to. Returns its absolute path (nothing is opened).
+  ipcMain.handle("link:pick-drawing", async (e): Promise<string | null> => {
+    if (e.sender !== win?.webContents || !win) throw new Error("invalid request");
+    const res = await dialog.showOpenDialog(win, { properties: ["openFile"], filters: DRAWING_FILTERS });
+    return res.canceled || !res.filePaths[0] ? null : path.resolve(res.filePaths[0]);
   });
 
   ipcMain.handle("file:take-pending", () => {
@@ -347,6 +379,10 @@ async function startAgentControl(store: ReturnType<typeof setupLibrary>): Promis
     store,
     openFile: (abs) => open(abs),
     allowPath: (abs) => allowedPaths.add(abs),
+  });
+  ipcMain.handle("ui:apply-template", async (e, name: unknown) => {
+    if (e.sender !== win?.webContents || typeof name !== "string") throw new Error("invalid request");
+    await handler("apply_template", { name, zoom: true });
   });
   try {
     const server = await startControlServer(handler);

@@ -2,6 +2,7 @@
 // templates): nodes, edges, zones. Validation and defaults live here; layout in layout.ts; the
 // renderer turns a laid-out diagram into Excalidraw elements (web/src/agent/diagram.ts).
 import { hexToRgb, rgbToHex } from "./colorMath";
+import { linkProblem } from "./links";
 import { resolveColor } from "./palettes";
 import type { LayoutAlgorithm, LayoutDirection } from "./layout";
 import type { Routing } from "./routing";
@@ -104,6 +105,14 @@ export function tint(hex: string, amount = 0.9): string {
 
 type Loose = Record<string, unknown>;
 
+/** A drill-down link: an http(s) address or a path to a .excalidraw drawing (see shared/links.ts). */
+function link(v: unknown, what: string): string | undefined {
+  const s = str(v, what);
+  const bad = s ? linkProblem(s) : null;
+  if (bad) throw new Error(`${what}: ${bad}`);
+  return s;
+}
+
 function str(v: unknown, what: string, required = false): string | undefined {
   if (v === undefined || v === null || v === "") {
     if (required) throw new Error(`${what} is required`);
@@ -178,7 +187,7 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
       width: num(n.width, `node ${id} width`),
       height: num(n.height, `node ${id} height`),
       data,
-      link: str(n.link, `node ${id} link`),
+      link: link(n.link, `node ${id} link`),
       kind: str(n.kind, `node ${id} kind`),
     };
   });

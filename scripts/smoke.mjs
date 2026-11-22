@@ -847,6 +847,379 @@ await waitFor(async () => (await clip(({ clipboard }) => clipboard.readText())).
 await t((x) => x.command({ type: "copyAs", format: "png" }));
 await waitFor(async () => clip(async ({ clipboard }) => (await clipboard.has("image/png")) === true), "PNG on the clipboard");
 
+// ---------- Phase 7: ease of use ----------
+step("Phase 7: command palette (⇧⌘P) runs mydraw commands, themes and templates");
+const MOD = "ControlOrMeta";
+await page.keyboard.press("Escape");
+await page.keyboard.press(`${MOD}+Shift+P`);
+await page.waitForSelector(".md-pal-input");
+await page.fill(".md-pal-input", "export pdf");
+assert.ok((await page.textContent(".md-pal-item.on")).includes("Export as PDF"), "best match is Export as PDF");
+await page.keyboard.press("Enter");
+await page.waitForSelector(".md-export-options .md-seg button.on:text-is('PDF')", { timeout: 10000 });
+await page.keyboard.press("Escape");
+await page.click(".md-modal-actions button:text-is('Close'), .md-modal-actions button:text-is('Cancel')").catch(() => {});
+await page.waitForSelector(".md-export", { state: "detached", timeout: 5000 }).catch(() => {});
+assert.equal(await page.$(".md-pal-input"), null, "palette closes after running a command");
+
+await page.keyboard.press(`${MOD}+Shift+P`);
+await page.fill(".md-pal-input", "theme blueprint");
+const bgBefore = await t((x) => x.viewBackground());
+await page.keyboard.press("Enter");
+await waitFor(async () => (await t((x) => x.viewBackground())) !== bgBefore, "palette theme changes the background");
+
+const countBefore = await t((x) => x.elementCount());
+await page.keyboard.press(`${MOD}+Shift+P`);
+await page.fill(".md-pal-input", "template 3-tier");
+await page.keyboard.press("Enter");
+await waitFor(async () => (await t((x) => x.elementCount())) > countBefore + 5, "palette template builds a diagram");
+
+await page.keyboard.press(`${MOD}+Shift+P`);
+await page.fill(".md-pal-input", "zzzzqqq");
+assert.ok(await page.isVisible(".md-pal-empty"), "no-match message");
+await page.keyboard.press("Escape");
+assert.equal(await page.$(".md-pal-input"), null, "Escape closes the palette");
+
+step("Phase 7: Excalidraw's own search, help and snap still work; ⌘K leaves link editing alone");
+await page.waitForFunction(() => document.activeElement?.closest(".excalidraw"), null, { timeout: 5000 }); // focus returns to the drawing
+await page.keyboard.press(`${MOD}+f`);
+await page.waitForSelector(".layer-ui__search", { timeout: 5000 });
+await page.keyboard.press("Escape");
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+const snapBefore = await t((x) => x.appStateValue("objectsSnapModeEnabled"));
+await page.keyboard.press("Alt+KeyS");
+await waitFor(async () => (await t((x) => x.appStateValue("objectsSnapModeEnabled"))) !== snapBefore, "Alt+S toggles object snapping");
+await page.keyboard.press("Alt+KeyS");
+await page.keyboard.press("?");
+await page.waitForSelector(".HelpDialog", { timeout: 5000 });
+await page.keyboard.press("Escape");
+// ⌘K opens the palette with nothing selected, but not with a selection (Excalidraw edits the link then).
+await t((x) => x.selectType("rectangle"));
+await page.keyboard.press(`${MOD}+k`);
+await sleep(300);
+assert.equal(await page.$(".md-pal-input"), null, "⌘K with a selection does not open the palette");
+await page.keyboard.press("Escape");
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+await t((x) => x.appStateValue("selectedElementIds")); // (selection stays; cleared next)
+await page.keyboard.press("Escape");
+
+step("Phase 7: find & replace (⌥⌘F): counts, replace all in one undo step, selection scope, select matches");
+await call("new_drawing", { title: "Find test" });
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "f1", x: 0, y: 0, width: 160, height: 80, label: "web-1 Web server" },
+    { type: "ellipse", id: "f2", x: 300, y: 0, width: 160, height: 90, label: "DB" },
+    { type: "text", id: "f3", x: 0, y: 200, text: "WEB notes: web only, website" },
+    { type: "arrow", id: "f4", from: "f1", to: "f2", label: "web traffic" },
+  ],
+});
+// Labels wrap inside their shape; compare with line breaks as spaces.
+const texts = async () => JSON.stringify(await call("get_scene")).replace(/\\n/g, " ");
+await page.waitForFunction(() => document.activeElement !== null);
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+await page.keyboard.press(`${MOD}+Alt+KeyF`);
+await page.waitForSelector(".md-find");
+await page.fill('.md-find input[placeholder="Find"]', "web");
+await waitFor(async () => (await page.textContent(".md-find-count")).trim() === "6 in 3", "case-insensitive count: 6 matches in 3 texts");
+await page.check('.md-find-opts label:has-text("Match case") input');
+await waitFor(async () => (await page.textContent(".md-find-count")).trim() === "4 in 3", "match case count");
+await page.uncheck('.md-find-opts label:has-text("Match case") input');
+await page.check('.md-find-opts label:has-text("Whole word") input');
+await waitFor(async () => (await page.textContent(".md-find-count")).trim() === "5 in 3", "whole word count");
+await page.uncheck('.md-find-opts label:has-text("Whole word") input');
+
+await page.fill('.md-find input[placeholder="Replace with"]', "app");
+await page.click('.md-find-btn:text-is("Replace all")');
+await waitFor(async () => !(await texts()).toLowerCase().includes("web"), "every web replaced");
+let after = await texts();
+assert.ok(after.includes("app-1 app server"), "label replaced keeping its case-insensitive match: " + after.slice(0, 300));
+assert.ok(after.includes("app notes: app only, appsite"), "standalone text replaced");
+assert.ok(after.includes("app traffic"), "arrow label replaced");
+await call("undo");
+await waitFor(async () => (await texts()).includes("web-1 Web server") && (await texts()).includes("WEB notes: web only, website"), "one undo restores everything");
+
+// Selection scope: only the selected shape's label changes.
+await page.fill('.md-find input[placeholder="Find"]', "web");
+await call("select", { ids: ["f1"] });
+await page.click('.md-find .md-seg button:text-is("Selection")');
+await waitFor(async () => (await page.textContent(".md-find-count")).trim() === "2 in 1", "selection count");
+await page.click('.md-find-btn:text-is("Replace all")');
+await waitFor(async () => (await texts()).includes("app-1 app server"), "selection replaced");
+assert.ok((await texts()).includes("WEB notes: web only, website"), "outside the selection untouched");
+await call("undo");
+
+// Select matches selects the owning shapes.
+await page.fill('.md-find input[placeholder="Find"]', "web");
+await page.click('.md-find-btn:text-is("Select matches")');
+await waitFor(async () => (await t((x) => x.selectedCount())) >= 3, "matching shapes selected");
+await page.keyboard.press("Escape");
+await waitFor(async () => !(await page.$(".md-find")), "Escape closes the find bar");
+
+step("Phase 7: palette jumps to an element by its text");
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+await page.keyboard.press(`${MOD}+Shift+P`);
+await page.fill(".md-pal-input", "go to db");
+assert.ok((await page.textContent(".md-pal-item.on")).includes("Go to: DB"));
+await page.keyboard.press("Enter");
+await waitFor(async () => (await t((x) => x.selectedCount())) === 1, "element selected by palette");
+
+step("Phase 7: pages panel (⌥⌘P) adds, renames, reorders and zooms to pages; exports follow the order");
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+await page.keyboard.press(`${MOD}+Alt+KeyP`);
+await page.waitForSelector(".md-pages");
+assert.ok(await page.isVisible(".md-pages-empty"), "empty hint without frames");
+await page.click('.md-pages button[aria-label="Add page"]');
+await page.click('.md-pages button[aria-label="Add page"]');
+await waitFor(async () => (await t((x) => x.frameNames())).join() === "Page 1,Page 2", "two pages added");
+await waitFor(async () => (await page.locator(".md-page").count()) === 2, "two rows listed");
+await page.dblclick('.md-page-name:text-is("Page 1")');
+await page.fill(".md-page-edit", "Intro");
+await page.keyboard.press("Enter");
+await waitFor(async () => (await t((x) => x.frameNames())).join() === "Intro,Page 2", "page renamed");
+await page.hover('.md-page:has-text("Intro")');
+await page.click('.md-page:has-text("Intro") button[aria-label="Move Intro down"]');
+await waitFor(async () => (await t((x) => x.frameNames())).join() === "Page 2,Intro", "page moved down");
+await call("undo"); // moving a page is one undo step
+await waitFor(async () => (await t((x) => x.frameNames())).join() === "Intro,Page 2", "reorder undone in one step");
+await call("redo");
+await waitFor(async () => (await t((x) => x.frameNames())).join() === "Page 2,Intro", "reorder redone");
+// Empty pages are skipped by paged exports, so put a shape in each.
+const pageFrames = (await call("get_scene")).elements.filter((e) => e.type === "frame");
+assert.equal(pageFrames.length, 2);
+await call("add_elements", { elements: pageFrames.map((f, i) => ({ type: "rectangle", id: `pg${i}`, x: f.x + 60, y: f.y + 60, width: 120, height: 60, label: `P${i}` })) });
+await call("raw_update", { elements: pageFrames.map((f, i) => ({ id: `pg${i}`, frameId: f.id })) });
+const pagesDrawio = path.join(outDir, "pages-order.drawio");
+await call("export", { path: pagesDrawio, scope: "frames" });
+const diagramNames = [...fs.readFileSync(pagesDrawio, "utf8").matchAll(/<diagram [^>]*name="([^"]*)"/g)].map((m) => m[1]);
+assert.deepEqual(diagramNames, ["Page 2", "Intro"], "export follows the page order");
+await page.click('.md-page:has-text("Page 2")');
+await waitFor(async () => (await t((x) => x.selectedCount())) === 1, "clicking a page selects it");
+await page.keyboard.press(`${MOD}+Alt+KeyP`);
+await waitFor(async () => !(await page.$(".md-pages")), "panel toggles closed");
+
+step("Phase 7: drill-down links open another drawing in a tab; bad links are refused");
+const linkDir = path.join(work, "links");
+fs.mkdirSync(linkDir, { recursive: true });
+fs.writeFileSync(
+  path.join(linkDir, "rack-target.excalidraw"),
+  JSON.stringify({ type: "excalidraw", version: 2, source: "smoke", elements: [], appState: {}, files: {} }),
+);
+await call("new_drawing", { title: "Link A" });
+await call("add_elements", {
+  elements: [
+    // Away from the top edge, where Excalidraw's toolbars would cover the link badge.
+    { type: "rectangle", id: "ra", x: 300, y: 300, width: 160, height: 80, label: "Rack", link: "rack-target.excalidraw" },
+    { type: "rectangle", id: "rb", x: 700, y: 300, width: 160, height: 80, label: "Gone", link: "missing.excalidraw" },
+  ],
+});
+await call("save", { path: path.join(linkDir, "a.excalidraw") });
+assert.equal((await callRaw("update_elements", { updates: [{ id: "ra", link: "javascript:alert(1)" }] })).isError, true, "javascript: links are refused");
+assert.equal((await callRaw("update_elements", { updates: [{ id: "ra", link: "notes.txt" }] })).isError, true, "non-drawing links are refused");
+assert.equal((await callRaw("add_elements", { elements: [{ type: "rectangle", id: "bad", x: 0, y: 300, width: 50, height: 50, link: "data:text/html,x" }] })).isError, true, "add_elements refuses bad links");
+assert.equal((await callRaw("build_diagram", { nodes: [{ id: "n", label: "N", link: "javascript:1" }] })).isError, true, "build_diagram refuses bad links");
+await call("update_elements", { updates: [{ id: "ra", link: "https://example.com/docs" }] });
+await call("update_elements", { updates: [{ id: "ra", link: "rack-target.excalidraw" }] });
+const linkOf = async (id) => (await call("get_element", { id }))[0].element.link;
+assert.equal(await linkOf("ra"), "rack-target.excalidraw");
+
+// The main process validates and opens: web addresses (not launched in tests), drawings as tabs, nothing else.
+const follow = (link, base) => page.evaluate(([l, b]) => window.mydraw.openLink(l, b), [link, base]);
+assert.deepEqual(await follow("https://example.com/x", null), { type: "external" });
+assert.equal((await follow("javascript:alert(1)", null)).type, "error");
+assert.equal((await follow("/etc/hosts", null)).type, "error");
+assert.equal((await follow("../../outside.excalidraw", path.join(linkDir, "a.excalidraw"))).type, "error", "missing drawing");
+
+// Click the real link badge on the canvas.
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+const badge = await t((x) => x.linkBadge("ra"));
+await page.mouse.move(badge.x, badge.y);
+await sleep(200);
+await page.mouse.move(badge.x + 1, badge.y + 1);
+await sleep(150);
+await page.mouse.click(badge.x + 1, badge.y + 1);
+await waitFor(async () => {
+  const st = await t((x) => x.state());
+  return st.tabs.find((tab) => tab.id === st.activeId)?.title === "rack-target";
+}, "clicking the link badge opens the linked drawing in a tab");
+const tabsBefore = (await t((x) => x.state())).tabs.length;
+
+// Back in A: following the same link again focuses the existing tab instead of opening a second one.
+const clickBadge = async (id) => {
+  const bd = await t((x, i) => x.linkBadge(i), id);
+  await page.mouse.move(bd.x - 30, bd.y + 40);
+  await sleep(100);
+  await page.mouse.move(bd.x, bd.y);
+  await sleep(200);
+  await page.mouse.move(bd.x + 1, bd.y + 1);
+  await sleep(150);
+  await page.mouse.click(bd.x + 1, bd.y + 1);
+};
+const tabA = (await t((x) => x.state())).tabs.find((tab) => tab.title === "a");
+await call("activate_drawing", { drawing: tabA.id });
+await waitFor(async () => (await t((x) => x.state())).activeId === tabA.id, "A active again");
+await clickBadge("ra");
+await waitFor(async () => {
+  const st = await t((x) => x.state());
+  return st.tabs.find((tab) => tab.id === st.activeId)?.title === "rack-target";
+}, "second click focuses the linked drawing");
+assert.equal((await t((x) => x.state())).tabs.length, tabsBefore, "no duplicate tab");
+
+// A link to a drawing that is gone shows an error instead of failing silently.
+await call("activate_drawing", { drawing: tabA.id });
+await waitFor(async () => (await t((x) => x.state())).activeId === tabA.id, "A active for the broken link");
+await clickBadge("rb");
+await page.waitForSelector(".md-toast.error", { timeout: 5000 });
+assert.ok((await page.textContent(".md-toast.error")).includes("not found"), "missing drawing is reported");
+
+// Authoring from the palette: link the selection to a chosen drawing, then remove it.
+await call("activate_drawing", { drawing: tabA.id });
+await app.evaluate(({ dialog }, file) => {
+  dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
+}, path.join(linkDir, "rack-target.excalidraw"));
+await call("select", { ids: ["rb"] });
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+await page.keyboard.press(`${MOD}+Shift+P`);
+await page.fill(".md-pal-input", "link selection");
+await page.keyboard.press("Enter");
+await waitFor(async () => (await linkOf("rb")) === "rack-target.excalidraw", "palette links the selection (relative path)");
+await page.keyboard.press(`${MOD}+Shift+P`);
+await page.fill(".md-pal-input", "remove links");
+await page.keyboard.press("Enter");
+await waitFor(async () => !(await linkOf("rb")), "palette removes the link");
+
+step("Phase 7: quick connect: hover handles, connected copy as one undo step, stencil search, zones");
+await call("new_drawing", { title: "Quick connect" });
+await call("add_elements", {
+  elements: [
+    // Below the toolbars. "qblock" takes the spot right of "qa", so the copy has to slide.
+    { type: "rectangle", id: "qa", x: 300, y: 360, width: 160, height: 80, label: "App", strokeColor: "#1971c2", backgroundColor: "#a5d8ff", fillStyle: "solid" },
+    { type: "ellipse", id: "qblock", x: 560, y: 330, width: 120, height: 70, label: "Busy" },
+  ],
+});
+const qcHandles = () => page.$$eval(".md-qc-handle", (els) => els.map((e) => e.dataset.side).sort());
+const hoverQa = async () => {
+  await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+  const c = await t((x) => x.toScreen(380, 400));
+  await page.mouse.move(c.x - 40, c.y + 5);
+  await page.mouse.move(c.x, c.y);
+  await waitFor(async () => (await qcHandles()).length === 4, "4 quick connect handles on hover");
+};
+await hoverQa();
+assert.deepEqual(await qcHandles(), ["bottom", "left", "right", "top"]);
+const qcCount = await t((x) => x.elementCount());
+// Moving from the shape to a handle keeps the handles up; clicking adds copy + label + arrow.
+const rightHandle = await page.$eval('.md-qc-handle[data-side="right"]', (e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+await page.mouse.move(rightHandle.x - 15, rightHandle.y, { steps: 3 });
+await page.mouse.move(rightHandle.x, rightHandle.y, { steps: 2 });
+await page.mouse.click(rightHandle.x, rightHandle.y);
+await waitFor(async () => (await t((x) => x.elementCount())) === qcCount + 3, "copy, its label and the arrow added");
+scene = await call("get_scene");
+const qArrow = scene.elements.find((e) => e.type === "arrow" && e.from === "qa");
+assert.ok(qArrow, "a bound arrow starts at the source");
+const qCopy = el(qArrow.to);
+assert.ok(qCopy && qCopy.type === "rectangle" && qCopy.label === "App", "the arrow ends at a copy with the same label");
+assert.equal(qCopy.backgroundColor, "#a5d8ff", "copy keeps the fill");
+assert.equal(qCopy.strokeColor, "#1971c2", "copy keeps the stroke");
+assert.equal(qCopy.width, 160);
+assert.ok(qCopy.x >= el("qa").x + el("qa").width + 40, "copy is to the right of the source");
+const overlaps = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+assert.ok(!overlaps(qCopy, el("qblock")) && !overlaps(qCopy, el("qa")), "copy does not overlap anything");
+const [qArrowFull] = await call("get_element", { id: qArrow.id });
+assert.equal(qArrowFull.element.startBinding.elementId, "qa");
+assert.equal(qArrowFull.element.endBinding.elementId, qCopy.id);
+assert.ok(qArrowFull.element.elbowed && qArrowFull.element.endBinding.fixedPoint, "elbow arrow with fixed-point bindings");
+const [qaFull] = await call("get_element", { id: "qa" });
+assert.ok(qaFull.element.boundElements.some((b) => b.id === qArrow.id), "source lists the arrow");
+assert.equal(await t((x) => x.selectedCount()), 1, "the new node is selected");
+await call("undo");
+await waitFor(async () => (await t((x) => x.elementCount())) === qcCount, "ONE undo removes everything quick connect added");
+assert.ok(!(await call("get_element", { id: "qa" }))[0].element.boundElements?.some((b) => b.id === qArrow.id), "undo unbinds the source");
+
+// In a zone: Shift-click opens the stencil search; the chosen icon joins the zone, which grows to fit.
+const qz = await call("create_zone", { label: "Tier", ids: ["qa"] });
+scene = await call("get_scene");
+const zoneBefore = el(qz.zone);
+const qcCount2 = await t((x) => x.elementCount());
+await hoverQa();
+await page.click('.md-qc-handle[data-side="bottom"]', { modifiers: ["Shift"] });
+await page.waitForSelector(".md-qc-search .md-qc-input");
+await page.keyboard.type("testrouter");
+await page.waitForSelector(".md-qc-result >> text=TestRouter");
+await page.keyboard.press("Enter");
+await waitFor(async () => (await t((x) => x.elementCount())) === qcCount2 + 4, "icon node (container, image, caption) + arrow added");
+assert.ok(!(await page.$(".md-qc-search")), "search closes");
+scene = await call("get_scene");
+const sArrow = scene.elements.find((e) => e.type === "arrow" && e.from === "qa");
+const sNode = el(sArrow?.to);
+assert.ok(sNode && sNode.type === "icon-node" && sNode.icon.stencil === "TestRouter", "arrow to a TestRouter icon node");
+assert.ok(sNode.y >= el("qa").y + el("qa").height + 40, "icon node is below the source");
+assert.equal(sNode.zone, qz.zone, "icon node joins the zone");
+assert.ok(inside(sNode, el(qz.zone)) && el(qz.zone).height > zoneBefore.height, "zone grew to contain it");
+await call("undo");
+await waitFor(async () => (await t((x) => x.elementCount())) === qcCount2, "one undo removes the icon node");
+scene = await call("get_scene");
+assert.equal(el(qz.zone).height, zoneBefore.height, "undo shrinks the zone back");
+
+step("Phase 7: diagram lint (⌥⌘L): rules over MCP, fix:true is one undo step, panel rows select and fix");
+await call("new_drawing", { title: "Lint" });
+await call("add_elements", {
+  elements: [
+    // Below the toolbars. "lb" overlaps "la"; the free arrow ends 20px left of "lc".
+    { type: "rectangle", id: "la", x: 300, y: 320, width: 160, height: 80, label: "Web" },
+    { type: "rectangle", id: "lb", x: 420, y: 350, width: 160, height: 80, label: "App" },
+    { type: "rectangle", id: "lc", x: 800, y: 320, width: 160, height: 80, label: "DB" },
+    { type: "arrow", id: "lar", x: 650, y: 360, points: [[0, 0], [130, 0]] },
+    { type: "rectangle", id: "lu", x: 300, y: 560, width: 120, height: 60 },
+    { type: "rectangle", id: "ld", x: 800, y: 560, width: 160, height: 80, label: "Cache", strokeColor: "#123457" },
+  ],
+});
+await call("update_elements", { updates: [{ id: "la", data: { ip: "10.0.0.1" } }, { id: "lb", data: { ip: "10.0.0.2" } }] });
+let lint = await call("lint_diagram");
+const hasIssue = (r, rule, id) => r.issues.some((i) => i.rule === rule && i.id === id);
+assert.ok(lint.issues.some((i) => i.rule === "overlap" && [i.id, i.other].sort().join() === "la,lb"), "overlap reported");
+const freeArrow = lint.issues.find((i) => i.rule === "unconnected-arrow" && i.id === "lar");
+assert.ok(freeArrow && freeArrow.ends.join() === "start,end" && freeArrow.fix?.end === "lc" && !freeArrow.fix.start, "free arrow, end can attach to DB");
+assert.ok(hasIssue(lint, "unlabeled-node", "lu"), "unlabeled node reported");
+assert.ok(hasIssue(lint, "missing-ip", "lc") && hasIssue(lint, "missing-ip", "ld") && !hasIssue(lint, "missing-ip", "la"), "missing IPs reported");
+const offColor = lint.issues.find((i) => i.rule === "off-palette-color" && i.id === "ld");
+assert.ok(offColor && offColor.fix?.property === "strokeColor", "off-palette color reported");
+assert.equal(lint.issues[0].severity, "warning", "warnings first");
+assert.equal(lint.summary.overlap, 1);
+assert.deepEqual((await call("lint_diagram", { rules: ["missing-ip"] })).issues.map((i) => i.rule).filter((r) => r !== "missing-ip"), [], "rules limit the check");
+assert.equal((await callRaw("lint_diagram", { rules: ["nope"] })).isError, true, "unknown rules are refused");
+const fixedLint = await call("lint_diagram", { fix: true });
+assert.ok(fixedLint.fixed >= 2, "fixes applied");
+assert.ok(!fixedLint.issues.some((i) => i.rule === "off-palette-color"), "colors snapped");
+assert.ok(hasIssue(fixedLint, "overlap", "lb") || hasIssue(fixedLint, "overlap", "la"), "overlaps are left alone");
+const [ldFixed] = await call("get_element", { id: "ld" });
+assert.equal(ldFixed.element.strokeColor, offColor.fix.color, "stroke snapped to the nearest palette color");
+let [larFull] = await call("get_element", { id: "lar" });
+assert.equal(larFull.element.endBinding?.elementId, "lc", "arrow end bound to DB");
+assert.ok((await call("get_element", { id: "lc" }))[0].element.boundElements.some((b) => b.id === "lar"), "DB lists the arrow");
+await call("undo");
+await waitFor(async () => (await call("get_element", { id: "ld" }))[0].element.strokeColor === "#123457", "ONE undo restores the color");
+[larFull] = await call("get_element", { id: "lar" });
+assert.ok(!larFull.element.endBinding, "and unbinds the arrow");
+
+// The panel: open with ⌥⌘L, click a row to select its element, fix all from the panel.
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+await page.keyboard.press(`${MOD}+Alt+KeyL`);
+await page.waitForSelector(".md-lint");
+await waitFor(async () => (await page.locator(".md-lint-row").count()) >= 6, "lint rows listed");
+assert.ok(await page.isVisible('.md-lint-row[data-rule="unconnected-arrow"] .md-lint-fix'), "fixable row has a Fix button");
+await page.click('.md-lint-row[data-rule="unlabeled-node"][data-id="lu"]');
+await waitFor(async () => (await t((x) => x.appStateValue("selectedElementIds")))?.lu === true, "clicking a row selects the element");
+await page.click(".md-lint-fixall");
+await waitFor(async () => (await page.locator(".md-lint-fix").count()) === 0, "fixable rows gone");
+assert.equal(await page.locator('.md-lint-row[data-rule="off-palette-color"]').count(), 0);
+assert.equal(await page.locator('.md-lint-row[data-rule="unconnected-arrow"][data-id="lar"]').count(), 1, "arrow start is still free (nothing near)");
+assert.equal((await call("get_element", { id: "lar" }))[0].element.endBinding?.elementId, "lc", "panel fix bound the arrow");
+assert.ok(await page.isVisible('.md-lint-row[data-rule="overlap"]'), "unfixable rows stay");
+await call("delete_elements", { ids: ["la", "lb", "lc", "lar", "lu", "ld"] });
+await page.waitForSelector(".md-lint-empty >> text=No problems found");
+await page.keyboard.press(`${MOD}+Alt+KeyL`);
+await waitFor(async () => !(await page.$(".md-lint")), "lint panel toggles closed");
+
 await client.close();
 
 app.process().kill("SIGKILL");

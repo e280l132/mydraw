@@ -149,7 +149,7 @@ const server = new McpServer(
   {
     instructions: [
       "mydraw is a local Excalidraw desktop app. These tools edit the open drawings live.",
-      "Workflow: list_drawings / new_drawing / open_drawing -> get_scene to see ids -> add_elements, place_stencil, connect -> screenshot to check the result -> save / export.",
+      "Workflow: list_drawings / new_drawing / open_drawing -> get_scene to see ids -> add_elements, place_stencil, connect -> screenshot and lint_diagram to check the result -> save / export.",
       "Coordinates are scene pixels (y grows downward). Each tool call is one undo step for the user.",
       "For a whole diagram use build_diagram (nodes, edges, zones -> automatic ELK layout, icons, elbow arrows, legend) or mermaid_to_scene / apply_template; then refine with the element tools.",
       "Icons (AWS, Azure, GCP, Kubernetes, network, logos) come from the stencil library: search_stencils then place_stencil (or `icon` on a build_diagram node); connect arrows to the returned node id.",
@@ -504,6 +504,26 @@ tool(
   call("recolor"),
 );
 tool("get_color", "Read an element's real color (dominant color for icons).", { drawing, id: z.string() }, call("get_color"), { readOnlyHint: true });
+
+// review
+tool(
+  "lint_diagram",
+  [
+    "Check a drawing for common diagram problems. Run it after build_diagram, mermaid_to_scene, apply_template or a batch of edits, and when asked to review a diagram (together with screenshot).",
+    "Rules: overlap (warning: two nodes' boxes overlap; containment in zones/frames is fine), unconnected-arrow (warning: an arrow with a free start/end; `ends` says which), unlabeled-node (info: shape without label, icon without caption), missing-ip (info: only when some nodes have an ip in their data, the labelled nodes that lack one), off-palette-color (info: a stroke/fill color outside the app palettes and themes).",
+    "Each issue: {rule, severity, id, label, message, other? (overlap partner), ends?, fix?}; summary counts per rule; warnings first, then top-left to bottom-right.",
+    "fix:true applies every safe fix as ONE undo step (binds free arrow ends to a node within 40px, snaps off-palette colors to the nearest palette color) and returns the issues left plus `fixed`. Overlaps, labels and IPs are never changed automatically: fix them with move / update_elements.",
+  ].join(" "),
+  {
+    drawing,
+    fix: z.boolean().optional().describe("Apply all safe fixes (one undo step)"),
+    rules: z
+      .array(z.enum(["overlap", "unconnected-arrow", "unlabeled-node", "missing-ip", "off-palette-color"]))
+      .optional()
+      .describe("Only these rules (default all)"),
+  },
+  call("lint_diagram"),
+);
 
 // palettes, themes, style presets
 tool(

@@ -9,6 +9,8 @@ import { PALETTES, requireColor, resolveColor } from "../../../shared/palettes";
 import { FONTS, normalizeStyle, type StyleSpec } from "../../../shared/styles";
 import { allPresets, allThemes, deletePreset, deleteTheme, findPreset, findTheme, savePreset, saveTheme, stylesReady } from "../styleStore";
 import { applyThemeToScene, styleElements } from "./styles";
+import { isLintRule, LINT_RULES } from "../../../shared/lint";
+import { applyLintFixes, lintDrawing } from "../lintOps";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState, BinaryFileData, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { isPagedFormat, type AgentCommand } from "../../../shared/agent";
@@ -664,6 +666,22 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
           // The ramp is large: only list its names when asked for it.
           colors: x.id === "ramp" && !only ? "(pass palette:\"ramp\" for all names)" : x.colors,
         }));
+      }
+
+      case "lint_diagram": {
+        const { api } = await target(p);
+        await stylesReady;
+        let rules: string[] | undefined;
+        if (p.rules !== undefined) {
+          rules = strArray(p.rules, "rules");
+          const bad = rules.filter((r) => !isLintRule(r));
+          if (bad.length) throw new Error(`unknown lint rule ${bad.map((r) => `"${r}"`).join(", ")}; rules are ${LINT_RULES.join(", ")}`);
+        }
+        let r = lintDrawing(api, { rules });
+        if (p.fix !== true) return { issues: r.issues, summary: r.summary };
+        const fixed = applyLintFixes(api, r.issues);
+        if (fixed) r = lintDrawing(api, { rules });
+        return { issues: r.issues, summary: r.summary, fixed };
       }
 
       case "list_themes":

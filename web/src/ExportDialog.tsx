@@ -17,7 +17,7 @@ import {
 
 const STORAGE_KEY = "mydraw.exportOptions";
 
-const FORMAT_LABEL: Record<ExportFormat, string> = {
+export const FORMAT_LABEL: Record<ExportFormat, string> = {
   png: "PNG",
   jpg: "JPG",
   webp: "WebP",
@@ -48,15 +48,17 @@ interface Props {
   /** The saved .excalidraw file, or null for an unsaved drawing (no auto-export then). */
   filePath: string | null;
   autoExport: "png" | "svg" | null;
+  /** Start on this format instead of the last used one (command palette entries). */
+  initialFormat?: ExportFormat;
   onAutoExport(format: "png" | "svg" | null): void;
   onClose(): void;
   onDone(message: string): void;
 }
 
-export function ExportDialog({ api, title, filePath, autoExport, onAutoExport, onClose, onDone }: Props) {
+export function ExportDialog({ api, title, filePath, autoExport, initialFormat, onAutoExport, onClose, onDone }: Props) {
   const frames = listFrames(api);
   const [opts, setOpts] = useState<ExportOptions>(() => {
-    const o = loadExportOptions();
+    const o = { ...loadExportOptions(), ...(initialFormat ? { format: initialFormat } : {}) };
     return hasSelection(api) ? { ...o, scope: "selection" } : o;
   });
   const [preview, setPreview] = useState<{ url?: string; text?: string } | null>(null);

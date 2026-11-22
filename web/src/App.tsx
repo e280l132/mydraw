@@ -1,6 +1,7 @@
 import {
   CaptureUpdateAction,
   Excalidraw,
+  isElementLink,
   convertToExcalidrawElements,
   getCommonBounds,
   getLibraryItemsHash,
@@ -24,6 +25,15 @@ import type { DrawingStyle, MenuCommand, OpenedFile, Settings } from "../../shar
 import { AppMenu } from "./AppMenu";
 import { drawingStyleAppState } from "./drawingStyle";
 import { ExportDialog, loadExportOptions } from "./ExportDialog";
+import { CommandPalette } from "./CommandPalette";
+import { FindReplace } from "./FindReplace";
+import { PagesPanel } from "./PagesPanel";
+import { LintPanel } from "./LintPanel";
+import { QuickConnect } from "./QuickConnect";
+import { listFrames } from "./exportImage";
+import { fileLink } from "../../shared/links";
+import { selectedIds, setSelectionLink } from "./uiActions";
+import { buildPaletteItems } from "./paletteItems";
 import { PacksDialog, RenameDialog, SaveStencilDialog } from "./library/dialogs";
 import { CUSTOM_COLOR_KEY } from "./library/IconColorSection";
 import { StyleSection } from "./StyleSection";
@@ -38,7 +48,7 @@ import {
   selectionForStencil,
   type StencilContent,
 } from "./library/stencilContent";
-import { DEFAULT_EXPORT_OPTIONS, renderClipboard, renderExport, type ExportOptions } from "./exportImage";
+import { DEFAULT_EXPORT_OPTIONS, renderClipboard, renderExport, type ExportFormat, type ExportOptions } from "./exportImage";
 import { apiSceneHash, parseDrawing, sceneHash, serializeScene, type LoadedScene } from "./scene";
 import { TabBar, type TabInfo } from "./TabBar";
 import { createAgentExecutor } from "./agent/executor";
@@ -119,6 +129,7 @@ interface DrawingViewProps {
   onSettings(patch: Partial<Settings>): void;
   onResolveConflict(id: string, reload: boolean): void;
   onLibraryChange(id: string, items: LibraryItems): void;
+  onOpenLink(id: string, link: string): void;
 }
 
 const DrawingView = memo(function DrawingView({
@@ -132,6 +143,7 @@ const DrawingView = memo(function DrawingView({
   onSettings,
   onResolveConflict,
   onLibraryChange,
+  onOpenLink,
 }: DrawingViewProps) {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   useEffect(() => {
@@ -156,6 +168,13 @@ const DrawingView = memo(function DrawingView({
           initialData={tab.initialData}
           onChange={(elements, appState, files) => onChange(tab.id, elements, appState, files)}
           onLibraryChange={(items) => onLibraryChange(tab.id, items)}
+          onLinkOpen={(element, event) => {
+            // Drill-down links open through the main process (web address -> browser, .excalidraw -> tab).
+            // Links to elements inside the drawing stay with Excalidraw.
+            if (!element.link || isElementLink(element.link)) return;
+            event.preventDefault();
+            onOpenLink(tab.id, element.link);
+          }}
           theme={theme}
           name={tab.title}
           UIOptions={UI_OPTIONS}
@@ -171,6 +190,24 @@ export function App() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeId, setActiveIdState] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<ExportFormat | undefined>(undefined);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [pagesOpen, setPagesOpen] = useState(() => localStorage.getItem("mydraw.pagesOpen") === "1");
+  const togglePages = useCallback(() => {
+    setPagesOpen((v) => {
+      localStorage.setItem("mydraw.pagesOpen", v ? "0" : "1");
+      return !v;
+    });
+  }, []);
+  const [lintOpen, setLintOpen] = useState(() => localStorage.getItem("mydraw.lintOpen") === "1");
+  const toggleLint = useCallback(() => {
+    setLintOpen((v) => {
+      localStorage.setItem("mydraw.lintOpen", v ? "0" : "1");
+      return !v;
+    });
+  }, []);
+  const paletteOpenRef = useRef(false);
   const [settings, setSettings] = useState<Settings | null>(null);
   const systemTheme = useSystemTheme();
   const theme = !settings || settings.theme === "system" ? systemTheme : settings.theme;
@@ -226,6 +263,7 @@ export function App() {
   }, []);
 
   const showToast = useCallback((text: string, error = false) => setToast({ text, error }), []);
+  const getActiveApi = useCallback(() => apis.current.get(activeRef.current), []);
   useEffect(() => {
     if (!toast) return;
     const t = window.setTimeout(() => setToast(null), toast.error ? 8000 : 4000);
@@ -681,6 +719,40 @@ export function App() {
     [addTab, setActive, showToast],
   );
 
+  /** Follow a drill-down link from the drawing in tab `id`. */
+  const onOpenLink = useCallback(
+    async (id: string, link: string) => {
+      try {
+        const r = await bridge.openLink(link, getTab(id)?.filePath ?? null);
+        if (r.type === "opened") await openFiles(r.files);
+        else if (r.type === "error") showToast(r.message, true);
+      } catch (e) {
+        showToast(`Could not follow the link: ${(e as Error).message}`, true);
+      }
+    },
+    [openFiles, showToast],
+  );
+
+  /** Link the selected shapes to a drawing chosen in a file dialog (relative path when it is nearby). */
+  const linkSelectionToDrawing = useCallback(async () => {
+    const api = apis.current.get(activeRef.current);
+    if (!api) return;
+    if (!selectedIds(api).length) return showToast("Select a shape first, then link it to a drawing.", true);
+    const picked = await bridge.pickDrawingForLink();
+    if (!picked) return;
+    const link = fileLink(getTab(activeRef.current)?.filePath ?? null, picked);
+    const n = setSelectionLink(api, link);
+    showToast(n ? `Linked to ${link}` : "Already linked there");
+  }, [showToast]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const clearSelectionLinks = useCallback(() => {
+    const api = apis.current.get(activeRef.current);
+    if (!api) return;
+    const n = setSelectionLink(api, null);
+    showToast(n ? `Removed ${n} link${n === 1 ? "" : "s"}` : "The selection has no links", !n);
+  }, [showToast]);
+
+
   const removeTab = useCallback(
     (id: string) => {
       const tab = getTab(id);
@@ -776,7 +848,18 @@ export function App() {
         case "saveAs":
           return void (await save(activeRef.current, true));
         case "export":
+          setExportFormat(undefined);
           if (apis.current.get(activeRef.current)) setExportOpen(true);
+          return;
+        case "commandPalette":
+          if (apis.current.get(activeRef.current)) setPaletteOpen(true);
+          return;
+        case "togglePages":
+          return togglePages();
+        case "toggleLint":
+          return toggleLint();
+        case "findReplace":
+          if (apis.current.get(activeRef.current)) setFindOpen(true);
           return;
         case "copyAs": {
           const api = apis.current.get(activeRef.current);
@@ -810,7 +893,7 @@ export function App() {
           return openSaveStencil();
       }
     },
-    [closeTab, newTab, openFiles, openSaveStencil, save, setActive, showToast, togglePanel],
+    [closeTab, newTab, openFiles, openSaveStencil, save, setActive, showToast, toggleLint, togglePages, togglePanel],
   );
 
   // Main process saves settings and broadcasts them back (settings:changed), which updates state.
@@ -949,9 +1032,38 @@ export function App() {
     ];
     // Excalidraw's own ⇧⌘E opens its export dialog; route it to ours.
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "e") {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const key = e.key.toLowerCase();
+      if (e.altKey && !e.shiftKey && e.code === "KeyP") {
+        // ⌥⌘P: page navigator.
         e.preventDefault();
+        togglePages();
+        return;
+      }
+      if (e.altKey && !e.shiftKey && e.code === "KeyL") {
+        // ⌥⌘L: diagram lint panel.
+        e.preventDefault();
+        toggleLint();
+        return;
+      }
+      if (e.altKey && !e.shiftKey && e.code === "KeyF") {
+        // ⌥⌘F: find & replace (⌘F stays Excalidraw's find).
+        e.preventDefault();
+        if (apis.current.get(activeRef.current)) setFindOpen(true);
+        return;
+      }
+      if (e.shiftKey && key === "e") {
+        e.preventDefault();
+        setExportFormat(undefined);
         if (apis.current.get(activeRef.current)) setExportOpen(true);
+      } else if (!e.altKey && ((e.shiftKey && key === "p") || (!e.shiftKey && key === "k"))) {
+        // ⇧⌘P always opens the palette. ⌘K does too, except with something selected, where
+        // Excalidraw uses it to edit the element's link.
+        const api = apis.current.get(activeRef.current);
+        if (!api) return;
+        if (key === "k" && Object.values(api.getAppState().selectedElementIds).some(Boolean)) return;
+        e.preventDefault();
+        setPaletteOpen((open) => !open);
       }
     };
     window.addEventListener("keydown", onKey, true);
@@ -1042,6 +1154,32 @@ export function App() {
       tabApiReady: (id: string) => !!apis.current.get(id),
       openExportDialog: () => setExportOpen(true),
       command: (cmd: MenuCommand) => onCommand(cmd),
+      paletteOpen: () => paletteOpenRef.current,
+      /** Set `link` on the first element of a type; returns its id. */
+      setLink: (type: string, link: string | null) => {
+        const a = api();
+        const el = a.getSceneElements().find((e) => e.type === type);
+        if (!el) return null;
+        a.updateScene({
+          elements: a.getSceneElementsIncludingDeleted().map((e) => (e.id === el.id ? { ...e, link, version: e.version + 1 } : e)),
+          captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        });
+        return el.id;
+      },
+      /** Screen position of the link badge of an element (top right corner, see Excalidraw's getLinkHandleFromCoords). */
+      linkBadge: (id: string) => {
+        const a = api();
+        const el = a.getSceneElements().find((e) => e.id === id);
+        if (!el) return null;
+        const st = a.getAppState();
+        const z = st.zoom.value;
+        const x = el.x + el.width + 8 / z;
+        const y = el.y - 8 / z;
+        return { x: (x + st.scrollX) * z + st.offsetLeft, y: (y + st.scrollY) * z + st.offsetTop };
+      },
+      findOpen: () => !!document.querySelector(".md-find"),
+      frameNames: () => (api() ? listFrames(api()).map((f) => f.name) : []),
+      appStateValue: (key: string) => (api()?.getAppState() as unknown as Record<string, unknown>)?.[key],
       library: () => libraryRef.current,
       insertStencil: (id: string) => {
         const item = libraryRef.current?.items.find((i) => i.id === id);
@@ -1127,6 +1265,7 @@ export function App() {
     };
   }, [insertItem, newTab, patchTab, save]);
 
+  paletteOpenRef.current = paletteOpen;
   const activeApi = apis.current.get(activeId);
   return (
     <div className={`md-app theme-${theme}`}>
@@ -1140,6 +1279,7 @@ export function App() {
         onTogglePanel={togglePanel}
       />
       <div className="md-main">
+      {pagesOpen && <PagesPanel api={activeApi} onClose={togglePages} />}
       <div className="md-content" ref={contentRef}>
         {tabs.map((t) => (
           <DrawingView
@@ -1154,10 +1294,12 @@ export function App() {
             onSettings={onSettings}
             onResolveConflict={onResolveConflict}
             onLibraryChange={onLibraryChange}
+            onOpenLink={onOpenLink}
           />
         ))}
         {styleHost && createPortal(<StyleSection api={apis.current.get(activeId)} tick={selTick} onToast={showToast} custom={customColor} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} />, styleHost)}
       </div>
+      {lintOpen && <LintPanel api={activeApi} onClose={toggleLint} />}
       {panelOpen && (
         <StencilPanel
           index={libraryIndex}
@@ -1180,6 +1322,7 @@ export function App() {
           api={activeApi}
           title={safeFileName(active.title)}
           filePath={active.filePath}
+          initialFormat={exportFormat}
           autoExport={(active.filePath && settings?.autoExport[active.filePath]) || null}
           onAutoExport={(format) => {
             const path = active.filePath;
@@ -1190,8 +1333,50 @@ export function App() {
             onSettings({ autoExport: next });
             if (format) void autoExport(activeApi, path, format); // write the image right away
           }}
-          onClose={() => setExportOpen(false)}
+          onClose={() => {
+            setExportOpen(false);
+            setExportFormat(undefined);
+          }}
           onDone={(msg) => showToast(msg)}
+        />
+      )}
+      {activeId && (
+        <QuickConnect
+          key={activeId}
+          tabId={activeId}
+          getApi={getActiveApi}
+          library={libraryIndex}
+          blocked={exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
+          onToast={showToast}
+        />
+      )}
+      {findOpen && activeApi && <FindReplace key={activeId} api={activeApi} onClose={() => setFindOpen(false)} onToast={showToast} />}
+      {paletteOpen && activeApi && (
+        <CommandPalette
+          onClose={() => {
+            setPaletteOpen(false);
+            // Excalidraw only handles shortcuts while focus is inside it: give it back now, before the
+            // chosen action runs, so a dialog or panel it opens keeps the focus it takes.
+            document.querySelector<HTMLElement>(`[data-md-tab="${activeRef.current}"] .excalidraw`)?.focus();
+          }}
+          items={buildPaletteItems({
+            api: activeApi,
+            settings,
+            tabs,
+            activeId,
+            library: libraryIndex,
+            command: onCommandSync,
+            exportAs: (format) => {
+              setExportFormat(format);
+              setExportOpen(true);
+            },
+            insertItem: (item) => void insertItem(item),
+            setActive,
+            toast: showToast,
+            onSettings,
+            linkSelection: () => void linkSelectionToDrawing(),
+            clearLinks: clearSelectionLinks,
+          })}
         />
       )}
       {saveSelection && (

@@ -10,7 +10,8 @@ const ALIASES: Record<string, string[]> = {
   notes: ["notes", "note", "description", "comment", "comments"],
 };
 
-function pick(n: GraphNode, field: string): string {
+/** A node's value for an inventory field (ip, hostname, notes), matching the aliases. */
+export function inventoryField(n: GraphNode, field: "ip" | "hostname" | "notes"): string {
   const wanted = ALIASES[field];
   for (const [k, v] of Object.entries(n.data)) if (wanted.includes(k.toLowerCase())) return v;
   return "";
@@ -22,9 +23,9 @@ export function inventoryRows(graph: SceneGraph): InventoryRow[] {
     kind: n.kind,
     type: n.type,
     zone: zonePath(graph, n.zone),
-    ip: pick(n, "ip"),
-    hostname: pick(n, "hostname"),
-    notes: pick(n, "notes"),
+    ip: inventoryField(n, "ip"),
+    hostname: inventoryField(n, "hostname"),
+    notes: inventoryField(n, "notes"),
   }));
 }
 

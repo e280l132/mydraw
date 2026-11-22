@@ -5,6 +5,7 @@ import { convertToExcalidrawElements, getCommonBounds, newElementWith } from "@e
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState } from "@excalidraw/excalidraw/types";
 import { boxFromBounds, connectorEndpoints, outlinePoint, type Box, type OutlineShape, type Point } from "../../../shared/geometry";
+import { linkProblem } from "../../../shared/links";
 import { requireColor } from "../../../shared/palettes";
 import { curvedPoints, ELBOW_GAP, elbowRoute, fixedPointFor, isOrthogonal, type Routing } from "../../../shared/routing";
 
@@ -236,6 +237,10 @@ export function styleDefaults(st: AppState, type: string): Loose {
 
 function withDefaults(sk: Loose, st: AppState): Loose {
   const out: Loose = { ...styleDefaults(st, String(sk.type)), ...sk };
+  if (typeof out.link === "string" && out.link) {
+    const bad = linkProblem(out.link);
+    if (bad) throw new Error(`${sk.type} "${sk.id ?? ""}": ${bad}`);
+  }
   for (const k of ["strokeColor", "backgroundColor"]) if (typeof out[k] === "string") out[k] = requireColor(out[k], k);
   const label = sk.label;
   if (typeof label === "string") out.label = { text: label };
@@ -718,6 +723,13 @@ export function applyUpdates(updates: unknown[], scene: readonly El[], st: AppSt
       if (k === "id" || k === "label" || k === "dx" || k === "dy" || k === "data" || k === "routing") continue;
       if (!UPDATABLE.has(k)) throw new Error(`"${k}" can't be updated here (use raw_update for other fields)`);
       patch[k] = (k === "strokeColor" || k === "backgroundColor") && typeof v === "string" ? requireColor(v, k) : v;
+    }
+    if ("link" in patch) {
+      if (patch.link === "" || patch.link === undefined) patch.link = null;
+      if (patch.link !== null) {
+        const bad = typeof patch.link === "string" ? linkProblem(patch.link) : "link must be a string (or null to remove it)";
+        if (bad) throw new Error(`element "${id}": ${bad}`);
+      }
     }
     if (typeof u.dx === "number") patch.x = (typeof patch.x === "number" ? patch.x : el.x) + u.dx;
     if (typeof u.dy === "number") patch.y = (typeof patch.y === "number" ? patch.y : el.y) + u.dy;

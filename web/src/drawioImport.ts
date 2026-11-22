@@ -2,6 +2,7 @@
 // the same builders as the agent tools: zones are mydraw zones (makeZone), labelled images are icon
 // nodes (makeIconNode), shapes/text/edges go through buildElements (bound arrows). Several pages
 // become frames stacked top to bottom. Used by the CLI (`mydraw convert x.drawio`).
+import { linkProblem } from "../../shared/links";
 import { convertToExcalidrawElements, newElementWith } from "@excalidraw/excalidraw";
 import type { AppState, BinaryFileData, DataURL } from "@excalidraw/excalidraw/types";
 import type { FileId } from "@excalidraw/excalidraw/element/types";
@@ -60,6 +61,16 @@ function zoneDepth(s: ImportShape, byId: Map<string, ImportShape>): number {
   return d;
 }
 
+/** draw.io links can be anything (mailto:, page ids, ...). Keep the ones mydraw can follow, drop the rest with a warning. */
+function keepLink(link: string | undefined | null, warnings: Set<string>): string | null {
+  if (!link) return null;
+  if (linkProblem(link)) {
+    warnings.add("dropped links that are not web addresses or .excalidraw drawings");
+    return null;
+  }
+  return link;
+}
+
 async function buildPage(page: ImportPage, st: AppState, ids: (id: string) => string, dy: number, warnings: Set<string>) {
   const font = st.currentItemFontFamily;
   const out: El[] = [];
@@ -114,7 +125,7 @@ async function buildPage(page: ImportPage, st: AppState, ids: (id: string) => st
     );
     const zone = zoneOf(s);
     if (!s.label) {
-      out.push({ ...image, customData: Object.keys(data(s, zone)).length ? data(s, zone) : undefined, link: s.link ?? null } as El);
+      out.push({ ...image, customData: Object.keys(data(s, zone)).length ? data(s, zone) : undefined, link: keepLink(s.link, warnings) } as El);
       bindable.add(s.id);
       continue;
     }
@@ -133,7 +144,7 @@ async function buildPage(page: ImportPage, st: AppState, ids: (id: string) => st
     const img = node.find((e) => e.type === "image")!;
     const ddx = s.x - img.x;
     const ddy = s.y + dy - img.y;
-    for (const e of node) out.push({ ...e, x: e.x + ddx, y: e.y + ddy, ...(e === node[0] && s.link ? { link: s.link } : {}) } as El);
+    for (const e of node) out.push({ ...e, x: e.x + ddx, y: e.y + ddy, ...(e === node[0] && keepLink(s.link, warnings) ? { link: keepLink(s.link, warnings) } : {}) } as El);
     bindable.add(s.id);
   }
 
@@ -147,7 +158,7 @@ async function buildPage(page: ImportPage, st: AppState, ids: (id: string) => st
       opacity: s.opacity !== undefined ? Math.max(0, Math.min(100, s.opacity)) : undefined,
       angle: s.rotation ? (s.rotation * Math.PI) / 180 : undefined,
       customData: data(s, zone),
-      link: s.link ?? null,
+      link: keepLink(s.link, warnings),
     };
     if (s.kind === "text") {
       if (!s.label) continue;

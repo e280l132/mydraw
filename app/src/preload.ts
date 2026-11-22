@@ -61,6 +61,9 @@ const bridge: MydrawBridge = {
   onPackProgress: (cb) => subscribe("library:pack-progress", cb),
   onAgentCommand: (cb) => subscribe("agent:command", cb),
   agentReply: (reply) => ipcRenderer.send("agent:reply", reply),
+  applyTemplate: (name) => ipcRenderer.invoke("ui:apply-template", name),
+  openLink: (link, baseFile) => ipcRenderer.invoke("link:open", link, baseFile),
+  pickDrawingForLink: () => ipcRenderer.invoke("link:pick-drawing"),
 };
 
 contextBridge.exposeInMainWorld("mydraw", bridge);

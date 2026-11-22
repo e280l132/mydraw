@@ -98,6 +98,21 @@ export function AppMenu({ settings, onCommand, onSettings }: Props) {
         </MainMenu.Group>
       )}
 
+      <MainMenu.Group title="Commands">
+        <MainMenu.Item onSelect={() => onCommand({ type: "commandPalette" })} shortcut="⌘K">
+          Command palette…
+        </MainMenu.Item>
+        <MainMenu.Item onSelect={() => onCommand({ type: "togglePages" })} shortcut="⌥⌘P">
+          Show / hide pages panel
+        </MainMenu.Item>
+        <MainMenu.Item onSelect={() => onCommand({ type: "toggleLint" })} shortcut="⌥⌘L">
+          Show / hide diagram lint
+        </MainMenu.Item>
+        <MainMenu.Item onSelect={() => onCommand({ type: "findReplace" })} shortcut="⌥⌘F">
+          Find and replace…
+        </MainMenu.Item>
+      </MainMenu.Group>
+
       <MainMenu.Group title="Stencils">
         <MainMenu.Item onSelect={() => onCommand({ type: "toggleStencils" })} shortcut="⇧⌘Y">
           Show / hide stencils panel

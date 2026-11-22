@@ -5,6 +5,7 @@ import { isPagedFormat } from "../../shared/agent";
 import { toDrawio, type DrawioEl } from "../../shared/drawioWriter";
 import { buildHtml } from "../../shared/htmlExport";
 import { buildPdfHtml, fitOnSlide, planPdfPages, SLIDE_SIZES, svgSize, type PdfPageSize, type SlideSize } from "../../shared/pdfLayout";
+import { byPosition } from "../../shared/pageOrder";
 import { inventoryRows, toCsv, toMarkdownTable } from "../../shared/inventory";
 import { toMermaid } from "../../shared/mermaidWriter";
 import { extractGraph, type SceneEl } from "../../shared/sceneGraph";
@@ -75,10 +76,10 @@ export interface FrameInfo {
   name: string;
 }
 
-/** Frames in reading order, named like Excalidraw shows them ("Frame 1" when unnamed). */
+/** Frames in page order (position on the canvas, see shared/pageOrder.ts), named like Excalidraw shows them ("Frame 1" when unnamed). */
 export function listFrames(api: ExcalidrawImperativeAPI): FrameInfo[] {
   const frames = (api.getSceneElements() as Live[]).filter((e) => e.type === "frame" || e.type === "magicframe");
-  frames.sort((a, b) => Math.round(a.y / 40) - Math.round(b.y / 40) || a.x - b.x);
+  frames.sort(byPosition);
   return frames.map((f, i) => ({ id: f.id, name: (f as { name?: string | null }).name?.trim() || `Frame ${i + 1}` }));
 }
 
