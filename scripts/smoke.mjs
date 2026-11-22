@@ -1103,11 +1103,14 @@ await call("add_elements", {
 });
 const qcHandles = () => page.$$eval(".md-qc-handle", (els) => els.map((e) => e.dataset.side).sort());
 const hoverQa = async () => {
+  await call("select", { ids: [] }); // handles of a selected shape would show at once
   await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
   const c = await t((x) => x.toScreen(380, 400));
   await page.mouse.move(c.x - 40, c.y + 5);
   await page.mouse.move(c.x, c.y);
-  await waitFor(async () => (await qcHandles()).length === 4, "4 quick connect handles on hover");
+  await sleep(250);
+  assert.equal((await qcHandles()).length, 0, "passing over a shape shows no handles: the pointer has to rest on it");
+  await waitFor(async () => (await qcHandles()).length === 4, "4 quick connect handles once the pointer rests on the shape");
 };
 await hoverQa();
 assert.deepEqual(await qcHandles(), ["bottom", "left", "right", "top"]);
@@ -1164,6 +1167,95 @@ await call("undo");
 await waitFor(async () => (await t((x) => x.elementCount())) === qcCount2, "one undo removes the icon node");
 scene = await call("get_scene");
 assert.equal(el(qz.zone).height, zoneBefore.height, "undo shrinks the zone back");
+
+step("Phase 7: quick connect on stencils and groups; selection shows handles; Option-click copies without an arrow");
+await call("new_drawing", { title: "QC stencil" });
+const clickRightHandle = (mods) => page.click('.md-qc-handle[data-side="right"]', mods ? { modifiers: mods } : {});
+// A stencil from the panel is a bare image + a free caption in one group (not an icon node).
+await t((x, id) => x.insertStencil(id), routerId);
+await waitFor(async () => (await t((x) => x.elementCount())) === 2, "stencil inserted (image + caption)");
+await sleep(200);
+scene = await call("get_scene");
+const stImg = scene.elements.find((e) => e.type === "image");
+const stCap = scene.elements.find((e) => e.type === "text");
+assert.ok(stImg && stCap, "image and caption");
+await waitFor(async () => (await qcHandles()).length === 4, "the selected stencil shows its handles at once (no rest needed)");
+const stCount = await t((x) => x.elementCount());
+
+// Connected copy to the right: image + caption + a bound arrow between the two images.
+await clickRightHandle();
+await waitFor(async () => (await t((x) => x.elementCount())) === stCount + 3, "copy (image + caption) and arrow added");
+scene = await call("get_scene");
+let stArrow = scene.elements.find((e) => e.type === "arrow");
+assert.equal(stArrow.from, stImg.id, "arrow starts at the stencil's image");
+const stCopy = scene.elements.find((e) => e.type === "image" && e.id !== stImg.id);
+assert.equal(stArrow.to, stCopy.id, "arrow ends at the copy's image");
+assert.equal((await call("get_element", { id: stCopy.id }))[0].element.fileId, (await call("get_element", { id: stImg.id }))[0].element.fileId, "same icon");
+assert.ok(stCopy.x >= stImg.x + stImg.width + 40, "copy is to the right");
+await call("undo");
+await waitFor(async () => (await t((x) => x.elementCount())) === stCount, "one undo removes the copy and the arrow");
+
+// Bottom: the arrow starts at the caption, so it doesn't run through the text.
+await call("select", { ids: [stImg.id, stCap.id] });
+await waitFor(async () => (await qcHandles()).length === 4, "handles again");
+await page.click('.md-qc-handle[data-side="bottom"]');
+await waitFor(async () => (await t((x) => x.elementCount())) === stCount + 3, "bottom copy added");
+scene = await call("get_scene");
+stArrow = scene.elements.find((e) => e.type === "arrow");
+assert.equal(stArrow.from, stCap.id, "bottom arrow leaves from the caption");
+assert.equal(el(stArrow.to).type, "image", "and arrives at the copy's image");
+await call("undo");
+await waitFor(async () => (await t((x) => x.elementCount())) === stCount, "undone");
+
+// Option-click: a copy only, no arrow.
+await call("select", { ids: [stImg.id, stCap.id] });
+await waitFor(async () => (await qcHandles()).length === 4, "handles for the Option test");
+await clickRightHandle(["Alt"]);
+await waitFor(async () => (await t((x) => x.elementCount())) === stCount + 2, "Option-click adds image + caption only");
+scene = await call("get_scene");
+assert.equal(scene.elements.filter((e) => e.type === "arrow").length, 0, "no arrow");
+assert.equal(scene.elements.filter((e) => e.type === "image").length, 2);
+assert.equal(await t((x) => x.selectedCount()), 2, "the new copy is selected");
+await call("undo");
+await waitFor(async () => (await t((x) => x.elementCount())) === stCount, "one undo removes the plain copy");
+
+// A group of shapes is one unit: copied together, kept as a group.
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "g1", x: 300, y: 600, width: 120, height: 60, label: "One" },
+    { type: "rectangle", id: "g2", x: 440, y: 600, width: 120, height: 60, label: "Two" },
+  ],
+});
+await call("select", { ids: ["g1", "g2"] });
+await sleep(400);
+assert.equal((await qcHandles()).length, 0, "two separate shapes are two units: no handles");
+await call("group", { ids: ["g1", "g2"] }); // same selected ids, but now one unit
+await waitFor(async () => (await qcHandles()).length === 4, "grouping the selection shows handles");
+const gCount = await t((x) => x.elementCount());
+// Connected: the arrow leaves from the member on the clicked side, not through the other one.
+await clickRightHandle();
+await waitFor(async () => (await t((x) => x.elementCount())) === gCount + 5, "group copied (2 shapes, 2 labels) plus an arrow");
+scene = await call("get_scene");
+const gArrow = scene.elements.find((e) => e.type === "arrow");
+assert.equal(gArrow.from, "g2", "arrow starts at the right-hand member");
+const gCopies = scene.elements.filter((e) => e.type === "rectangle" && e.id !== "g1" && e.id !== "g2").sort((a, b) => a.x - b.x);
+assert.equal(gArrow.to, gCopies[0].id, "and ends at the left-hand member of the copy");
+await call("undo");
+await waitFor(async () => (await t((x) => x.elementCount())) === gCount, "group copy undone");
+await call("select", { ids: ["g1", "g2"] });
+await waitFor(async () => (await qcHandles()).length === 4, "handles again");
+await clickRightHandle(["Alt"]);
+await waitFor(async () => (await t((x) => x.elementCount())) === gCount + 4, "both shapes and both labels copied");
+scene = await call("get_scene");
+const copies = scene.elements.filter((e) => e.type === "rectangle" && e.id !== "g1" && e.id !== "g2");
+assert.equal(copies.length, 2);
+assert.ok(copies[0].groupIds?.length && copies[0].groupIds[0] === copies[1].groupIds?.[0], "the copies are a group of their own");
+assert.ok(!copies[0].groupIds.includes(el("g1").groupIds[0]), "...not the original's group");
+await call("undo");
+await waitFor(async () => (await t((x) => x.elementCount())) === gCount, "undone");
+// Clearing the selection hides the handles again.
+await call("select", { ids: [] });
+await waitFor(async () => (await qcHandles()).length === 0, "no selection, no handles");
 
 step("Phase 7: diagram lint (⌥⌘L): rules over MCP, fix:true is one undo step, panel rows select and fix");
 await call("new_drawing", { title: "Lint" });

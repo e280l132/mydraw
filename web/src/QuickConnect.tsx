@@ -1,12 +1,14 @@
-// Quick connect (draw.io style): hovering a shape shows four "+" handles around it. Click one to add
-// a connected copy on that side; Shift-click (or right-click) to pick a stencil for the new node.
-// The handles are a DOM overlay over the active tab's canvas, never part of the scene.
+// Quick connect (draw.io style): four "+" handles around the selected shape/stencil/group, or around
+// one the pointer rests on for a moment (passing over things shows nothing). Click a handle to add a
+// connected copy on that side; Option-click adds a copy with no arrow; Shift-click (or right-click)
+// picks a stencil for the new node. The handles are a DOM overlay over the active tab's canvas,
+// never part of the scene.
 import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from "react";
-import { getCommonBounds, viewportCoordsToSceneCoords } from "@excalidraw/excalidraw";
+import { viewportCoordsToSceneCoords } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { libraryFileUrl, searchItems, type LibraryIndex, type LibraryItem } from "../../shared/library";
 import { QUICK_SIDES, type QuickSide } from "../../shared/quickConnect";
-import { addConnectedCopy, addConnectedStencil, isQuickSource, quickSourceAt } from "./quickConnectOps";
+import { addConnectedCopy, addConnectedStencil, quickSourceAt, selectedUnit, unitById } from "./quickConnectOps";
 
 interface Props {
   tabId: string;
@@ -23,6 +25,12 @@ const HANDLE_OFFSET_SELECTED = 42;
 /** The pointer may stray this far (screen px) outside the shape on its way to a handle. */
 const HOVER_SLACK = HANDLE_OFFSET_SELECTED + 18;
 const MAX_RESULTS = 8;
+/** The pointer must rest on a shape this long (ms) before its handles appear (selected shapes show them at once). */
+const HOVER_DELAY_MS = 600;
+/** Pointer travel (screen px) that counts as moving rather than resting. */
+const REST_JITTER = 6;
+/** How often the selection is checked (ms). */
+const SELECTION_POLL_MS = 120;
 
 interface View {
   id: string;
@@ -76,14 +84,21 @@ function suppressed(api: ExcalidrawImperativeAPI): boolean {
 }
 
 function viewOf(api: ExcalidrawImperativeAPI, id: string, overlay: Element | null): View | null {
-  const el = api.getSceneElements().find((e) => e.id === id);
-  if (!isQuickSource(el) || suppressed(api)) return null;
+  const unit = unitById(api, id);
+  if (!unit || suppressed(api)) return null;
   const st = api.getAppState();
-  const [x1, y1, x2, y2] = getCommonBounds([el]);
   const z = st.zoom.value;
   const sx = (x: number) => (x + st.scrollX) * z + st.offsetLeft;
   const sy = (y: number) => (y + st.scrollY) * z + st.offsetTop;
-  const v: View = { id, x1: sx(x1), y1: sy(y1), x2: sx(x2), y2: sy(y2), selected: !!st.selectedElementIds[id], sides: [] };
+  const v: View = {
+    id,
+    x1: sx(unit.box.x),
+    y1: sy(unit.box.y),
+    x2: sx(unit.box.x + unit.box.width),
+    y2: sy(unit.box.y + unit.box.height),
+    selected: unit.members.some((m) => st.selectedElementIds[m.id]),
+    sides: [],
+  };
   v.sides = QUICK_SIDES.filter((side) => onCanvas(handlePoint(v, side), overlay));
   return v.sides.length ? v : null;
 }
@@ -113,10 +128,16 @@ function handlePoint(v: View, side: QuickSide): { x: number; y: number } {
 const SIDE_NAME: Record<QuickSide, string> = { top: "above", right: "to the right", bottom: "below", left: "to the left" };
 
 export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props) {
+  /** The unit the pointer has rested on (handles shown). */
   const [hoverId, setHoverId] = useState<string | null>(null);
+  /** The one unit that is selected (handles shown). */
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [alt, setAlt] = useState(false);
   const [view, setView] = useState<View | null>(null);
   const [search, setSearch] = useState<Search | null>(null);
   const hoverRef = useRef<string | null>(null);
+  const candidateRef = useRef<{ id: string; timer: number; at: { x: number; y: number } } | null>(null);
+  const pointRef = useRef<{ x: number; y: number } | null>(null);
   const viewRef = useRef<View | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
@@ -126,6 +147,12 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
   const setHover = useCallback((id: string | null) => {
     hoverRef.current = id;
     setHoverId(id);
+  }, []);
+
+  const cancelCandidate = useCallback(() => {
+    if (!candidateRef.current) return;
+    window.clearTimeout(candidateRef.current.timer);
+    candidateRef.current = null;
   }, []);
 
   const focusCanvas = useCallback(() => {
@@ -139,15 +166,37 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
     const onMove = (e: PointerEvent) => {
       const api = getApi();
       if (!api || blockedRef.current || e.buttons !== 0 || !(e.target instanceof HTMLCanvasElement)) {
+        cancelCandidate();
         if (hoverRef.current) setHover(null);
         return;
       }
       const p = viewportCoordsToSceneCoords({ clientX: e.clientX, clientY: e.clientY }, api.getAppState());
+      pointRef.current = p;
       const src = quickSourceAt(api, p.x, p.y);
       if (src) {
-        if (src.id !== hoverRef.current) setHover(src.id);
+        if (src.id === hoverRef.current) return cancelCandidate();
+        // Another unit: the handles of the one we left go, and the new one's wait for the pointer to rest.
+        if (hoverRef.current) setHover(null);
+        const at = { x: e.clientX, y: e.clientY };
+        const waiting = candidateRef.current;
+        // Still resting on the same unit (small jitter is fine): keep waiting. Travelling restarts the wait.
+        if (waiting?.id === src.id && Math.hypot(at.x - waiting.at.x, at.y - waiting.at.y) <= REST_JITTER) return;
+        cancelCandidate();
+        const id = src.id;
+        candidateRef.current = {
+          id,
+          at,
+          timer: window.setTimeout(() => {
+            candidateRef.current = null;
+            const a = getApi();
+            const pt = pointRef.current;
+            if (!a || !pt || blockedRef.current) return;
+            if (quickSourceAt(a, pt.x, pt.y)?.id === id) setHover(id); // still there
+          }, HOVER_DELAY_MS),
+        };
         return;
       }
+      cancelCandidate();
       // Off the shape: keep the handles while the pointer is still near it (on its way to a handle).
       const v = viewRef.current;
       const near =
@@ -160,10 +209,12 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
       if (!near && hoverRef.current) setHover(null);
     };
     const onDown = () => {
+      cancelCandidate();
       if (hoverRef.current) setHover(null);
     };
     const onLeave = (e: PointerEvent) => {
       if (e.relatedTarget instanceof Node && overlayRef.current?.contains(e.relatedTarget)) return;
+      cancelCandidate();
       if (hoverRef.current) setHover(null);
     };
     root.addEventListener("pointermove", onMove, { capture: true, passive: true });
@@ -173,12 +224,54 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
       root.removeEventListener("pointermove", onMove, { capture: true });
       root.removeEventListener("pointerdown", onDown, { capture: true });
       root.removeEventListener("pointerleave", onLeave);
+      cancelCandidate();
     };
-  }, [tabId, getApi, setHover]);
+  }, [tabId, getApi, setHover, cancelCandidate]);
+
+  // The selected unit shows its handles at once. Polled (cheaply) because Excalidraw has no selection event.
+  useEffect(() => {
+    let key = "";
+    const poll = () => {
+      const api = getApi();
+      const sel = api && !blockedRef.current ? api.getAppState().selectedElementIds : null;
+      // Ids plus their groups: grouping or ungrouping the selection leaves the ids alone but changes the unit.
+      const k = api && sel && Object.keys(sel).length
+        ? api
+            .getSceneElements()
+            .filter((e) => sel[e.id])
+            .map((e) => `${e.id}:${e.groupIds.join("/")}`)
+            .sort()
+            .join(",")
+        : "";
+      if (k === key) return;
+      key = k;
+      setSelectedId(api && k ? (selectedUnit(api)?.id ?? null) : null);
+    };
+    poll();
+    const timer = window.setInterval(poll, SELECTION_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [getApi]);
+
+  // Option turns the "+" into "copy" (a copy without an arrow).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => setAlt(e.altKey);
+    const off = () => setAlt(false);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKey);
+    window.addEventListener("blur", off);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKey);
+      window.removeEventListener("blur", off);
+    };
+  }, []);
+
+  // Whose handles to show: the unit the pointer rests on, else the selected one.
+  const activeId = hoverId ?? selectedId;
 
   // While handles are up, follow scrolling/zooming/edits and hide them when Excalidraw gets busy.
   useEffect(() => {
-    if (!hoverId || blocked) {
+    if (!activeId || blocked) {
       viewRef.current = null;
       setView(null);
       return;
@@ -187,7 +280,7 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
     let key = "";
     const tick = () => {
       const api = getApi();
-      const v = api ? viewOf(api, hoverId, overlayRef.current) : null;
+      const v = api ? viewOf(api, activeId, overlayRef.current) : null;
       const k = v ? `${v.x1}:${v.y1}:${v.x2}:${v.y2}:${v.selected}:${v.sides.join()}` : "";
       if (k !== key) {
         key = k;
@@ -198,15 +291,15 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
     };
     tick();
     return () => cancelAnimationFrame(frame);
-  }, [hoverId, blocked, getApi]);
+  }, [activeId, blocked, getApi]);
 
-  const connectCopy = (side: QuickSide) => {
+  const connectCopy = (side: QuickSide, connect: boolean) => {
     const api = getApi();
-    const id = hoverRef.current;
+    const id = viewRef.current?.id;
     if (!api || !id) return;
     setHover(null);
     try {
-      if (!addConnectedCopy(api, id, side)) onToast("That shape can't be connected from here.", true);
+      if (!addConnectedCopy(api, id, side, { connect })) onToast("That shape can't be copied from here.", true);
     } catch (e) {
       onToast(`Quick connect failed: ${(e as Error).message}`, true);
     }
@@ -214,7 +307,7 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
   };
 
   const openSearch = (side: QuickSide, at: { x: number; y: number }) => {
-    const id = hoverRef.current;
+    const id = viewRef.current?.id;
     if (!id) return;
     setHover(null);
     setSearch({ sourceId: id, side, x: at.x, y: at.y });
@@ -264,14 +357,14 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
               data-side={side}
               tabIndex={-1}
               style={{ left: p.x, top: p.y }}
-              title={`Add a connected copy ${SIDE_NAME[side]}\nShift-click or right-click: pick a stencil`}
-              aria-label={`Add a connected copy ${SIDE_NAME[side]}`}
+              title={`Click: add a connected copy ${SIDE_NAME[side]}\nOption-click: add a copy, no arrow\nShift-click or right-click: pick a stencil`}
+              aria-label={alt ? `Add a copy ${SIDE_NAME[side]}, no arrow` : `Add a connected copy ${SIDE_NAME[side]}`}
               onPointerDown={(e) => e.stopPropagation()}
               onMouseDown={(e) => e.preventDefault() /* keep focus on the canvas */}
               onClick={(e) => {
                 e.stopPropagation();
                 if (e.shiftKey) openSearch(side, p);
-                else connectCopy(side);
+                else connectCopy(side, !e.altKey);
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
@@ -279,9 +372,16 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
                 openSearch(side, p);
               }}
             >
-              <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-                <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
+              {alt ? (
+                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" data-icon="copy">
+                  <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                  <path d="M10.5 3.5h-6a1 1 0 0 0-1 1v6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" data-icon="plus">
+                  <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              )}
             </button>
           );
         })}

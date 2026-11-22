@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boxesOverlap, growToContain, quickConnectBox, QUICK_GAP } from "../shared/quickConnect";
+import { boxesOverlap, growToContain, OPPOSITE_SIDE, pickAnchor, pickPrimary, quickConnectBox, QUICK_GAP, unionBox } from "../shared/quickConnect";
 
 const src = { x: 100, y: 100, width: 160, height: 80 };
 const size = { width: 160, height: 80 };
@@ -79,5 +79,68 @@ describe("growToContain", () => {
   });
   it("grows to the left and top, keeping the far edges", () => {
     expect(growToContain(zone, { x: -50, y: 10, width: 60, height: 60 }, pad)).toEqual({ x: -70, y: -30, width: 370, height: 230 });
+  });
+});
+
+describe("units: pickPrimary / pickAnchor", () => {
+  const shape = { id: "s", type: "rectangle", x: 0, y: 0, width: 160, height: 80 };
+  const image = { id: "img", type: "image", x: 0, y: 0, width: 64, height: 64 };
+  const caption = { id: "cap", type: "text", x: -10, y: 70, width: 84, height: 18 };
+  const label = { id: "lbl", type: "text", x: 20, y: 30, width: 60, height: 18, containerId: "s" };
+
+  it("takes the biggest shape or image as the main element", () => {
+    expect(pickPrimary([label, shape])?.id).toBe("s");
+    expect(pickPrimary([caption, image])?.id).toBe("img");
+    expect(pickPrimary([image, shape])?.id).toBe("s");
+  });
+
+  it("falls back to a free text, never to text inside a shape", () => {
+    expect(pickPrimary([caption])?.id).toBe("cap");
+    expect(pickPrimary([label])).toBeNull();
+    expect(pickPrimary([])).toBeNull();
+  });
+
+  it("binds a stencil's caption on the bottom side and the image on the others", () => {
+    const stencil = [image, caption];
+    expect(pickAnchor(stencil, "bottom")?.id).toBe("cap");
+    for (const side of ["top", "left", "right"] as const) expect(pickAnchor(stencil, side)?.id).toBe("img");
+  });
+
+  it("uses the shape for every side when its label is inside it", () => {
+    for (const side of ["top", "right", "bottom", "left"] as const) expect(pickAnchor([shape, label], side)?.id).toBe("s");
+  });
+
+  it("ignores text that is not below the main element", () => {
+    const above = { id: "above", type: "text", x: 0, y: -30, width: 60, height: 18 };
+    expect(pickAnchor([image, above], "bottom")?.id).toBe("img");
+  });
+
+  it("anchors a group of shapes on the member on the clicked side", () => {
+    const left = { id: "l", type: "rectangle", x: 0, y: 0, width: 120, height: 60 };
+    const right = { id: "r", type: "rectangle", x: 140, y: 0, width: 120, height: 60 };
+    const lower = { id: "d", type: "rectangle", x: 0, y: 100, width: 120, height: 60 };
+    const g = [left, right];
+    expect(pickAnchor(g, "right")?.id).toBe("r");
+    expect(pickAnchor(g, "left")?.id).toBe("l");
+    expect(pickAnchor([left, lower], "bottom")?.id).toBe("d");
+    expect(pickAnchor([left, lower], "top")?.id).toBe("l");
+  });
+
+  it("breaks ties by closeness to the middle of the side", () => {
+    const a = { id: "a", type: "rectangle", x: 0, y: 0, width: 100, height: 40 };
+    const b = { id: "b", type: "rectangle", x: 0, y: 50, width: 100, height: 40 };
+    const c = { id: "c", type: "rectangle", x: 0, y: 100, width: 100, height: 40 };
+    expect(pickAnchor([a, b, c], "right")?.id).toBe("b");
+  });
+
+  it("flips sides", () => {
+    expect(OPPOSITE_SIDE).toEqual({ top: "bottom", right: "left", bottom: "top", left: "right" });
+  });
+});
+
+describe("unionBox", () => {
+  it("is the box around all boxes", () => {
+    expect(unionBox([{ x: 0, y: 0, width: 10, height: 10 }, { x: 20, y: -5, width: 10, height: 10 }])).toEqual({ x: 0, y: -5, width: 30, height: 15 });
+    expect(unionBox([])).toBeNull();
   });
 });

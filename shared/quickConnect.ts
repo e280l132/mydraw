@@ -84,3 +84,75 @@ export function growToContain(outer: Box, inner: Box, pad: Padding): Box | null 
   if (x1 === outer.x && y1 === outer.y && x2 === outer.x + outer.width && y2 === outer.y + outer.height) return null;
   return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
 }
+
+// ---------- units: what quick connect starts from ----------
+// A "unit" is one thing as the user sees it: a shape, an icon node, a stencil from the Stencils
+// panel (a bare image plus an optional free caption), or a group of elements. The arrow binds to one
+// element of the unit (the anchor); the whole unit is what gets copied and what the box is measured on.
+
+/** The bits of an element the anchor choice needs. */
+export interface UnitEl {
+  id: string;
+  type: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Set for text that sits inside a shape (it is part of that shape, never an anchor). */
+  containerId?: string | null;
+}
+
+const BODY_TYPES = new Set(["rectangle", "ellipse", "diamond", "image"]);
+
+export const OPPOSITE_SIDE: Record<QuickSide, QuickSide> = { top: "bottom", right: "left", bottom: "top", left: "right" };
+
+/** The main element of a unit: the biggest shape or image (first on ties); else the biggest free text. */
+export function pickPrimary<T extends UnitEl>(members: readonly T[]): T | null {
+  let best: T | null = null;
+  for (const m of members) {
+    if (!BODY_TYPES.has(m.type)) continue;
+    if (!best || m.width * m.height > best.width * best.height) best = m;
+  }
+  if (best) return best;
+  for (const m of members) {
+    if (m.type !== "text" || m.containerId) continue;
+    if (!best || m.width * m.height > best.width * best.height) best = m;
+  }
+  return best;
+}
+
+/**
+ * The element an arrow on `side` of the unit binds to. Usually the main element; but a stencil's
+ * free caption hangs below its image, so the bottom side binds to the caption (an arrow from the
+ * image would run through the text).
+ */
+export function pickAnchor<T extends UnitEl>(members: readonly T[], side: QuickSide): T | null {
+  const primary = pickPrimary(members);
+  if (!primary) return null;
+  const bodies = members.filter((m) => BODY_TYPES.has(m.type));
+  if (side === "bottom" && primary.type !== "text") {
+    const caption = members
+      .filter((m) => m.type === "text" && !m.containerId && m.y >= primary.y + primary.height / 2)
+      .sort((a, b) => b.y + b.height - (a.y + a.height))[0];
+    if (caption) return caption;
+  }
+  if (bodies.length < 2) return primary;
+  // A group of several shapes: the member on the clicked side (the one nearest the middle of that
+  // side on ties), so the arrow doesn't cross the others.
+  const all = unionBox(bodies)!;
+  const cx = all.x + all.width / 2;
+  const cy = all.y + all.height / 2;
+  const edge = (m: T) => (side === "right" ? m.x + m.width : side === "left" ? -m.x : side === "bottom" ? m.y + m.height : -m.y);
+  const off = (m: T) => (side === "left" || side === "right" ? Math.abs(m.y + m.height / 2 - cy) : Math.abs(m.x + m.width / 2 - cx));
+  return [...bodies].sort((a, b) => edge(b) - edge(a) || off(a) - off(b))[0];
+}
+
+/** Smallest box containing all `boxes` (null for none). */
+export function unionBox(boxes: readonly Box[]): Box | null {
+  if (!boxes.length) return null;
+  const x1 = Math.min(...boxes.map((b) => b.x));
+  const y1 = Math.min(...boxes.map((b) => b.y));
+  const x2 = Math.max(...boxes.map((b) => b.x + b.width));
+  const y2 = Math.max(...boxes.map((b) => b.y + b.height));
+  return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+}
