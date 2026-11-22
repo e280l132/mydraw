@@ -464,3 +464,53 @@ export function crossesBox(points: readonly Point[], b: Box, inset = 1): boolean
   }
   return false;
 }
+
+/**
+ * Ports for a link from `from`'s `fromSide` to `to`'s `toSide`. When the two sides face each other
+ * and the boxes overlap across (side by side at about the same height, or stacked), both ports
+ * slide onto one line so the arrow is straight instead of a little jog between two mid-points:
+ * - `explicit` (the user aimed at a spot on the target): the source port lines up with that spot,
+ *   if the spot is within the overlap (or within a few px of it);
+ * - otherwise: the source's middle when it is within the overlap, else the target's middle, else
+ *   the middle of the overlap.
+ * Otherwise the usual ports: the source side's middle, the target side at `toRatio`.
+ */
+export function alignedPorts(
+  from: Box,
+  fromSide: Side,
+  to: Box,
+  toSide: Side,
+  toRatio: number,
+  opts: { explicit: boolean; gap: number },
+): { start: Point; end: Point; straight: boolean } {
+  const start = portPoint(from, fromSide, 0.5, opts.gap);
+  const end = portPoint(to, toSide, toRatio, opts.gap);
+  const facing =
+    (fromSide === "right" && toSide === "left" && to.x >= from.x + from.width) ||
+    (fromSide === "left" && toSide === "right" && to.x + to.width <= from.x) ||
+    (fromSide === "bottom" && toSide === "top" && to.y >= from.y + from.height) ||
+    (fromSide === "top" && toSide === "bottom" && to.y + to.height <= from.y);
+  if (!facing) return { start, end, straight: false };
+  const horizontal = fromSide === "left" || fromSide === "right";
+  // Overlap across the direction of travel.
+  const lo = horizontal ? Math.max(from.y, to.y) : Math.max(from.x, to.x);
+  const hi = horizontal ? Math.min(from.y + from.height, to.y + to.height) : Math.min(from.x + from.width, to.x + to.width);
+  if (hi - lo < 4) return { start, end, straight: false };
+  const inset = Math.min(6, (hi - lo) / 2);
+  const inside = (v: number) => v >= lo + inset && v <= hi - inset;
+  const clamp = (v: number) => Math.min(hi - inset, Math.max(lo + inset, v));
+  const srcMid = horizontal ? start.y : start.x;
+  const tgtPort = horizontal ? end.y : end.x;
+  let c: number;
+  if (opts.explicit) {
+    // Respect the spot the user aimed at; only straighten when it is (nearly) inside the overlap.
+    if (Math.abs(clamp(tgtPort) - tgtPort) > 8) return { start, end, straight: false };
+    c = clamp(tgtPort);
+  } else {
+    const tgtMid = horizontal ? to.y + to.height / 2 : to.x + to.width / 2;
+    c = inside(srcMid) ? srcMid : inside(tgtMid) ? tgtMid : (lo + hi) / 2;
+  }
+  return horizontal
+    ? { start: { x: start.x, y: c }, end: { x: end.x, y: c }, straight: true }
+    : { start: { x: c, y: start.y }, end: { x: c, y: end.y }, straight: true };
+}

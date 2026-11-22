@@ -204,3 +204,45 @@ describe("fixedSegmentsFor", () => {
     expect(fixedSegmentsFor([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }])).toEqual([]);
   });
 });
+
+describe("alignedPorts", async () => {
+  const { alignedPorts } = await import("../shared/avoidRoute");
+  const left = { x: 0, y: 0, width: 64, height: 64 };
+  const right = { x: 200, y: 6, width: 64, height: 64 }; // 6px lower: two mid-points would need a jog
+
+  it("lines up side-by-side boxes so the arrow is straight (source middle when it is in the overlap)", () => {
+    const p = alignedPorts(left, "right", right, "left", 0.5, { explicit: false, gap: 5 });
+    expect(p.straight).toBe(true);
+    expect(p.start).toEqual({ x: 69, y: 32 });
+    expect(p.end).toEqual({ x: 195, y: 32 });
+    const r = routeAround({ start: p.start, startSide: "right", end: p.end, endSide: "left", startBox: left, endBox: right, obstacles: [] });
+    expect(r.points).toHaveLength(2);
+  });
+
+  it("works for stacked boxes too", () => {
+    const below = { x: 10, y: 200, width: 64, height: 64 };
+    const p = alignedPorts(left, "bottom", below, "top", 0.5, { explicit: false, gap: 5 });
+    expect(p.straight).toBe(true);
+    expect(p.start.x).toBe(p.end.x);
+  });
+
+  it("follows a spot the user aimed at when it is within the overlap", () => {
+    const p = alignedPorts(left, "right", right, "left", 0.25, { explicit: true, gap: 5 });
+    expect(p.straight).toBe(true);
+    expect(p.start.y).toBe(6 + 64 * 0.25);
+    expect(p.end.y).toBe(6 + 64 * 0.25);
+  });
+
+  it("keeps the aimed spot (and the jog) when it is outside the overlap", () => {
+    const far = { x: 200, y: 50, width: 64, height: 200 };
+    const p = alignedPorts(left, "right", far, "left", 0.75, { explicit: true, gap: 5 });
+    expect(p.straight).toBe(false);
+  });
+
+  it("leaves sides that don't face each other alone", () => {
+    expect(alignedPorts(left, "right", right, "top", 0.5, { explicit: false, gap: 5 }).straight).toBe(false);
+    expect(alignedPorts(left, "left", right, "right", 0.5, { explicit: false, gap: 5 }).straight).toBe(false);
+    // no overlap across: one box well below the other
+    expect(alignedPorts(left, "right", { x: 200, y: 300, width: 64, height: 64 }, "left", 0.5, { explicit: false, gap: 5 }).straight).toBe(false);
+  });
+});

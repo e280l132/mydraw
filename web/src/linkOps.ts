@@ -4,7 +4,7 @@
 // `routeArrowsAround` re-routes existing arrows the same way.
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { Box, Point } from "../../shared/geometry";
-import { portPoint, routeAround } from "../../shared/avoidRoute";
+import { alignedPorts, portPoint, routeAround } from "../../shared/avoidRoute";
 import { pickAnchor } from "../../shared/quickConnect";
 import { curvedPoints, ELBOW_GAP, type Side } from "../../shared/routing";
 import {
@@ -126,8 +126,7 @@ export class LinkPlanner {
     return list;
   }
 
-  private route(routing: LinkRouting, end: Point, endSide: Side | undefined, toBox: Box | undefined, waypoints: Point[], target: QuickUnit | null): { points: Point[]; ok: boolean; cost: number } {
-    const start = portPoint(this.fromBox, this.side, 0.5, ELBOW_GAP);
+  private route(routing: LinkRouting, start: Point, end: Point, endSide: Side | undefined, toBox: Box | undefined, waypoints: Point[], target: QuickUnit | null): { points: Point[]; ok: boolean; cost: number } {
     if (routing === "straight") return { points: [start, ...waypoints, end], ok: true, cost: 0 };
     if (routing === "curved") return { points: waypoints.length ? [start, ...waypoints, end] : curvedPoints(start, end), ok: true, cost: 0 };
     const r = routeAround({
@@ -146,7 +145,7 @@ export class LinkPlanner {
   plan(end: LinkEnd, waypoints: Point[], routing: LinkRouting, unitOf: (id: string) => QuickUnit | null): LinkPlan | null {
     const base = { fromId: this.fromEl.id, fromSide: this.side, waypoints, routing };
     if ("point" in end) {
-      const r = this.route(routing, end.point, undefined, undefined, waypoints, null);
+      const r = this.route(routing, portPoint(this.fromBox, this.side, 0.5, ELBOW_GAP), end.point, undefined, undefined, waypoints, null);
       return { ...base, points: r.points, ok: r.ok };
     }
     const target = unitOf(end.unitId);
@@ -158,7 +157,13 @@ export class LinkPlanner {
       if (!toEl) continue;
       const toBox = boxOf(toEl);
       const ratio = end.side === "auto" ? 0.5 : end.ratio;
-      const r = this.route(routing, portPoint(toBox, side, ratio, ELBOW_GAP), side, toBox, waypoints, target);
+      // Facing sides that overlap across get ports on one line: a straight arrow, not a small jog.
+      // (Not with bend points, and not for curved links, which are meant to bend.)
+      const ports =
+        waypoints.length || routing === "curved"
+          ? { start: portPoint(this.fromBox, this.side, 0.5, ELBOW_GAP), end: portPoint(toBox, side, ratio, ELBOW_GAP) }
+          : alignedPorts(this.fromBox, this.side, toBox, side, ratio, { explicit: end.side !== "auto", gap: ELBOW_GAP });
+      const r = this.route(routing, ports.start, ports.end, side, toBox, waypoints, target);
       // Straight and curved links pick the side nearest to the source instead (they have no cost).
       const cost = routing === "straight" || routing === "curved" ? distance(this.fromBox, toBox, side) : r.cost + (r.ok ? 0 : 1e6);
       if (!best || cost < best.cost) best = { ...base, points: r.points, ok: r.ok, toId: toEl.id, toSide: side, cost };
