@@ -191,3 +191,11 @@ export function unionBox(boxes: readonly Box[]): Box | null {
   const y2 = Math.max(...boxes.map((b) => b.y + b.height));
   return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
 }
+
+/** The side of `target` that faces `source` (by their centres; left/right wins on a tie). */
+export function facingSide(source: Box, target: Box): QuickSide {
+  const dx = source.x + source.width / 2 - (target.x + target.width / 2);
+  const dy = source.y + source.height / 2 - (target.y + target.height / 2);
+  if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? "right" : "left";
+  return dy > 0 ? "bottom" : "top";
+}

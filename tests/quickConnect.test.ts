@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boxesOverlap, growToContain, OPPOSITE_SIDE, pickAnchor, pickPrimary, quickConnectBox, QUICK_COPY_GAP, QUICK_COPY_MARGIN, QUICK_GAP, unionBox } from "../shared/quickConnect";
+import { boxesOverlap, facingSide, growToContain, OPPOSITE_SIDE, pickAnchor, pickPrimary, quickConnectBox, QUICK_COPY_GAP, QUICK_COPY_MARGIN, QUICK_GAP, unionBox } from "../shared/quickConnect";
 
 const src = { x: 100, y: 100, width: 160, height: 80 };
 const size = { width: 160, height: 80 };
@@ -188,6 +188,16 @@ describe("units: pickPrimary / pickAnchor", () => {
 
   it("flips sides", () => {
     expect(OPPOSITE_SIDE).toEqual({ top: "bottom", right: "left", bottom: "top", left: "right" });
+  });
+});
+
+describe("facingSide", () => {
+  const a = { x: 0, y: 0, width: 100, height: 50 };
+  it("names the side of the target that looks at the source", () => {
+    expect(facingSide(a, { x: 300, y: 0, width: 100, height: 50 })).toBe("left");
+    expect(facingSide(a, { x: -300, y: 20, width: 100, height: 50 })).toBe("right");
+    expect(facingSide(a, { x: 10, y: 300, width: 100, height: 50 })).toBe("top");
+    expect(facingSide(a, { x: 10, y: -300, width: 100, height: 50 })).toBe("bottom");
   });
 });
 

@@ -1119,7 +1119,9 @@ const qcCount = await t((x) => x.elementCount());
 const rightHandle = await page.$eval('.md-qc-handle[data-side="right"]', (e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
 await page.mouse.move(rightHandle.x - 15, rightHandle.y, { steps: 3 });
 await page.mouse.move(rightHandle.x, rightHandle.y, { steps: 2 });
+await page.keyboard.down("Alt"); // Option-click: a copy joined by an arrow
 await page.mouse.click(rightHandle.x, rightHandle.y);
+await page.keyboard.up("Alt");
 await waitFor(async () => (await t((x) => x.elementCount())) === qcCount + 3, "copy, its label and the arrow added");
 scene = await call("get_scene");
 const qArrow = scene.elements.find((e) => e.type === "arrow" && e.from === "qa");
@@ -1168,7 +1170,7 @@ await waitFor(async () => (await t((x) => x.elementCount())) === qcCount2, "one 
 scene = await call("get_scene");
 assert.equal(el(qz.zone).height, zoneBefore.height, "undo shrinks the zone back");
 
-step("Phase 7: quick connect on stencils and groups; selection shows handles; Option-click copies without an arrow");
+step("Phase 7: quick connect on stencils and groups; selection shows handles; click copies, Option-click connects, ⌘-click links to a shape");
 await call("new_drawing", { title: "QC stencil" });
 const clickRightHandle = (mods) => page.click('.md-qc-handle[data-side="right"]', mods ? { modifiers: mods } : {});
 // A stencil from the panel is a bare image + a free caption in one group (not an icon node).
@@ -1182,8 +1184,8 @@ assert.ok(stImg && stCap, "image and caption");
 await waitFor(async () => (await qcHandles()).length === 4, "the selected stencil shows its handles at once (no rest needed)");
 const stCount = await t((x) => x.elementCount());
 
-// Connected copy to the right: image + caption + a bound arrow between the two images.
-await clickRightHandle();
+// Option-click: connected copy to the right: image + caption + a bound arrow between the two images.
+await clickRightHandle(["Alt"]);
 await waitFor(async () => (await t((x) => x.elementCount())) === stCount + 3, "copy (image + caption) and arrow added");
 scene = await call("get_scene");
 let stArrow = scene.elements.find((e) => e.type === "arrow");
@@ -1198,7 +1200,7 @@ await waitFor(async () => (await t((x) => x.elementCount())) === stCount, "one u
 // Bottom: the arrow starts at the caption, so it doesn't run through the text.
 await call("select", { ids: [stImg.id, stCap.id] });
 await waitFor(async () => (await qcHandles()).length === 4, "handles again");
-await page.click('.md-qc-handle[data-side="bottom"]');
+await page.click('.md-qc-handle[data-side="bottom"]', { modifiers: ["Alt"] });
 await waitFor(async () => (await t((x) => x.elementCount())) === stCount + 3, "bottom copy added");
 scene = await call("get_scene");
 stArrow = scene.elements.find((e) => e.type === "arrow");
@@ -1207,11 +1209,11 @@ assert.equal(el(stArrow.to).type, "image", "and arrives at the copy's image");
 await call("undo");
 await waitFor(async () => (await t((x) => x.elementCount())) === stCount, "undone");
 
-// Option-click: a copy only, no arrow.
+// Plain click: a copy only, no arrow.
 await call("select", { ids: [stImg.id, stCap.id] });
 await waitFor(async () => (await qcHandles()).length === 4, "handles for the Option test");
-await clickRightHandle(["Alt"]);
-await waitFor(async () => (await t((x) => x.elementCount())) === stCount + 2, "Option-click adds image + caption only");
+await clickRightHandle();
+await waitFor(async () => (await t((x) => x.elementCount())) === stCount + 2, "a plain click adds image + caption only");
 scene = await call("get_scene");
 assert.equal(scene.elements.filter((e) => e.type === "arrow").length, 0, "no arrow");
 assert.equal(scene.elements.filter((e) => e.type === "image").length, 2);
@@ -1235,7 +1237,7 @@ await call("group", { ids: ["g1", "g2"] }); // same selected ids, but now one un
 await waitFor(async () => (await qcHandles()).length === 4, "grouping the selection shows handles");
 const gCount = await t((x) => x.elementCount());
 // Connected: the arrow leaves from the member on the clicked side, not through the other one.
-await clickRightHandle();
+await clickRightHandle(["Alt"]);
 await waitFor(async () => (await t((x) => x.elementCount())) === gCount + 5, "group copied (2 shapes, 2 labels) plus an arrow");
 scene = await call("get_scene");
 const gArrow = scene.elements.find((e) => e.type === "arrow");
@@ -1246,7 +1248,7 @@ await call("undo");
 await waitFor(async () => (await t((x) => x.elementCount())) === gCount, "group copy undone");
 await call("select", { ids: ["g1", "g2"] });
 await waitFor(async () => (await qcHandles()).length === 4, "handles again");
-await clickRightHandle(["Alt"]);
+await clickRightHandle();
 await waitFor(async () => (await t((x) => x.elementCount())) === gCount + 4, "both shapes and both labels copied");
 scene = await call("get_scene");
 const copies = scene.elements.filter((e) => e.type === "rectangle" && e.id !== "g1" && e.id !== "g2");
@@ -1291,7 +1293,7 @@ for (const side of ["bottom", "right"]) {
   await call("select", { ids: ["qin"] });
   await waitFor(async () => (await qcHandles()).length === 4, `handles on the shape inside a container (${side})`);
   const n = await t((x) => x.elementCount());
-  await page.click(`.md-qc-handle[data-side="${side}"]`);
+  await page.click(`.md-qc-handle[data-side="${side}"]`, { modifiers: ["Alt"] });
   await waitFor(async () => (await t((x) => x.elementCount())) === n + 3, `copy inside the container (${side})`);
   scene = await call("get_scene");
   const arrow = scene.elements.find((e) => e.type === "arrow" && e.from === "qin");
@@ -1313,12 +1315,48 @@ await waitFor(async () => (await qcHandles()).length === 0, "handles gone");
 await call("select", { ids: ["qin2"] });
 await waitFor(async () => (await qcHandles()).length === 4, "handles in the small container");
 const n2 = await t((x) => x.elementCount());
-await page.click('.md-qc-handle[data-side="right"]');
+await page.click('.md-qc-handle[data-side="right"]', { modifiers: ["Alt"] });
 await waitFor(async () => (await t((x) => x.elementCount())) === n2 + 3, "copy added beside the small container");
 scene = await call("get_scene");
 const arrow2 = scene.elements.find((e) => e.type === "arrow" && e.from === "qin2");
 assert.ok(!within(el(arrow2.to), el("qsmall")) && el(arrow2.to).x >= 810, "with no room inside, the copy goes outside");
 await call("undo");
+await call("select", { ids: [] });
+
+// ⌘-click: connect to something already there. A line follows the pointer; the target gets an outline.
+await call("add_elements", { elements: [{ type: "rectangle", id: "lkT", x: 300, y: 700, width: 140, height: 70, label: "Target" }] });
+await call("select", { ids: ["qin"] });
+await waitFor(async () => (await qcHandles()).length === 4, "handles for linking");
+const lkCount = await t((x) => x.elementCount());
+await page.click('.md-qc-handle[data-side="bottom"]', { modifiers: ["Meta"] });
+await page.waitForSelector(".md-qc-link");
+assert.equal((await qcHandles()).length, 0, "handles hide while picking the target");
+const lkCenter = await t((x) => x.toScreen(370, 735));
+await page.mouse.move(lkCenter.x - 30, lkCenter.y - 30);
+await page.mouse.move(lkCenter.x, lkCenter.y);
+await page.waitForSelector(".md-qc-outline.target");
+await page.mouse.click(lkCenter.x, lkCenter.y);
+await waitFor(async () => !(await page.$(".md-qc-link")), "link mode ends");
+await waitFor(async () => (await t((x) => x.elementCount())) === lkCount + 1, "only an arrow is added");
+scene = await call("get_scene");
+const lkArrow = scene.elements.find((e) => e.type === "arrow" && e.from === "qin" && e.to === "lkT");
+assert.ok(lkArrow, "a bound arrow from the source to the chosen shape");
+await call("undo");
+await waitFor(async () => (await t((x) => x.elementCount())) === lkCount, "one undo removes the link");
+// Esc cancels, and so does a click on empty canvas.
+await call("select", { ids: ["qin"] });
+await waitFor(async () => (await qcHandles()).length === 4, "handles again");
+await page.click('.md-qc-handle[data-side="right"]', { modifiers: ["Meta"] });
+await page.waitForSelector(".md-qc-link");
+await page.keyboard.press("Escape");
+await waitFor(async () => !(await page.$(".md-qc-link")), "Esc cancels linking");
+await waitFor(async () => (await qcHandles()).length === 4, "handles back after cancelling");
+await page.click('.md-qc-handle[data-side="right"]', { modifiers: ["Meta"] });
+await page.waitForSelector(".md-qc-link");
+const emptySpot = await t((x) => x.toScreen(1000, 480)); // empty inside of the big box
+await page.mouse.click(emptySpot.x, emptySpot.y);
+await waitFor(async () => !(await page.$(".md-qc-link")), "a click on empty canvas cancels");
+assert.equal(await t((x) => x.elementCount()), lkCount, "nothing added when cancelled");
 await call("select", { ids: [] });
 
 step("Phase 7: diagram lint (⌥⌘L): rules over MCP, fix:true is one undo step, panel rows select and fix");

@@ -1,14 +1,17 @@
 // Quick connect (draw.io style): four "+" handles around the selected shape/stencil/group, or around
-// one the pointer rests on for a moment (passing over things shows nothing). Click a handle to add a
-// connected copy on that side; Option-click adds a copy with no arrow; Shift-click (or right-click)
-// picks a stencil for the new node. The handles are a DOM overlay over the active tab's canvas,
-// never part of the scene.
+// one the pointer rests on for a moment (passing over things shows nothing). On a handle:
+//   click          -> a copy on that side, close by, no arrow
+//   Option-click   -> a copy on that side joined by an arrow
+//   ⌘-click        -> connect to something that is already there: a line follows the pointer, click
+//                     the target (Esc or a click on empty canvas cancels)
+//   Shift-click / right-click -> pick a stencil for a new connected node
+// The handles are a DOM overlay over the active tab's canvas, never part of the scene.
 import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from "react";
 import { viewportCoordsToSceneCoords } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { libraryFileUrl, searchItems, type LibraryIndex, type LibraryItem } from "../../shared/library";
 import { QUICK_SIDES, type QuickSide } from "../../shared/quickConnect";
-import { addConnectedCopy, addConnectedStencil, quickSourceAt, selectedUnit, unitById } from "./quickConnectOps";
+import { addConnectedCopy, addConnectedStencil, connectUnits, quickSourceAt, selectedUnit, unitById } from "./quickConnectOps";
 
 interface Props {
   tabId: string;
@@ -47,6 +50,16 @@ interface View {
   /** Sides whose handle would be on the bare canvas (not under a toolbar or panel). */
   sides: QuickSide[];
 }
+
+/** ⌘-click on a handle: picking the shape to connect to. Screen coordinates. */
+interface Link {
+  sourceId: string;
+  side: QuickSide;
+  start: { x: number; y: number };
+  source: { x1: number; y1: number; x2: number; y2: number };
+}
+
+type Box4 = { x1: number; y1: number; x2: number; y2: number };
 
 interface Search {
   sourceId: string;
@@ -137,7 +150,11 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
   const [hoverId, setHoverId] = useState<string | null>(null);
   /** The one unit that is selected (handles shown). */
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [alt, setAlt] = useState(false);
+  /** Modifier held: changes what a click on a handle does (and its icon). */
+  const [mods, setMods] = useState<"none" | "alt" | "meta">("none");
+  const [link, setLink] = useState<Link | null>(null);
+  const [linkPointer, setLinkPointer] = useState<{ x: number; y: number } | null>(null);
+  const [linkTarget, setLinkTarget] = useState<(Box4 & { id: string }) | null>(null);
   const [view, setView] = useState<View | null>(null);
   const [search, setSearch] = useState<Search | null>(null);
   const hoverRef = useRef<string | null>(null);
@@ -257,10 +274,10 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
     return () => window.clearInterval(timer);
   }, [getApi]);
 
-  // Option turns the "+" into "copy" (a copy without an arrow).
+  // Option / ⌘ change what a handle does; the icon shows it.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => setAlt(e.altKey);
-    const off = () => setAlt(false);
+    const onKey = (e: KeyboardEvent) => setMods(e.metaKey || e.ctrlKey ? "meta" : e.altKey ? "alt" : "none");
+    const off = () => setMods("none");
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
     window.addEventListener("blur", off);
@@ -311,6 +328,68 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
     focusCanvas();
   };
 
+  // ---------- ⌘-click: connect to an existing shape ----------
+
+  const startLink = (side: QuickSide, at: { x: number; y: number }) => {
+    const v = viewRef.current;
+    if (!v) return;
+    setHover(null);
+    setLinkTarget(null);
+    setLinkPointer(at);
+    setLink({ sourceId: v.id, side, start: at, source: { x1: v.x1, y1: v.y1, x2: v.x2, y2: v.y2 } });
+  };
+
+  const endLink = useCallback(() => {
+    setLink(null);
+    setLinkTarget(null);
+    setLinkPointer(null);
+    focusCanvas();
+  }, [focusCanvas]);
+
+  /** The unit under a screen point that the link may end on (not the source itself). */
+  const targetAt = (clientX: number, clientY: number): (Box4 & { id: string }) | null => {
+    const api = getApi();
+    if (!api || !link) return null;
+    const st = api.getAppState();
+    const p = viewportCoordsToSceneCoords({ clientX, clientY }, st);
+    const u = quickSourceAt(api, p.x, p.y);
+    if (!u || u.id === link.sourceId) return null;
+    const z = st.zoom.value;
+    return {
+      id: u.id,
+      x1: (u.box.x + st.scrollX) * z + st.offsetLeft,
+      y1: (u.box.y + st.scrollY) * z + st.offsetTop,
+      x2: (u.box.x + u.box.width + st.scrollX) * z + st.offsetLeft,
+      y2: (u.box.y + u.box.height + st.scrollY) * z + st.offsetTop,
+    };
+  };
+
+  useEffect(() => {
+    if (!link) return;
+    if (blocked) return endLink();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      endLink();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [link, blocked, endLink]);
+
+  const finishLink = (clientX: number, clientY: number) => {
+    const api = getApi();
+    const l = link;
+    const target = targetAt(clientX, clientY);
+    endLink();
+    if (!api || !l || !target) return; // a click on empty canvas just cancels
+    try {
+      if (!connectUnits(api, l.sourceId, l.side, target.id)) onToast("Those two can't be connected.", true);
+    } catch (e) {
+      onToast(`Could not connect: ${(e as Error).message}`, true);
+    }
+  };
+
   const openSearch = (side: QuickSide, at: { x: number; y: number }) => {
     const id = viewRef.current?.id;
     if (!id) return;
@@ -352,11 +431,12 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
   return (
     <div className="md-qc" ref={overlayRef}>
       {/* Which thing the handles belong to (a selected one already has Excalidraw's selection box). */}
-      {view && !search && !view.selected && (
+      {view && !search && !link && !view.selected && (
         <div className="md-qc-outline" style={{ left: view.x1 - 4, top: view.y1 - 4, width: view.x2 - view.x1 + 8, height: view.y2 - view.y1 + 8 }} />
       )}
       {view &&
         !search &&
+        !link &&
         view.sides.map((side) => {
           const p = handlePoint(view, side);
           return (
@@ -366,14 +446,17 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
               data-side={side}
               tabIndex={-1}
               style={{ left: p.x, top: p.y }}
-              title={`Click: add a connected copy ${SIDE_NAME[side]}\nOption-click: add a copy, no arrow\nShift-click or right-click: pick a stencil`}
-              aria-label={alt ? `Add a copy ${SIDE_NAME[side]}, no arrow` : `Add a connected copy ${SIDE_NAME[side]}`}
+              title={`Click: add a copy ${SIDE_NAME[side]}\nOption-click: add a copy joined by an arrow\n⌘-click: connect to another shape\nShift-click or right-click: pick a stencil`}
+              aria-label={
+                mods === "meta" ? `Connect ${SIDE_NAME[side]} to another shape` : mods === "alt" ? `Add a connected copy ${SIDE_NAME[side]}` : `Add a copy ${SIDE_NAME[side]}`
+              }
               onPointerDown={(e) => e.stopPropagation()}
               onMouseDown={(e) => e.preventDefault() /* keep focus on the canvas */}
               onClick={(e) => {
                 e.stopPropagation();
                 if (e.shiftKey) openSearch(side, p);
-                else connectCopy(side, !e.altKey);
+                else if (e.metaKey || e.ctrlKey) startLink(side, p);
+                else connectCopy(side, e.altKey);
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
@@ -381,10 +464,14 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
                 openSearch(side, p);
               }}
             >
-              {alt ? (
-                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" data-icon="copy">
-                  <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                  <path d="M10.5 3.5h-6a1 1 0 0 0-1 1v6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              {mods === "meta" ? (
+                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" data-icon="link">
+                  <circle cx="3.5" cy="12.5" r="2" fill="currentColor" />
+                  <path d="M5 11l7-7M8 4h4v4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : mods === "alt" ? (
+                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" data-icon="arrow">
+                  <path d="M2.5 8h9M8.5 4.5L12 8l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               ) : (
                 <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" data-icon="plus">
@@ -394,6 +481,41 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
             </button>
           );
         })}
+      {link && (
+        <div
+          className="md-qc-link"
+          onPointerMove={(e) => {
+            setLinkPointer({ x: e.clientX, y: e.clientY });
+            setLinkTarget(targetAt(e.clientX, e.clientY));
+          }}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.button === 0) finishLink(e.clientX, e.clientY);
+            else endLink();
+          }}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <div className="md-qc-outline source" style={{ left: link.source.x1 - 4, top: link.source.y1 - 4, width: link.source.x2 - link.source.x1 + 8, height: link.source.y2 - link.source.y1 + 8 }} />
+          {linkTarget && (
+            <div
+              className="md-qc-outline target"
+              style={{ left: linkTarget.x1 - 4, top: linkTarget.y1 - 4, width: linkTarget.x2 - linkTarget.x1 + 8, height: linkTarget.y2 - linkTarget.y1 + 8 }}
+            />
+          )}
+          {linkPointer && (
+            <svg className="md-qc-link-line" width="100%" height="100%">
+              <line x1={link.start.x} y1={link.start.y} x2={linkPointer.x} y2={linkPointer.y} />
+              <circle cx={linkPointer.x} cy={linkPointer.y} r="4" />
+            </svg>
+          )}
+          {linkPointer && (
+            <div className="md-qc-link-hint" style={{ left: linkPointer.x + 14, top: linkPointer.y + 14 }}>
+              {linkTarget ? "Click to connect" : "Click a shape or icon to connect · Esc cancels"}
+            </div>
+          )}
+        </div>
+      )}
       {search && <StencilSearch ref={searchRef} at={search} library={library} onPick={pick} onClose={closeSearch} />}
     </div>
   );

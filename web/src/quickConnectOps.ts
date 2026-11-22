@@ -7,7 +7,7 @@ import { getCommonBounds, newElementWith } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { Box } from "../../shared/geometry";
 import type { LibraryItem } from "../../shared/library";
-import { growToContain, OPPOSITE_SIDE, pickAnchor, pickPrimary, quickConnectBox, QUICK_COPY_GAP, QUICK_COPY_MARGIN, unionBox, type QuickSide } from "../../shared/quickConnect";
+import { facingSide, growToContain, OPPOSITE_SIDE, pickAnchor, pickPrimary, quickConnectBox, QUICK_COPY_GAP, QUICK_COPY_MARGIN, unionBox, type QuickSide } from "../../shared/quickConnect";
 import { loadIconImage, makeIconNode } from "./agent/diagram";
 import {
   boxOf,
@@ -322,5 +322,25 @@ export async function addConnectedStencil(api: ExcalidrawImperativeAPI, unitId: 
   const id = attach(api, unit, side, els, true);
   // After updateScene: Excalidraw loads images for files added while an element uses them.
   api.addFiles(files);
+  return id;
+}
+
+/**
+ * Connect the unit `fromId` (leaving from its `side`) to the existing unit `toId` with a bound elbow
+ * arrow, arriving on the side of the target that faces the source. One undo step; the selection is
+ * left alone so several connections can be made in a row. Returns the arrow id.
+ */
+export function connectUnits(api: ExcalidrawImperativeAPI, fromId: string, side: QuickSide, toId: string): string | null {
+  const a = unitById(api, fromId);
+  const b = unitById(api, toId);
+  if (!a || !b || a.id === b.id) return null;
+  const from = pickAnchor(a.members, side);
+  const to = pickAnchor(b.members, facingSide(a.box, b.box));
+  if (!from || !to) return null;
+  const id = randomId();
+  const r = buildElements([{ type: "arrow", id, from: from.id, to: to.id, routing: "elbow" }], api.getSceneElements(), api.getAppState());
+  // Inside one frame the arrow belongs to it too; across frames it stays outside both.
+  const frameId = a.primary.frameId && a.primary.frameId === b.primary.frameId ? a.primary.frameId : null;
+  commitElements(api, r.changed, r.added.map((e) => ({ ...e, frameId }) as El));
   return id;
 }

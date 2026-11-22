@@ -1713,6 +1713,51 @@ body {
   pointer-events: none;
 }
 
+.md-qc-outline.source {
+  border-style: solid;
+  opacity: 0.6;
+}
+
+.md-qc-outline.target {
+  border: 2px solid var(--md-accent);
+  background: color-mix(in srgb, var(--md-accent) 10%, transparent);
+}
+
+.md-qc-link {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  cursor: crosshair;
+}
+
+.md-qc-link-line {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.md-qc-link-line line {
+  stroke: var(--md-accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.md-qc-link-line circle {
+  fill: var(--md-accent);
+}
+
+.md-qc-link-hint {
+  position: fixed;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(20, 20, 24, 0.8);
+  border-radius: 6px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 .md-qc-handle {
   position: fixed;
   z-index: 5;
