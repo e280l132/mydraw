@@ -1553,17 +1553,18 @@ assert.equal(avoidedAfter.customData?.mydrawAvoid, true, "still routed around sh
 assert.ok((avoidedAfter.fixedSegments ?? []).every((f) => f.index >= 2 && f.index <= avoidedAfter.points.length - 2), "fixed segments fit the new route");
 await call("select", { ids: [] });
 
-step("Phase 7: ⌘-link between shapes side by side (slightly out of line) draws a straight arrow");
+step("Phase 7: ⌘-link between shapes side by side (slightly out of line) or stacked close together draws a straight arrow");
 await call("new_drawing", { title: "Straight link" });
 await call("add_elements", {
   elements: [
     { type: "rectangle", id: "s1", x: 300, y: 400, width: 64, height: 64 },
     { type: "rectangle", id: "s2", x: 520, y: 406, width: 64, height: 64 }, // 6px lower
     { type: "rectangle", id: "s3", x: 760, y: 396, width: 64, height: 64 }, // 4px higher than s1
+    { type: "rectangle", id: "s4", x: 300, y: 500, width: 64, height: 64 }, // right below s1, only 36px apart
   ],
 });
-for (const [from, to, how] of [["s1", "s2", "auto"], ["s2", "s3", "side"]]) {
-  await startLinkFrom(from, "right");
+for (const [from, to, how, side] of [["s1", "s2", "auto", "right"], ["s2", "s3", "side", "right"], ["s1", "s4", "auto", "bottom"]]) {
+  await startLinkFrom(from, side);
   scene = await call("get_scene");
   const tb = el(to);
   // auto: over the middle of the target; side: near its left edge (an explicit side).
@@ -1574,7 +1575,7 @@ for (const [from, to, how] of [["s1", "s2", "auto"], ["s2", "s3", "side"]]) {
   const arrow = (await arrowsNow()).find((a) => a.from === from && a.to === to);
   const pts = absPts(await elFull(arrow.id));
   assert.equal(pts.length, 2, `${from} -> ${to} (${how}) is one straight segment: ` + JSON.stringify(pts));
-  assert.ok(Math.abs(pts[0].y - pts[1].y) < 0.5, "and horizontal");
+  assert.ok(side === "right" ? Math.abs(pts[0].y - pts[1].y) < 0.5 : Math.abs(pts[0].x - pts[1].x) < 0.5, "and straight across");
 }
 await call("select", { ids: [] });
 

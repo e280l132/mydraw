@@ -294,12 +294,28 @@ export function routeLength(points: readonly Point[]): number {
 const REGIONS = [400, 1200, Infinity];
 
 export function routeAround(o: AvoidRouteInput): AvoidRoute {
-  const stub = o.stub ?? 20;
+  let stub = o.stub ?? 20;
   const bendCost = o.bendCost ?? 40;
   const baseClearance = o.clearance ?? 16;
   const startDir = o.startSide ? OUT[o.startSide] : null;
   // Arriving through a side means travelling into it: the opposite of "out".
   const endDir = o.endSide ? (((OUT[o.endSide] + 2) % 4) as Dir) : null;
+
+  // Facing sides (leaving and arriving the same way, the end ahead of the start): shapes close
+  // together.
+  if (startDir !== null && endDir === startDir) {
+    const ahead = (o.end.x - o.start.x) * DX[startDir] + (o.end.y - o.start.y) * DY[startDir];
+    if (ahead > 0) {
+      const across = DX[startDir] !== 0 ? Math.abs(o.end.y - o.start.y) : Math.abs(o.end.x - o.start.x);
+      // Lined up with nothing in between: one straight segment.
+      if (across < 0.5 && !(o.waypoints ?? []).length && !o.obstacles.some((b) => crossesBox([o.start, o.end], b))) {
+        return { points: [o.start, o.end], cost: ahead, ok: true };
+      }
+      // A short gap: the straight runs out of / into the shapes must not overshoot each other
+      // (that would make the route double back on itself). Shorter runs give a compact Z.
+      stub = Math.min(stub, Math.max(2, ahead / 2 - 1));
+    }
+  }
   const stubStart = startDir === null ? o.start : step(o.start, startDir, stub);
   const stubEnd = endDir === null ? o.end : step(o.end, OUT[o.endSide!], stub);
   const stops = [stubStart, ...(o.waypoints ?? []), stubEnd];

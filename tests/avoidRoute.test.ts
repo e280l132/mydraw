@@ -246,3 +246,35 @@ describe("alignedPorts", async () => {
     expect(alignedPorts(left, "right", { x: 200, y: 300, width: 64, height: 64 }, "left", 0.5, { explicit: false, gap: 5 }).straight).toBe(false);
   });
 });
+
+describe("shapes close together", () => {
+  const top = { x: 0, y: 0, width: 64, height: 64 };
+  it("draws one straight segment between lined-up facing sides, however short the gap", () => {
+    const below = { x: 0, y: 100, width: 64, height: 64 }; // 36px gap: the 20px stubs would overlap
+    const r = routeAround({ start: portPoint(top, "bottom", 0.5, 5), startSide: "bottom", end: portPoint(below, "top", 0.5, 5), endSide: "top", startBox: top, endBox: below, obstacles: [] });
+    expect(r.points).toEqual([
+      { x: 32, y: 69 },
+      { x: 32, y: 95 },
+    ]);
+  });
+
+  it("makes a compact Z (no doubling back) when they are close and offset", () => {
+    const below = { x: 40, y: 100, width: 64, height: 64 };
+    const r = routeAround({ start: portPoint(top, "bottom", 0.5, 5), startSide: "bottom", end: portPoint(below, "top", 0.5, 5), endSide: "top", startBox: top, endBox: below, obstacles: [] });
+    expect(r.ok).toBe(true);
+    expect(isOrthogonal(r.points)).toBe(true);
+    expect(r.points.length).toBe(4);
+    // monotonic downwards: never goes back up
+    for (let i = 1; i < r.points.length; i++) expect(r.points[i].y).toBeGreaterThanOrEqual(r.points[i - 1].y);
+    expect(crossesBox(r.points, top)).toBe(false);
+    expect(crossesBox(r.points, below)).toBe(false);
+  });
+
+  it("still goes around something in between", () => {
+    const below = { x: 0, y: 200, width: 64, height: 64 };
+    const block = { x: 10, y: 110, width: 44, height: 40 };
+    const r = routeAround({ start: portPoint(top, "bottom", 0.5, 5), startSide: "bottom", end: portPoint(below, "top", 0.5, 5), endSide: "top", startBox: top, endBox: below, obstacles: [block] });
+    expect(r.points.length).toBeGreaterThan(2);
+    expect(crossesBox(r.points, block)).toBe(false);
+  });
+});
