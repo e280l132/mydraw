@@ -1,3 +1,4 @@
+import { cloneQuickConnect, defaultQuickConnect, normalizeQuickConnect } from "./quickBindings";
 import type { DrawingStyle, Settings, ThemeSetting } from "./types";
 
 export const MAX_RECENT = 10;
@@ -9,6 +10,7 @@ export const DEFAULT_SETTINGS: Settings = {
   recentFiles: [],
   libraryPath: null,
   autoExport: {},
+  quickConnect: defaultQuickConnect(),
 };
 
 const THEMES: ThemeSetting[] = ["system", "light", "dark"];
@@ -16,7 +18,7 @@ const STYLES: DrawingStyle[] = ["clean", "sketch"];
 
 /** Merge untrusted JSON (settings file or a renderer patch) onto a base, keeping only valid values. */
 export function mergeSettings(base: Settings, raw: unknown): Settings {
-  const out: Settings = { ...base, recentFiles: [...base.recentFiles], autoExport: { ...base.autoExport } };
+  const out: Settings = { ...base, recentFiles: [...base.recentFiles], autoExport: { ...base.autoExport }, quickConnect: cloneQuickConnect(base.quickConnect) };
   if (!raw || typeof raw !== "object") return out;
   const r = raw as Record<string, unknown>;
   if (THEMES.includes(r.theme as ThemeSetting)) out.theme = r.theme as ThemeSetting;
@@ -34,6 +36,7 @@ export function mergeSettings(base: Settings, raw: unknown): Settings {
       if (p.startsWith("/") && (v === "png" || v === "svg")) out.autoExport[p] = v;
     }
   }
+  if (r.quickConnect !== undefined) out.quickConnect = normalizeQuickConnect(r.quickConnect);
   return out;
 }
 

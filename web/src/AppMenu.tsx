@@ -154,6 +154,7 @@ export function AppMenu({ settings, onCommand, onSettings }: Props) {
             ]}
             onChange={(drawingStyle) => onSettings({ drawingStyle })}
           />
+          <MainMenu.Item onSelect={() => onCommand({ type: "quickConnectSettings" })}>Quick connect shortcuts…</MainMenu.Item>
           <MainMenu.Item
             icon={settings.autosave ? <CheckOnIcon /> : <CheckOffIcon />}
             aria-checked={settings.autosave}

@@ -31,6 +31,8 @@ import { FindReplace } from "./FindReplace";
 import { PagesPanel } from "./PagesPanel";
 import { InventoryDialog } from "./InventoryDialog";
 import { ImportDialog } from "./ImportDialog";
+import { QuickConnectSettingsDialog } from "./QuickConnectSettings";
+import { DEFAULT_QUICK_CONNECT } from "../../shared/quickBindings";
 import { VersionHistoryDialog } from "./VersionHistoryDialog";
 import { PresentationMode } from "./PresentationMode";
 import { LintPanel } from "./LintPanel";
@@ -202,6 +204,7 @@ export function App() {
   const [findOpen, setFindOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [presenting, setPresenting] = useState(false);
   useEffect(() => {
@@ -908,6 +911,9 @@ export function App() {
           if (!tabsRef.current.find((t) => t.id === activeRef.current)?.filePath) return showToast("Save the drawing first: its version history starts with the first save.", true);
           setHistoryOpen(true);
           return;
+        case "quickConnectSettings":
+          setShortcutsOpen(true);
+          return;
         case "importText":
           if (apis.current.get(activeRef.current)) setImportOpen(true);
           return;
@@ -1426,13 +1432,21 @@ export function App() {
           tabId={activeId}
           getApi={getActiveApi}
           library={libraryIndex}
-          blocked={exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
+          quick={settings?.quickConnect ?? DEFAULT_QUICK_CONNECT}
+          blocked={shortcutsOpen || exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
           onToast={showToast}
         />
       )}
       {presenting && activeApi && <PresentationMode key={activeId} api={activeApi} darkMode={theme === "dark"} onClose={() => setPresenting(false)} />}
       {historyOpen && activeApi && active?.filePath && (
         <VersionHistoryDialog key={activeId} api={activeApi} filePath={active.filePath} title={active.title} onClose={() => setHistoryOpen(false)} onDone={showToast} />
+      )}
+      {shortcutsOpen && (
+        <QuickConnectSettingsDialog
+          quick={settings?.quickConnect ?? DEFAULT_QUICK_CONNECT}
+          onSave={(quickConnect) => void bridge.updateSettings({ quickConnect })}
+          onClose={() => setShortcutsOpen(false)}
+        />
       )}
       {importOpen && activeApi && <ImportDialog onClose={() => setImportOpen(false)} onDone={showToast} />}
       {inventoryOpen && activeApi && (

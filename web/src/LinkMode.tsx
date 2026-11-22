@@ -6,7 +6,7 @@
 //   - click the target to connect (Shift-click: connect and keep going from the same shape);
 //   - click empty canvas to add a bend point the route must pass; Backspace removes the last one;
 //   - double-click empty canvas (or Enter) ends the arrow there, unattached;
-//   - R: route style (around shapes / elbow / straight / curved), A: arrowheads, D: dashed;
+//   - R: route style (around shapes / elbow / straight / curved), A: arrowheads, D: dashed (defaults; the keys are settings);
 //   - Esc or right-click cancels. Scrolling and zooming keep working.
 // Pointer events are read on the window (capture) so the canvas keeps its wheel; the overlay itself
 // never takes pointer events.
@@ -16,6 +16,7 @@ import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/t
 import type { Point } from "../../shared/geometry";
 import { nearestSide, snapRatio } from "../../shared/avoidRoute";
 import type { QuickSide } from "../../shared/quickConnect";
+import type { LinkKeys } from "../../shared/quickBindings";
 import { createLink, LINK_HEADS, LINK_ROUTINGS, LinkPlanner, loadLinkStyle, saveLinkStyle, type LinkEnd, type LinkPlan, type LinkStyle } from "./linkOps";
 import { quickSourceAt, unitById } from "./quickConnectOps";
 import { pickAnchor } from "../../shared/quickConnect";
@@ -25,6 +26,8 @@ interface Props {
   getApi(): ExcalidrawImperativeAPI | undefined;
   sourceId: string;
   side: QuickSide;
+  /** Keys that switch routing / arrow heads / dashed (Settings.quickConnect.linkKeys). */
+  keys: LinkKeys;
   /** Where the pointer was pressed when linking started with a drag from the handle (release over a target connects). */
   pressedAt: { x: number; y: number } | null;
   /** `refocus`: give the canvas the keyboard back (not when the user clicked into a panel or input). */
@@ -95,7 +98,9 @@ function pathData(points: Point[], curved: boolean): string {
   return points.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" ");
 }
 
-export function LinkMode({ getApi, sourceId, side, pressedAt, onEnd, onToast }: Props) {
+export function LinkMode({ getApi, sourceId, side, keys, pressedAt, onEnd, onToast }: Props) {
+  const keysRef = useRef(keys);
+  keysRef.current = keys;
   const [style, setStyleState] = useState<LinkStyle>(loadLinkStyle);
   const styleRef = useRef(style);
   styleRef.current = style;
@@ -246,9 +251,9 @@ export function LinkMode({ getApi, sourceId, side, pressedAt, onEnd, onToast }: 
       let handled = true;
       if (k === "Escape") endRef.current();
       else if (k === "Backspace" || k === "Delete") waypoints.current = waypoints.current.slice(0, -1);
-      else if (k === "r" || k === "R") setStyle({ ...s, routing: next(LINK_ROUTINGS, s.routing) });
-      else if (k === "a" || k === "A") setStyle({ ...s, heads: next(LINK_HEADS, s.heads) });
-      else if (k === "d" || k === "D") setStyle({ ...s, dashed: !s.dashed });
+      else if (k.toLowerCase() === keysRef.current.routing) setStyle({ ...s, routing: next(LINK_ROUTINGS, s.routing) });
+      else if (k.toLowerCase() === keysRef.current.heads) setStyle({ ...s, heads: next(LINK_HEADS, s.heads) });
+      else if (k.toLowerCase() === keysRef.current.dashed) setStyle({ ...s, dashed: !s.dashed });
       else if (k === "Enter") {
         const api = getApi();
         const ptr = pointer.current;
@@ -388,7 +393,7 @@ export function LinkMode({ getApi, sourceId, side, pressedAt, onEnd, onToast }: 
         >
           <div>{action}</div>
           <div className="md-qc-link-keys">
-            <b>{ROUTING_LABEL[style.routing]}</b> R · <b>{HEADS_LABEL[heads]}</b> A · <b>{style.dashed ? "dashed" : "solid"}</b> D · Esc cancels
+            <b>{ROUTING_LABEL[style.routing]}</b> {keys.routing.toUpperCase()} · <b>{HEADS_LABEL[heads]}</b> {keys.heads.toUpperCase()} · <b>{style.dashed ? "dashed" : "solid"}</b> {keys.dashed.toUpperCase()} · Esc cancels
           </div>
           {!frame.ok && <div className="md-qc-link-warn">No clear way around: drawn as a plain elbow</div>}
         </div>

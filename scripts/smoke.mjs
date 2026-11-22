@@ -1145,6 +1145,77 @@ await call("undo");
 await waitFor(async () => (await t((x) => x.elementCount())) === qcCount, "ONE undo removes everything quick connect added");
 assert.ok(!(await call("get_element", { id: "qa" }))[0].element.boundElements?.some((b) => b.id === qArrow.id), "undo unbinds the source");
 
+// Rebinding (settings persist): physical keys, sides, Control on a Mac, function keys; the tooltip follows.
+const setQuick = (bindings) => page.evaluate((b) => window.mydraw.updateSettings({ quickConnect: { bindings: b } }), bindings);
+await setQuick({ copy: { keys: ["F5"] }, connectedCopy: { keys: ["MetaRight"] }, linkTo: { keys: ["Meta"] }, pickStencil: { keys: ["Control"] } });
+await waitFor(async () => (await getSettings()).quickConnect.bindings.connectedCopy.keys[0] === "MetaRight", "rebinding saved");
+await page.evaluate(() => window.mydraw.updateSettings({ quickConnect: { bindings: { copy: { keys: ["Hyper"] }, connectedCopy: { keys: ["Meta"] } } } }));
+await waitFor(async () => (await getSettings()).quickConnect.bindings.connectedCopy.keys[0] === "Alt", "clashing settings fall back to the defaults");
+await setQuick({ copy: { keys: ["F5"] }, connectedCopy: { keys: ["MetaRight"] }, linkTo: { keys: ["Meta"] }, pickStencil: { keys: ["Control"] } });
+await waitFor(async () => (await getSettings()).quickConnect.bindings.copy.keys[0] === "F5", "rebinding saved again");
+/** Hover qa, point at its right handle, hold `keys` and click. */
+const clickHandleHolding = async (keys) => {
+  const away = await t((x) => x.toScreen(380, 700)); // empty canvas: the handles of the last hover go first
+  await page.mouse.move(away.x, away.y, { steps: 2 });
+  await waitFor(async () => (await qcHandles()).length === 0, "handles gone");
+  await hoverQa();
+  const h = await page.$eval('.md-qc-handle[data-side="right"]', (e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  await page.mouse.move(h.x - 15, h.y, { steps: 3 });
+  await page.mouse.move(h.x, h.y, { steps: 2 });
+  for (const k of keys) await page.keyboard.down(k);
+  await page.mouse.down();
+  await page.mouse.up();
+  for (const k of [...keys].reverse()) await page.keyboard.up(k);
+};
+await hoverQa();
+await waitFor(
+  async () => (await page.$eval('.md-qc-handle[data-side="right"]', (e) => e.title)).includes("Right ⌘-click: add a copy joined by an arrow"),
+  "handle tooltip shows the new shortcuts",
+);
+await clickHandleHolding(["MetaRight"]);
+await waitFor(async () => (await t((x) => x.elementCount())) === qcCount + 3, "right ⌘-click adds a connected copy");
+await call("undo");
+await waitFor(async () => (await t((x) => x.elementCount())) === qcCount, "undone");
+await clickHandleHolding(["MetaLeft"]); // left ⌘ = the either-side ⌘ binding: link mode
+await page.waitForSelector(".md-qc-linkmode");
+await page.keyboard.press("Escape");
+await waitFor(async () => !(await page.$(".md-qc-linkmode")), "link mode ends");
+assert.equal(await t((x) => x.elementCount()), qcCount, "left ⌘ did not add a copy");
+await clickHandleHolding(["F5"]);
+await waitFor(async () => (await t((x) => x.elementCount())) === qcCount + 2, "F5-click adds a plain copy (shape + label)");
+await call("undo");
+await waitFor(async () => (await t((x) => x.elementCount())) === qcCount, "undone");
+await clickHandleHolding(["Control"]);
+await page.waitForSelector(".md-qc-search .md-qc-input");
+await page.keyboard.press("Escape");
+await waitFor(async () => !(await page.$(".md-qc-search")), "search closes");
+await clickHandleHolding([]); // a plain click is bound to nothing now
+await sleep(200);
+assert.equal(await t((x) => x.elementCount()), qcCount, "plain click does nothing when unbound");
+await page.evaluate(() => window.mydraw.updateSettings({ quickConnect: {} })); // back to the defaults
+await waitFor(async () => (await getSettings()).quickConnect.bindings.connectedCopy.keys[0] === "Alt", "defaults restored");
+
+// The shortcuts dialog records held keys (sides kept) and saves them.
+await t((x) => x.command({ type: "quickConnectSettings" }));
+await page.waitForSelector(".md-qcs");
+await page.click('.md-qcs-row[data-action="connectedCopy"] .md-qcs-change');
+await page.waitForSelector(".md-qcs-capture");
+await page.keyboard.down("AltRight");
+await page.keyboard.down("F7");
+await page.keyboard.up("F7");
+await page.keyboard.up("AltRight");
+await waitFor(async () => (await page.$$eval('.md-qcs-row[data-action="connectedCopy"] .md-qcs-chip', (els) => els.map((e) => e.textContent))).join() === "Right Option,F7", "recorded Right Option + F7");
+await page.click('.md-qcs-row[data-action="connectedCopy"] .md-qcs-chip >> text=Right Option'); // right -> either side
+await page.click(".md-qcs .md-modal-actions button.primary");
+await waitFor(async () => (await getSettings()).quickConnect.bindings.connectedCopy.keys.join() === "Alt,F7", "dialog saved Option + F7");
+await page.evaluate(() => window.mydraw.updateSettings({ quickConnect: {} }));
+await waitFor(async () => (await getSettings()).quickConnect.bindings.connectedCopy.keys.join() === "Alt", "defaults restored");
+{
+  const away = await t((x) => x.toScreen(380, 700));
+  await page.mouse.move(away.x, away.y, { steps: 2 });
+  await waitFor(async () => (await qcHandles()).length === 0, "handles gone");
+}
+
 // In a zone: Shift-click opens the stencil search; the chosen icon joins the zone, which grows to fit.
 const qz = await call("create_zone", { label: "Tier", ids: ["qa"] });
 scene = await call("get_scene");

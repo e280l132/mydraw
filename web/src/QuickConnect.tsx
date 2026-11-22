@@ -11,6 +11,8 @@ import { viewportCoordsToSceneCoords } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { libraryFileUrl, searchItems, type LibraryIndex, type LibraryItem } from "../../shared/library";
 import { QUICK_SIDES, type QuickSide } from "../../shared/quickConnect";
+import { heldKeys, onHeldKeys } from "./heldKeys";
+import { actionFor, describeBinding, IS_MAC_PLATFORM, QUICK_ACTIONS, type QuickAction, type QuickConnectSettings } from "../../shared/quickBindings";
 import { addConnectedCopy, addConnectedStencil, quickSourceAt, selectedUnit, unitById } from "./quickConnectOps";
 import { LinkMode } from "./LinkMode";
 
@@ -20,6 +22,8 @@ interface Props {
   library: LibraryIndex | null;
   /** A dialog, palette, find bar or pick mode is open. */
   blocked: boolean;
+  /** Which modifier + click does what (Settings.quickConnect). */
+  quick: QuickConnectSettings;
   onToast(text: string, error?: boolean): void;
 }
 
@@ -142,19 +146,41 @@ function handlePoint(v: View, side: QuickSide): { x: number; y: number } {
   }
 }
 
-/** ⌘ on a Mac (Ctrl-click is a right-click there), Ctrl elsewhere. */
-const IS_MAC = /Mac/i.test(navigator.platform);
-const linkModifier = (e: { metaKey: boolean; ctrlKey: boolean }) => (IS_MAC ? e.metaKey : e.metaKey || e.ctrlKey);
+/** Off a Mac, Ctrl counts as the `meta` modifier (on a Mac Ctrl-click is a right-click). */
+export const IS_MAC = IS_MAC_PLATFORM;
 
 const SIDE_NAME: Record<QuickSide, string> = { top: "above", right: "to the right", bottom: "below", left: "to the left" };
 
-export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props) {
+function handleTitle(q: QuickConnectSettings, side: QuickSide): string {
+  const text: Record<QuickAction, string> = {
+    copy: `add a copy ${SIDE_NAME[side]}`,
+    connectedCopy: "add a copy joined by an arrow",
+    linkTo: "draw an arrow to another shape (around shapes in between)",
+    pickStencil: "pick a stencil",
+  };
+  return QUICK_ACTIONS.map((a) => `${describeBinding(q.bindings[a], IS_MAC)}: ${text[a]}`).join("\n");
+}
+
+function handleLabel(action: QuickAction | null, side: QuickSide): string {
+  switch (action) {
+    case "linkTo":
+      return `Connect ${SIDE_NAME[side]} to another shape`;
+    case "connectedCopy":
+      return `Add a connected copy ${SIDE_NAME[side]}`;
+    case "pickStencil":
+      return `Pick a stencil ${SIDE_NAME[side]}`;
+    default:
+      return `Add a copy ${SIDE_NAME[side]}`;
+  }
+}
+
+export function QuickConnect({ tabId, getApi, library, blocked, quick, onToast }: Props) {
   /** The unit the pointer has rested on (handles shown). */
   const [hoverId, setHoverId] = useState<string | null>(null);
   /** The one unit that is selected (handles shown). */
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  /** Modifier held: changes what a click on a handle does (and its icon). */
-  const [mods, setMods] = useState<"none" | "alt" | "meta">("none");
+  /** What a click on a handle would do with the modifiers held right now (shown as the handle's icon). */
+  const [held, setHeld] = useState<QuickAction | null>(null);
   const [link, setLink] = useState<Link | null>(null);
   const [view, setView] = useState<View | null>(null);
   const [search, setSearch] = useState<Search | null>(null);
@@ -166,6 +192,8 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
   const searchRef = useRef<HTMLDivElement>(null);
   const blockedRef = useRef(blocked);
   blockedRef.current = blocked;
+  const quickRef = useRef(quick);
+  quickRef.current = quick;
 
   const setHover = useCallback((id: string | null) => {
     hoverRef.current = id;
@@ -275,19 +303,15 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
     return () => window.clearInterval(timer);
   }, [getApi]);
 
-  // Option / ⌘ change what a handle does; the icon shows it.
+  // Held keys change what a handle does; the icon shows it.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => setMods(linkModifier(e) ? "meta" : e.altKey ? "alt" : "none");
-    const off = () => setMods("none");
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("keyup", onKey);
-    window.addEventListener("blur", off);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("keyup", onKey);
-      window.removeEventListener("blur", off);
-    };
-  }, []);
+    const update = () => setHeld(actionFor(quickRef.current, heldKeys(), "left", IS_MAC));
+    update();
+    return onHeldKeys(update);
+  }, [quick]);
+
+  /** The action chosen when a handle was pressed; it runs when the button is released on that handle. */
+  const pendingRef = useRef<{ side: QuickSide; action: QuickAction } | null>(null);
 
   // Whose handles to show: the unit the pointer rests on, else the selected one.
   const activeId = hoverId ?? selectedId;
@@ -352,6 +376,14 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
     if (link && blocked) endLink();
   }, [link, blocked, endLink]);
 
+  /** Do what the user bound to `action` on a handle (⌘-style link starts on pointerdown, see below). */
+  const run = (action: QuickAction, side: QuickSide, at: { x: number; y: number }, pressedAt: { x: number; y: number } | null = null) => {
+    if (action === "copy") connectCopy(side, false);
+    else if (action === "connectedCopy") connectCopy(side, true);
+    else if (action === "linkTo") startLink(side, pressedAt);
+    else openSearch(side, at);
+  };
+
   const openSearch = (side: QuickSide, at: { x: number; y: number }) => {
     const id = viewRef.current?.id;
     if (!id) return;
@@ -408,37 +440,46 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
               data-side={side}
               tabIndex={-1}
               style={{ left: p.x, top: p.y }}
-              title={`Click: add a copy ${SIDE_NAME[side]}\nOption-click: add a copy joined by an arrow\n⌘-click or ⌘-drag: draw an arrow to another shape (around shapes in between)\nShift-click or right-click: pick a stencil`}
-              aria-label={
-                mods === "meta" ? `Connect ${SIDE_NAME[side]} to another shape` : mods === "alt" ? `Add a connected copy ${SIDE_NAME[side]}` : `Add a copy ${SIDE_NAME[side]}`
-              }
+              title={handleTitle(quick, side)}
+              aria-label={handleLabel(held, side)}
+              // The action is chosen on press (a Mac sends no click for Control-click, only a context menu)
+              // from the physical keys held (heldKeys.ts: sides, Fn, F-keys), and runs on release.
               onPointerDown={(e) => {
                 e.stopPropagation();
-                // ⌘-press starts linking at once, so dragging from the handle onto a target works too.
-                if (e.button === 0 && linkModifier(e) && !e.shiftKey) {
+                pendingRef.current = null;
+                const button = e.button === 0 ? "left" : e.button === 2 ? "right" : null;
+                const action = button && actionFor(quickRef.current, heldKeys(e.nativeEvent), button, IS_MAC);
+                if (!action) return;
+                if (action === "linkTo") {
+                  // Starts at once, so dragging from the handle onto a target works too.
                   e.preventDefault();
                   startLink(side, { x: e.clientX, y: e.clientY });
-                }
+                } else pendingRef.current = { side, action };
+              }}
+              onPointerUp={(e) => {
+                e.stopPropagation();
+                const pending = pendingRef.current;
+                pendingRef.current = null;
+                if (pending?.side === side) run(pending.action, side, p);
               }}
               onMouseDown={(e) => e.preventDefault() /* keep focus on the canvas */}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (e.shiftKey) openSearch(side, p);
-                else if (linkModifier(e)) return; // linking already started on pointerdown
-                else connectCopy(side, e.altKey);
-              }}
+              onClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                openSearch(side, p);
               }}
             >
-              {mods === "meta" ? (
+              {held === "linkTo" ? (
                 <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" data-icon="link">
                   <circle cx="3.5" cy="12.5" r="2" fill="currentColor" />
                   <path d="M5 11l7-7M8 4h4v4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-              ) : mods === "alt" ? (
+              ) : held === "pickStencil" ? (
+                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" data-icon="search">
+                  <circle cx="7" cy="7" r="3.8" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                  <path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                </svg>
+              ) : held === "connectedCopy" ? (
                 <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" data-icon="arrow">
                   <path d="M2.5 8h9M8.5 4.5L12 8l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
@@ -450,7 +491,7 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
             </button>
           );
         })}
-      {link && <LinkMode key={`${link.sourceId}:${link.side}`} getApi={getApi} sourceId={link.sourceId} side={link.side} pressedAt={link.pressedAt} onEnd={endLink} onToast={onToast} />}
+      {link && <LinkMode key={`${link.sourceId}:${link.side}`} getApi={getApi} keys={quick.linkKeys} sourceId={link.sourceId} side={link.side} pressedAt={link.pressedAt} onEnd={endLink} onToast={onToast} />}
       {search && <StencilSearch ref={searchRef} at={search} library={library} onPick={pick} onClose={closeSearch} />}
     </div>
   );

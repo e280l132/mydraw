@@ -1,5 +1,6 @@
 import type { AgentCommand, AgentReply } from "./agent";
 import type { LibraryIndex } from "./library";
+import type { QuickConnectSettings } from "./quickBindings";
 
 // Types shared by the Electron main process, the preload bridge and the renderer.
 
@@ -18,6 +19,8 @@ export interface Settings {
   libraryPath: string | null;
   /** Per file (absolute path): also write a PNG or SVG next to the .excalidraw file on every save. */
   autoExport: Record<string, "png" | "svg">;
+  /** Quick connect: which modifier + click does what, and the link-mode keys (see shared/quickBindings.ts). */
+  quickConnect: QuickConnectSettings;
 }
 
 /** What an import built (see shared/importers.ts). */
@@ -111,6 +114,7 @@ export type MenuCommand =
   | { type: "toggleLint" }
   | { type: "inventory" }
   | { type: "importText" }
+  | { type: "quickConnectSettings" }
   | { type: "versionHistory" }
   | { type: "present" };
 
