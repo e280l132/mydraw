@@ -1216,6 +1216,8 @@ scene = await call("get_scene");
 assert.equal(scene.elements.filter((e) => e.type === "arrow").length, 0, "no arrow");
 assert.equal(scene.elements.filter((e) => e.type === "image").length, 2);
 assert.equal(await t((x) => x.selectedCount()), 2, "the new copy is selected");
+const plainCopy = scene.elements.find((e) => e.type === "image" && e.id !== stImg.id);
+assert.ok(plainCopy.x > stImg.x + stImg.width && plainCopy.x - (stImg.x + stImg.width) < 45, `a plain copy sits close beside the original (gap ${plainCopy.x - (stImg.x + stImg.width)})`);
 await call("undo");
 await waitFor(async () => (await t((x) => x.elementCount())) === stCount, "one undo removes the plain copy");
 
@@ -1265,6 +1267,23 @@ await call("add_elements", {
   ],
 });
 const within = (a, b) => a.x >= b.x && a.y >= b.y && a.x + a.width <= b.x + b.width && a.y + a.height <= b.y + b.height;
+// Resting on the empty inside of the box picks nothing (not the box); resting on the shape in it
+// shows its handles with an outline that says whose they are.
+await call("select", { ids: [] });
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+const emptyInside = await t((x) => x.toScreen(1000, 480));
+await page.mouse.move(emptyInside.x - 20, emptyInside.y);
+await page.mouse.move(emptyInside.x, emptyInside.y);
+await sleep(1000);
+assert.equal((await qcHandles()).length, 0, "the empty inside of a box that holds things shows no handles");
+const onQin = await t((x) => x.toScreen(770, 360));
+await page.mouse.move(onQin.x - 5, onQin.y);
+await page.mouse.move(onQin.x, onQin.y);
+await waitFor(async () => (await qcHandles()).length === 4, "resting on the shape inside the box shows its handles");
+const outline = await page.$eval(".md-qc-outline", (e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+const qinTopLeft = await t((x) => x.toScreen(730, 330));
+assert.ok(Math.abs(outline.x - (qinTopLeft.x - 4)) < 3 && Math.abs(outline.y - (qinTopLeft.y - 4)) < 3, "the outline is around the shape that owns the handles");
+await page.mouse.move(5, 5);
 for (const side of ["bottom", "right"]) {
   // Let the handles of whatever was selected before (the undone copy) go away first, so the click lands on qin's.
   await call("select", { ids: [] });

@@ -7,7 +7,7 @@ import { getCommonBounds, newElementWith } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { Box } from "../../shared/geometry";
 import type { LibraryItem } from "../../shared/library";
-import { growToContain, OPPOSITE_SIDE, pickAnchor, pickPrimary, quickConnectBox, unionBox, type QuickSide } from "../../shared/quickConnect";
+import { growToContain, OPPOSITE_SIDE, pickAnchor, pickPrimary, quickConnectBox, QUICK_COPY_GAP, QUICK_COPY_MARGIN, unionBox, type QuickSide } from "../../shared/quickConnect";
 import { loadIconImage, makeIconNode } from "./agent/diagram";
 import {
   boxOf,
@@ -137,12 +137,23 @@ export function quickSourceAt(api: ExcalidrawImperativeAPI, x: number, y: number
   for (let i = scene.length - 1; i >= 0; i--) {
     const el = scene[i];
     if (!SHAPES.has(el.type) || el.isDeleted) continue;
-    if (x >= el.x && x <= el.x + el.width && y >= el.y && y <= el.y + el.height) {
+    // The empty inside of a shape that holds other things (icons in a box) is not "the box": only
+    // its outline and label are (the hit test above), so moving between the icons never picks it.
+    if (x >= el.x && x <= el.x + el.width && y >= el.y && y <= el.y + el.height && !holdsOthers(el, scene)) {
       const u = unitFor(el, map, editing);
       if (u) return u;
     }
   }
   return null;
+}
+
+/** Does `shape` have other elements (not its own label, not arrows) drawn inside it? */
+function holdsOthers(shape: El, scene: readonly El[]): boolean {
+  return scene.some((e) => {
+    if (e.id === shape.id || e.isDeleted || isLinear(e)) return false;
+    if (e.type === "text" && (e as El & { containerId?: string | null }).containerId === shape.id) return false;
+    return e.x >= shape.x && e.y >= shape.y && e.x + e.width <= shape.x + shape.width && e.y + e.height <= shape.y + shape.height;
+  });
 }
 
 /** Keep our own markers (node kind, stencil, zone, routing kind) but not user properties or legend flags. */
@@ -241,6 +252,8 @@ function attach(api: ExcalidrawImperativeAPI, unit: QuickUnit, side: QuickSide, 
     size: { width: bx2 - bx1, height: by2 - by1 },
     obstacles: obstacleBoxes(unit.primary, scene, map, new Set(containers.map((c) => c.id))),
     within: containers[0] ? boxOf(containers[0]) : undefined,
+    // A plain copy sits close beside the original; a connected one leaves room for the arrow.
+    ...(connect ? {} : { gap: QUICK_COPY_GAP, margin: QUICK_COPY_MARGIN, minGap: 12 }),
   });
   const dx = box.x - bx1;
   const dy = box.y - by1;

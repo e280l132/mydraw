@@ -19,11 +19,16 @@ interface Props {
   onToast(text: string, error?: boolean): void;
 }
 
-/** Distance of a handle's centre from the shape's edge (screen px); more when the shape is selected, to clear its resize/rotate handles. */
-const HANDLE_OFFSET = 26;
-const HANDLE_OFFSET_SELECTED = 42;
+/**
+ * Distance of a handle's centre from the shape's edge (screen px). Close, so a handle never lands on
+ * a neighbour; a selected shape has Excalidraw's resize handles up to 10px out on every side and its
+ * rotate handle up to 26px above the top, so ours sit just beyond those.
+ */
+const HANDLE_OFFSET = 16;
+const HANDLE_OFFSET_SELECTED = 22;
+const HANDLE_OFFSET_SELECTED_TOP = 38;
 /** The pointer may stray this far (screen px) outside the shape on its way to a handle. */
-const HOVER_SLACK = HANDLE_OFFSET_SELECTED + 18;
+const HOVER_SLACK = HANDLE_OFFSET_SELECTED_TOP + 18;
 const MAX_RESULTS = 8;
 /** The pointer must rest on a shape this long (ms) before its handles appear (selected shapes show them at once). */
 const HOVER_DELAY_MS = 600;
@@ -110,7 +115,7 @@ function onCanvas(p: { x: number; y: number }, overlay: Element | null): boolean
 }
 
 function handlePoint(v: View, side: QuickSide): { x: number; y: number } {
-  const off = v.selected ? HANDLE_OFFSET_SELECTED : HANDLE_OFFSET;
+  const off = !v.selected ? HANDLE_OFFSET : side === "top" ? HANDLE_OFFSET_SELECTED_TOP : HANDLE_OFFSET_SELECTED;
   const cx = (v.x1 + v.x2) / 2;
   const cy = (v.y1 + v.y2) / 2;
   switch (side) {
@@ -346,6 +351,10 @@ export function QuickConnect({ tabId, getApi, library, blocked, onToast }: Props
 
   return (
     <div className="md-qc" ref={overlayRef}>
+      {/* Which thing the handles belong to (a selected one already has Excalidraw's selection box). */}
+      {view && !search && !view.selected && (
+        <div className="md-qc-outline" style={{ left: view.x1 - 4, top: view.y1 - 4, width: view.x2 - view.x1 + 8, height: view.y2 - view.y1 + 8 }} />
+      )}
       {view &&
         !search &&
         view.sides.map((side) => {

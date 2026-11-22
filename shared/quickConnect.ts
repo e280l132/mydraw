@@ -5,8 +5,12 @@ import { placeBeside, type Box, type Side } from "./geometry";
 export type QuickSide = "top" | "right" | "bottom" | "left";
 export const QUICK_SIDES: readonly QuickSide[] = ["top", "right", "bottom", "left"];
 
-/** Distance between the source and the new node. */
+/** Distance between the source and a new connected node (room for the arrow). */
 export const QUICK_GAP = 80;
+/** Distance between the source and a plain copy (no arrow): close, like a row of icons. */
+export const QUICK_COPY_GAP = 20;
+/** Free space kept around a plain copy (to other elements). */
+export const QUICK_COPY_MARGIN = 10;
 /** Free space kept around the new node (to other elements). */
 export const QUICK_MARGIN = 20;
 /** How far the search for a free spot goes (in half-node steps). */
@@ -34,10 +38,12 @@ export interface QuickPlaceInput {
    * there is room, trying smaller gaps before giving up and placing it outside as usual.
    */
   within?: Box;
+  /** Smallest gap tried when squeezing the node into `within` (default 30, room for a short arrow). */
+  minGap?: number;
 }
 
 /** Gaps tried, in order, when the node has to fit inside `within`. */
-const INSIDE_GAPS = [QUICK_GAP, 60, 44, 30];
+const INSIDE_GAPS = [QUICK_GAP, 60, 44, 30, 20, 12];
 /** Free space kept between a node placed inside a container and the container's edge. */
 const INSIDE_PAD = 8;
 
@@ -55,7 +61,8 @@ export function quickConnectBox(o: QuickPlaceInput): Box {
   const content: Box = { x: 0, y: 0, width: o.size.width, height: o.size.height };
   const within = o.within;
   if (within) {
-    for (const g of [gap, ...INSIDE_GAPS.slice(1).filter((x) => x < gap)]) {
+    const minGap = o.minGap ?? 30;
+    for (const g of [gap, ...INSIDE_GAPS.filter((x) => x < gap && x >= minGap)]) {
       const found = search(o, content, g, margin, (b) => insideBox(b, within, INSIDE_PAD));
       if (found) return found;
     }

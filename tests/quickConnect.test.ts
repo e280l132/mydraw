@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boxesOverlap, growToContain, OPPOSITE_SIDE, pickAnchor, pickPrimary, quickConnectBox, QUICK_GAP, unionBox } from "../shared/quickConnect";
+import { boxesOverlap, growToContain, OPPOSITE_SIDE, pickAnchor, pickPrimary, quickConnectBox, QUICK_COPY_GAP, QUICK_COPY_MARGIN, QUICK_GAP, unionBox } from "../shared/quickConnect";
 
 const src = { x: 100, y: 100, width: 160, height: 80 };
 const size = { width: 160, height: 80 };
@@ -93,6 +93,18 @@ describe("quickConnectBox: inside a container", () => {
     const b = quickConnectBox({ source: icon, side: "bottom", size: node, obstacles: [sibling], within: container });
     expect(boxesOverlap(b, sibling, 20)).toBe(false);
     expect(inside(b)).toBe(true);
+  });
+
+  it("puts a plain copy close beside the source (tight gap and margin)", () => {
+    const b = quickConnectBox({ source: icon, side: "right", size: node, obstacles: [icon], gap: QUICK_COPY_GAP, margin: QUICK_COPY_MARGIN, minGap: 12, within: container });
+    expect(b.x).toBe(94 + QUICK_COPY_GAP);
+    expect(b.y).toBe(30);
+  });
+
+  it("does not squeeze a connected node closer than 30px", () => {
+    const narrow = { x: 0, y: 0, width: 400, height: 140 }; // 46px below the icon: only gaps under 30 would fit
+    const b = quickConnectBox({ source: icon, side: "bottom", size: { width: 64, height: 20 }, obstacles: [], within: narrow });
+    expect(b.y - 94).toBeGreaterThanOrEqual(30);
   });
 
   it("behaves as before without a container", () => {
