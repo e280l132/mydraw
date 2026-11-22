@@ -105,14 +105,15 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
 - **Ask Claude box (optional, later):** prompt field in app that runs `claude -p` with the mydraw MCP, so Brian can ask for edits without switching to the terminal.
 
 ### 7. MCP tools (full control)
-- **App/files:** `list_drawings`, `new_drawing`, `open_drawing`, `save`, `export` (any format above + options), `screenshot` (PNG back to Claude), `import` (drawio/mermaid/csv/yaml).
-- **Read:** `get_scene` (compact: id, type, label, geometry, colors, zone, bindings, properties), `get_selection`, `get_element`, `get_inventory`.
+- **App/files:** `list_drawings`, `new_drawing`, `open_drawing` (also `.drawio`, imported as a new unsaved drawing), `save`, `export` (any format above + options), `screenshot` (PNG back to Claude), `import_diagram` (csv/yaml/mermaid text or file → diagram; built).
+- **Read:** `get_scene` (compact: id, type, label, geometry, colors, zone, bindings, properties), `get_selection`, `get_element`, `get_inventory` (built: one row per node with ip, hostname, vlan, role, owner, url, notes).
 - **Library:** `search_stencils`, `list_collections`, `save_as_stencil` (selection or element ids → library item), `add_stencil_file` (SVG/PNG path → library), `delete_stencil`.
 - **Colors/styles:** `list_palettes`, `list_themes`, `apply_theme`, `apply_style_preset`.
 - **Build:** `place_stencil` (absolute or `right_of`/`below`/inside zone), `add_elements` (skeletons via `convertToExcalidrawElements`), `connect` (bound arrow, label, style, elbow/curved), `update_elements`, `set_properties`, `delete_elements`, `group`/`ungroup`, `create_zone`, `add_link`.
 - **Generate:** `build_diagram` (nodes, edges, zones, direction → laid-out diagram; the main "draw me X" tool), `mermaid_to_scene`, `apply_template`, `add_legend`.
-- **Layout/quality:** `auto_layout`, `align`, `distribute`, `lint_diagram`.
+- **Layout/quality:** `auto_layout`, `route_around` (built: re-route arrows around shapes), `lint_diagram` (built; `fix: true` = safe fixes in one undo step). `connect {avoid: true}` routes one arrow around shapes. `align` and `distribute` are not built.
 - **View/history:** `zoom_to_fit`, `select`, `undo`, `redo` (each agent call = one undo step).
+- **Properties:** `set_properties` (built: text sets, null or "" removes; not undoable).
 - **Escape hatch:** `set_scene` / `raw_update` with full element JSON.
 - Register: `claude mcp add mydraw -- node ~/Projects/mydraw/mcp/dist/index.js`; allow `mcp__mydraw__*`.
 
@@ -131,7 +132,7 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
 6. ✅ **Full export + CLI** (done 2026-11-21, in two parts):
    - **Part 1 (plumbing exports):** WebP (quality, transparent bg); scopes whole drawing / selection / one frame / every frame (batch, one file per frame into a chosen folder) with padding, scale, dark mode, background; Mermaid flowchart writer (zones → subgraphs, escaped labels, round-trips through `parseMermaidFlowchart`); CSV + Markdown inventory (name, kind, type, zone, ip, hostname, notes from customData); single-file HTML viewer (inline SVG, pan/zoom, links, strict CSP); clipboard copy as PNG/SVG/Mermaid (File → Copy As, in-app menu, `MenuCommand copyAs`); auto-export on save (dialog section "Keep an image up to date": per file, Off/PNG/SVG, stored in `settings.autoExport`); MCP `export` + `shared/agent.ts` cover all new formats and `scope`/`frame`/`padding`/`scale`/`darkMode`/`background`/`quality`. Pure logic in `shared/` (`sceneGraph`, `mermaidWriter`, `inventory`, `htmlExport`) with `tests/export.test.ts`; smoke test exports each format over MCP and checks the files.
    - **Part 2 (documents + CLI):** PDF (vector: SVG pages → hidden JS-off, network-blocked window → `printToPDF`; page size fit to content / A4 / Letter, plus actual size (100%, tiled over sheets); one page per frame for "every frame"); PPTX (`pptxgenjs`, one picture slide per frame, 16:9 or 4:3); draw.io `.drawio` writer (shapes, text, edges with waypoints/arrowheads, zones and frames as containers, icon nodes as embedded images, properties as `<object>` attributes) and reader (plain/compressed pages, containers → zones, groups, edge labels, placeholders; unknown stencils and URL images reported); `mydraw` CLI (`export`, `convert`; headless hidden Electron window reusing the renderer export code; temp userData, works with the app closed; `bin/mydraw.mjs`, `npm link`). Export dialog, MCP `export` (`pageSize`, `actualSize`, `slideSize`) and `AGENT_EXPORT_FORMATS` cover them. Pure logic in `shared/` (`xml`, `drawioWriter`, `drawioReader`, `pdfLayout`, `cli`) with `tests/drawio.test.ts` and `tests/pdfcli.test.ts`; smoke test exports PDF/PPTX/draw.io over MCP (magic bytes, page/slide counts, A4/Letter boxes, well-formed XML) and runs the CLI after closing the app (JPG of a frame, PDF/PPTX per frame, WebP batch, CSV default path, draw.io → excalidraw keeps node labels, zones, properties and bound edges).
-   - Not done: `.excalidrawlib` export from the dialog (the library panel already writes it), a command-palette entry for Copy As (Phase 7), an MCP clipboard tool, opening `.drawio` files in the app (Phase 8 import; the reader is ready), a packaged CLI that uses the installed `.app` (Phase 9).
+   - Not done: `.excalidrawlib` export from the dialog (the library panel already writes it), an MCP clipboard tool, a packaged CLI that uses the installed `.app` (Phase 9). (Copy As in the command palette and opening `.drawio` files were done in Phases 7 and 8.)
 7. ✅ **Ease of use** (done 2026-11-21):
    - **Command palette** (⌘K, or ⇧⌘P always; ⌘K with a selection stays Excalidraw's link editor): our own, because Excalidraw 0.18.1 neither exports `CommandPalette` nor renders it (so no custom items, and its ⌘/ does nothing). Fuzzy search (`shared/fuzzy.ts`) over file/tab/export (every format, Copy As) commands, stencils panel, preferences, themes, style presets, templates (`applyTemplate` IPC), stencils, frames, jump-to-element-by-text, find & replace, pages, lint, link authoring.
    - **Excalidraw built-ins verified** in the smoke test: ⌘F search, snap (Alt+S), help dialog (?).
@@ -149,7 +150,7 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
    - **Presentation mode** (⌥⌘Return): frames as full-screen slides in page order, arrows/space/click, Esc; a drawing without frames is one slide.
    - **draw.io import**: Open (and MCP `open_drawing`) accept `.drawio`; it becomes a new unsaved drawing, never saved back into the .drawio.
    - Not done: Ask Claude box (plan: later); properties on hover; Mermaid *export* round trip UI beyond the existing export; snapshots are per path (a renamed file starts a new history).
-9. **Package:** `electron-builder` → unsigned macOS `.app`/DMG; `mydraw` CLI symlink. Later: Ask Claude box.
+9. **Package** (next, not started): `electron-builder` → unsigned macOS `.app`/DMG; `mydraw` CLI that uses the installed `.app`. Later: Ask Claude box.
 
 Tests: vitest for catalog builder, exporters (format headers/dimensions), drawio/Mermaid writers, `build_diagram` layout, control-server auth; Playwright-Electron smoke test.
 
@@ -201,5 +202,5 @@ Haiku 5.5 $0.10 / $0.50 · Sonnet 5.5 $2 / $10 · Opus 5.5 $4 / $20 · Fable 5.2
 6. `claude mcp list` shows `mydraw` connected.
 7. Ask Claude: "Build an AWS 3-tier diagram: ALB, two EC2 in private subnets, RDS, in a VPC zone, AWS colors, add a legend, export JPG and PDF." Confirm live build, bound arrows, layout, files written.
 8. Edit by hand while Claude adds shapes; no lost edits; undo removes Claude's last call as one step.
-9. Import a CSV of hosts → diagram; inventory table edit updates labels.
+9. Import a CSV of hosts → diagram; inventory table edit updates labels. (Built.)
 10. Build DMG, install, launch outside dev.
