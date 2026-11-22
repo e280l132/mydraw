@@ -7,7 +7,8 @@ import type { AppState } from "@excalidraw/excalidraw/types";
 import { boxFromBounds, connectorEndpoints, outlinePoint, type Box, type OutlineShape, type Point } from "../../../shared/geometry";
 import { linkProblem } from "../../../shared/links";
 import { requireColor } from "../../../shared/palettes";
-import { curvedPoints, ELBOW_GAP, elbowRoute, fixedPointFor, isOrthogonal, type Routing } from "../../../shared/routing";
+import { curvedPoints, ELBOW_GAP, elbowRoute, fixedPointFor, isOrthogonal, type Routing, type Side } from "../../../shared/routing";
+import { fixedSegmentsFor, nearestSide, portPoint, routeAround } from "../../../shared/avoidRoute";
 
 export type El = ExcalidrawElement;
 type Loose = Record<string, unknown>;
@@ -274,7 +275,7 @@ export function arrowGeometry(from: El, to: El): { x: number; y: number; points:
   return { x: start.x, y: start.y, points: [[0, 0], [end.x - start.x, end.y - start.y]] };
 }
 
-function addBound(el: El, ref: { id: string; type: "arrow" | "text" }): El {
+export function addBound(el: El, ref: { id: string; type: "arrow" | "text" }): El {
   const list = el.boundElements ?? [];
   if (list.some((b) => b.id === ref.id)) return el;
   return newElementWith(el, { boundElements: [...list, ref] });
@@ -347,6 +348,7 @@ export function bindingsFor(route: readonly Point[], a: El | undefined, b: El | 
  */
 export function routingFields(routing: Routing, type: string, customData: Loose | undefined): Loose {
   const data = { ...(customData ?? {}) };
+  delete data.mydrawAvoid; // an explicit routing style replaces "around shapes"
   const elbowed = routing === "elbow" && type === "arrow";
   if (routing === "curved" || (routing === "elbow" && !elbowed)) data.mydrawRouting = routing;
   else delete data.mydrawRouting;
@@ -364,6 +366,7 @@ export function routingFields(routing: Routing, type: string, customData: Loose 
  * Curved: fresh ends with the bend recomputed. Returns the changed arrow and its label.
  */
 export function reroute(arrow: El, map: ElMap): El[] {
+  if (arrow.type === "arrow" && arrow.customData?.mydrawAvoid) return rerouteAround(arrow, map);
   const a = arrow as El & { points: [number, number][]; startBinding: { elementId: string } | null; endBinding: { elementId: string } | null };
   const from = a.startBinding ? map.get(a.startBinding.elementId) : undefined;
   const to = a.endBinding ? map.get(a.endBinding.elementId) : undefined;
@@ -376,7 +379,8 @@ export function reroute(arrow: El, map: ElMap): El[] {
     const pointEl = (p: Point) => ({ ...arrow, x: p.x, y: p.y, width: 0, height: 0, type: "rectangle" }) as El;
     const route = routeBetween(from ?? pointEl(startPt), to ?? pointEl(endPt), routing);
     const elbowed = !!(arrow as El & { elbowed?: boolean }).elbowed;
-    const updated = newElementWith(arrow, { ...arrowShape(route), ...bindingsFor(route, from, to, elbowed) } as never);
+    // A fresh route: fixed segments of the old one would no longer match its points.
+    const updated = newElementWith(arrow, { ...arrowShape(route), ...bindingsFor(route, from, to, elbowed), ...(elbowed ? { fixedSegments: null, startIsSpecial: null, endIsSpecial: null } : {}) } as never);
     const out: El[] = [updated];
     const label = boundTextOf(arrow, map);
     if (label) {
@@ -421,6 +425,98 @@ export function reroute(arrow: El, map: ElMap): El[] {
   const label = boundTextOf(arrow, map);
   if (label) {
     const mid = polylineMiddle(start.x, start.y, points);
+    out.push(newElementWith(label, { x: mid.x - label.width / 2, y: mid.y - label.height / 2 }));
+  }
+  return out;
+}
+
+// ---------- routing around shapes ----------
+
+/** Bounds of an element as drawn (rotation, arrows' points). */
+function drawnBox(el: El): Box {
+  return boxFromBounds(getCommonBounds([el]));
+}
+
+const containsBox = (outer: Box, inner: Box) =>
+  outer.x <= inner.x + 0.5 && outer.y <= inner.y + 0.5 && outer.x + outer.width >= inner.x + inner.width - 0.5 && outer.y + outer.height >= inner.y + inner.height - 0.5;
+
+/**
+ * Boxes an arrow between `ends` should go around: shapes, images, icons and free text. Not arrows,
+ * lines, freehand, frames, text inside shapes, the `exclude` elements (the arrow, its ends), what
+ * sits inside an end (an icon's image and caption), or anything drawn around an end (a zone or box
+ * the end lives in: the arrow may run inside it).
+ */
+export function avoidObstacles(map: ElMap, exclude: ReadonlySet<string>, ends: readonly Box[]): Box[] {
+  const out: Box[] = [];
+  for (const el of map.values()) {
+    if (el.isDeleted || exclude.has(el.id) || isLinear(el) || el.type === "freedraw" || el.type === "frame" || el.type === "magicframe" || el.type === "selection") continue;
+    if (el.type === "text" && (el as El & Loose).containerId) continue;
+    const box = drawnBox(el);
+    if (ends.some((e) => containsBox(box, e) || containsBox(e, box))) continue;
+    out.push(box);
+  }
+  return out;
+}
+
+/**
+ * Element fields for an arrow that goes around shapes along `route` from `a` to `b`: a native elbow
+ * arrow whose middle segments are "fixed", so Excalidraw keeps them when a shape moves.
+ */
+export function aroundFields(route: readonly Point[], a: El | undefined, b: El | undefined): Loose {
+  const fixed = fixedSegmentsFor(route);
+  return {
+    ...arrowShape(route),
+    ...bindingsFor(route, a, b, true),
+    elbowed: true,
+    roundness: null,
+    fixedSegments: fixed.length ? fixed : null,
+    startIsSpecial: false,
+    endIsSpecial: false,
+  };
+}
+
+/**
+ * Re-route an arrow around the shapes in its way, keeping the sides (and positions along them)
+ * where it leaves and arrives. Returns the changed arrow and its label.
+ */
+export function rerouteAround(arrow: El, map: ElMap): El[] {
+  const a = arrow as El & { points: [number, number][]; startBinding: { elementId: string } | null; endBinding: { elementId: string } | null };
+  const from = a.startBinding ? map.get(a.startBinding.elementId) : undefined;
+  const to = a.endBinding ? map.get(a.endBinding.elementId) : undefined;
+  const pts = a.points;
+  const startPt: Point = { x: a.x + pts[0][0], y: a.y + pts[0][1] };
+  const endPt: Point = { x: a.x + pts[pts.length - 1][0], y: a.y + pts[pts.length - 1][1] };
+  // Where the arrow meets a shape: from the binding's fixed point (a ratio of the shape's box, so it
+  // is right even when the shape has just moved), else from the old end point.
+  const port = (el: El | undefined, p: Point, binding: { fixedPoint?: [number, number] | null } | null): { point: Point; side?: Side; box?: Box } => {
+    if (!el) return { point: p };
+    const box = boxOf(el);
+    const fp = binding?.fixedPoint;
+    const at = fp ? { x: box.x + fp[0] * box.width, y: box.y + fp[1] * box.height } : p;
+    const { side, ratio } = nearestSide(box, at);
+    return { point: portPoint(box, side, ratio, ELBOW_GAP), side, box };
+  };
+  const s = port(from, startPt, a.startBinding as { fixedPoint?: [number, number] | null } | null);
+  const e = port(to, endPt, a.endBinding as { fixedPoint?: [number, number] | null } | null);
+  const exclude = new Set([arrow.id, ...(from ? [from.id] : []), ...(to ? [to.id] : [])]);
+  const label = boundTextOf(arrow, map);
+  if (label) exclude.add(label.id);
+  const ends = [s.box, e.box].filter((b): b is Box => !!b);
+  const route = routeAround({
+    start: s.point,
+    startSide: s.side,
+    end: e.point,
+    endSide: e.side,
+    startBox: s.box,
+    endBox: e.box,
+    obstacles: avoidObstacles(map, exclude, ends),
+  });
+  const data = { ...(arrow.customData ?? {}), mydrawAvoid: true };
+  delete (data as Loose).mydrawRouting;
+  const updated = newElementWith(arrow, { ...aroundFields(route.points, from, to), customData: data } as never);
+  const out: El[] = [updated];
+  if (label) {
+    const mid = labelPoint(route.points);
     out.push(newElementWith(label, { x: mid.x - label.width / 2, y: mid.y - label.height / 2 }));
   }
   return out;

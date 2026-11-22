@@ -1723,39 +1723,94 @@ body {
   background: color-mix(in srgb, var(--md-accent) 10%, transparent);
 }
 
-.md-qc-link {
+.md-qc-linkmode {
   position: fixed;
   inset: 0;
   z-index: 6;
-  cursor: crosshair;
+  pointer-events: none;
 }
 
-.md-qc-link-line {
+.md-linking .excalidraw canvas {
+  cursor: crosshair !important;
+}
+
+.md-qc-link-svg {
   position: fixed;
   inset: 0;
-  pointer-events: none;
   overflow: visible;
 }
 
-.md-qc-link-line line {
+.md-qc-link-svg .md-qc-src {
+  fill: none;
   stroke: var(--md-accent);
-  stroke-width: 2;
-  stroke-dasharray: 6 4;
+  stroke-width: 1.5;
+  opacity: 0.55;
 }
 
-.md-qc-link-line circle {
+.md-qc-link-svg .md-qc-target {
+  fill: color-mix(in srgb, var(--md-accent) 10%, transparent);
+  stroke: var(--md-accent);
+  stroke-width: 2;
+}
+
+.md-qc-link-svg .md-qc-path {
+  fill: none;
+  stroke: var(--md-accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.md-qc-link-svg .md-qc-path.dashed {
+  stroke-dasharray: 8 5;
+}
+
+.md-qc-link-svg .md-qc-path.blocked {
+  stroke: #e8590c;
+}
+
+.md-qc-link-svg .md-qc-headpath {
   fill: var(--md-accent);
+}
+
+.md-qc-link-svg .md-qc-port {
+  fill: var(--md-accent);
+  stroke: var(--md-panel);
+  stroke-width: 2;
+}
+
+.md-qc-link-svg .md-qc-port-option {
+  fill: var(--md-panel);
+  stroke: var(--md-accent);
+  stroke-width: 1.2;
+  opacity: 0.8;
+}
+
+.md-qc-link-svg .md-qc-wp {
+  fill: var(--md-panel);
+  stroke: var(--md-accent);
+  stroke-width: 2;
 }
 
 .md-qc-link-hint {
   position: fixed;
-  padding: 3px 8px;
+  padding: 5px 9px;
   font-size: 12px;
+  line-height: 1.45;
   color: #fff;
-  background: rgba(20, 20, 24, 0.8);
+  background: rgba(20, 20, 24, 0.85);
   border-radius: 6px;
   pointer-events: none;
   white-space: nowrap;
+}
+
+.md-qc-link-keys {
+  opacity: 0.75;
+  font-size: 11px;
+}
+
+.md-qc-link-warn {
+  color: #ffa94d;
+  font-size: 11px;
 }
 
 .md-qc-handle {

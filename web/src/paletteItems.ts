@@ -8,6 +8,7 @@ import { FORMAT_LABEL } from "./ExportDialog";
 import { EXPORT_FORMATS, listFrames, type ExportFormat } from "./exportImage";
 import { allPresets, allThemes } from "./styleStore";
 import { applyPresetTo, applyThemeTo, selectedIds } from "./uiActions";
+import { routeArrowsAround } from "./linkOps";
 
 export interface PaletteContext {
   api: ExcalidrawImperativeAPI | undefined;
@@ -83,6 +84,16 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
   // ----- drawing themes and style presets -----
   if (c.api) {
     const api = c.api;
+    add(
+      "Edit",
+      "Route arrows around shapes",
+      () => {
+        const { count: n, scope } = routeArrowsAround(api);
+        const where = scope === "all" ? " (the whole drawing)" : " (the selection and arrows attached to it)";
+        c.toast(n ? `Routed ${n} arrow${n === 1 ? "" : "s"} around shapes${where}` : scope === "all" ? "No arrows to route" : "No arrows in or attached to the selection", !n);
+      },
+      { keywords: "reroute avoid obstacles tidy connectors elbow detour" },
+    );
     for (const t of allThemes()) {
       add(
         "Themes",

@@ -54,6 +54,7 @@ import {
   parseRouting,
   randomId,
   withGroupsAndLabels,
+  rerouteAround,
   type El,
   type ElMap,
 } from "./sceneOps";
@@ -535,8 +536,40 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
           if (p.endArrowhead !== undefined) sk.endArrowhead = p.endArrowhead;
         }
         const r = buildElements([sk], api.getSceneElementsIncludingDeleted(), api.getAppState());
-        commit(api, r.changed, r.added);
+        let added = r.added;
+        if (p.avoid === true) {
+          if (sk.type !== "arrow") throw new Error("avoid works for arrows (not lines)");
+          // Route around the shapes in between, as one update with the rest.
+          const map = liveMap(api);
+          for (const e of [...r.changed, ...r.added]) map.set(e.id, e);
+          const arrow = map.get(r.ids[0]);
+          if (arrow) {
+            const routed = new Map(rerouteAround(arrow, map).map((e) => [e.id, e]));
+            added = added.map((e) => routed.get(e.id) ?? e);
+          }
+        }
+        commit(api, r.changed, added);
         return { id: r.ids[0] };
+      }
+
+      case "route_around": {
+        const { api } = await target(p);
+        const map = liveMap(api);
+        const ids = Array.isArray(p.ids) ? strArray(p.ids, "ids") : [...map.values()].filter((e) => e.type === "arrow").map((e) => e.id);
+        const changed: El[] = [];
+        const routed: string[] = [];
+        for (const id of ids) {
+          const el = map.get(id);
+          if (!el) throw new Error(`no element with id "${id}"`);
+          if (el.type !== "arrow") throw new Error(`"${id}" is a ${el.type}; only arrows can be routed around shapes`);
+          for (const e of rerouteAround(el, map)) {
+            changed.push(e);
+            map.set(e.id, e);
+          }
+          routed.push(id);
+        }
+        commit(api, changed);
+        return { routed };
       }
 
       case "update_elements": {

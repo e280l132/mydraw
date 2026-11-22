@@ -1325,38 +1325,232 @@ await call("select", { ids: [] });
 
 // ⌘-click: connect to something already there. A line follows the pointer; the target gets an outline.
 await call("add_elements", { elements: [{ type: "rectangle", id: "lkT", x: 300, y: 700, width: 140, height: 70, label: "Target" }] });
+await page.mouse.move(5, 5); // a pointer resting on another shape would show that one's handles instead
+await call("select", { ids: [] });
+await waitFor(async () => (await qcHandles()).length === 0, "old handles gone");
 await call("select", { ids: ["qin"] });
 await waitFor(async () => (await qcHandles()).length === 4, "handles for linking");
 const lkCount = await t((x) => x.elementCount());
 await page.click('.md-qc-handle[data-side="bottom"]', { modifiers: ["Meta"] });
-await page.waitForSelector(".md-qc-link");
+await page.waitForSelector(".md-qc-linkmode");
 assert.equal((await qcHandles()).length, 0, "handles hide while picking the target");
 const lkCenter = await t((x) => x.toScreen(370, 735));
 await page.mouse.move(lkCenter.x - 30, lkCenter.y - 30);
 await page.mouse.move(lkCenter.x, lkCenter.y);
-await page.waitForSelector(".md-qc-outline.target");
+await page.waitForSelector(".md-qc-target");
 await page.mouse.click(lkCenter.x, lkCenter.y);
-await waitFor(async () => !(await page.$(".md-qc-link")), "link mode ends");
+await waitFor(async () => !(await page.$(".md-qc-linkmode")), "link mode ends");
 await waitFor(async () => (await t((x) => x.elementCount())) === lkCount + 1, "only an arrow is added");
 scene = await call("get_scene");
 const lkArrow = scene.elements.find((e) => e.type === "arrow" && e.from === "qin" && e.to === "lkT");
-assert.ok(lkArrow, "a bound arrow from the source to the chosen shape");
+assert.ok(lkArrow, "a bound arrow from the source to the chosen shape: " + JSON.stringify(scene.elements.filter((e) => e.type === "arrow")));
 await call("undo");
 await waitFor(async () => (await t((x) => x.elementCount())) === lkCount, "one undo removes the link");
-// Esc cancels, and so does a click on empty canvas.
+// Esc cancels; a click on empty canvas adds a bend point (Backspace takes it back); right-click cancels.
 await call("select", { ids: ["qin"] });
 await waitFor(async () => (await qcHandles()).length === 4, "handles again");
 await page.click('.md-qc-handle[data-side="right"]', { modifiers: ["Meta"] });
-await page.waitForSelector(".md-qc-link");
+await page.waitForSelector(".md-qc-linkmode");
 await page.keyboard.press("Escape");
-await waitFor(async () => !(await page.$(".md-qc-link")), "Esc cancels linking");
+await waitFor(async () => !(await page.$(".md-qc-linkmode")), "Esc cancels linking");
 await waitFor(async () => (await qcHandles()).length === 4, "handles back after cancelling");
 await page.click('.md-qc-handle[data-side="right"]', { modifiers: ["Meta"] });
-await page.waitForSelector(".md-qc-link");
+await page.waitForSelector(".md-qc-linkmode");
 const emptySpot = await t((x) => x.toScreen(1000, 480)); // empty inside of the big box
+await page.mouse.move(emptySpot.x, emptySpot.y);
 await page.mouse.click(emptySpot.x, emptySpot.y);
-await waitFor(async () => !(await page.$(".md-qc-link")), "a click on empty canvas cancels");
+await waitFor(async () => (await page.locator(".md-qc-wp").count()) === 1, "a click on empty canvas adds a bend point");
+await page.keyboard.press("Backspace");
+await waitFor(async () => (await page.locator(".md-qc-wp").count()) === 0, "Backspace removes it");
+await page.mouse.click(emptySpot.x, emptySpot.y, { button: "right" });
+await waitFor(async () => !(await page.$(".md-qc-linkmode")), "right-click cancels");
+await sleep(200);
+assert.equal(await page.$(".context-menu"), null, "...without opening Excalidraw's context menu");
 assert.equal(await t((x) => x.elementCount()), lkCount, "nothing added when cancelled");
+await call("select", { ids: [] });
+
+step("Phase 7: ⌘-link routes around shapes: preview, sides, bend points, styles, drag, chaining, free end; route_around");
+await call("new_drawing", { title: "Route around" });
+await page.evaluate(() => localStorage.removeItem("mydraw.linkStyle"));
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "rA", x: 300, y: 400, width: 120, height: 60, label: "A" },
+    { type: "rectangle", id: "rB", x: 900, y: 400, width: 120, height: 60, label: "B" },
+    { type: "rectangle", id: "rWall", x: 600, y: 300, width: 60, height: 260, label: "Wall" },
+  ],
+});
+const absPts = (a) => a.points.map(([x, y]) => ({ x: a.x + x, y: a.y + y }));
+const crossesBox = (pts, b) =>
+  pts.some((p, i) => {
+    if (!i) return false;
+    const q = pts[i - 1];
+    const inX = (x) => x > b.x + 1 && x < b.x + b.width - 1;
+    const inY = (y) => y > b.y + 1 && y < b.y + b.height - 1;
+    if (Math.abs(p.y - q.y) < 0.5) return inY(p.y) && Math.max(p.x, q.x) > b.x + 1 && Math.min(p.x, q.x) < b.x + b.width - 1;
+    if (Math.abs(p.x - q.x) < 0.5) return inX(p.x) && Math.max(p.y, q.y) > b.y + 1 && Math.min(p.y, q.y) < b.y + b.height - 1;
+    for (let k = 1; k < 20; k++) if (inX(q.x + ((p.x - q.x) * k) / 20) && inY(q.y + ((p.y - q.y) * k) / 20)) return true;
+    return false;
+  });
+const elFull = async (id) => (await call("get_element", { id }))[0].element;
+const arrowsNow = async () => (await call("get_scene")).elements.filter((e) => e.type === "arrow");
+const screenOf = (x, y) => t((h, p) => h.toScreen(p[0], p[1]), [x, y]);
+const startLinkFrom = async (id, side) => {
+  await page.mouse.move(5, 5);
+  await call("select", { ids: [] });
+  await waitFor(async () => (await qcHandles()).length === 0, "no handles before selecting");
+  await call("select", { ids: [id] });
+  await waitFor(async () => (await qcHandles()).length === 4, `handles on ${id}`);
+  await page.click(`.md-qc-handle[data-side="${side}"]`, { modifiers: ["Meta"] });
+  await page.waitForSelector(".md-qc-linkmode");
+};
+const pointAt = async (x, y) => {
+  const s = await screenOf(x, y);
+  await page.mouse.move(s.x - 6, s.y - 6);
+  await page.mouse.move(s.x, s.y);
+  return s;
+};
+
+// 1) Around the wall, with a live preview of the real route.
+await startLinkFrom("rA", "right");
+const bCenter = await pointAt(960, 430);
+await page.waitForSelector(".md-qc-target");
+await waitFor(async () => (await page.$eval(".md-qc-path", (e) => e.getAttribute("d")))?.split("L").length > 2, "the preview shows a bent route, not a straight line");
+await page.screenshot({ path: path.join(shots, "link-preview.png") });
+await page.mouse.click(bCenter.x, bCenter.y);
+await waitFor(async () => !(await page.$(".md-qc-linkmode")), "linking ends after connecting");
+let ra = (await arrowsNow())[0];
+assert.ok(ra && ra.from === "rA" && ra.to === "rB", "arrow from A to B");
+let raFull = await elFull(ra.id);
+assert.ok(raFull.elbowed, "a native elbow arrow");
+assert.ok(raFull.fixedSegments?.length >= 1, "its middle segments are fixed (they survive moves)");
+assert.equal(raFull.customData?.mydrawAvoid, true);
+scene = await call("get_scene");
+assert.ok(!crossesBox(absPts(raFull), el("rWall")), "the arrow goes around the wall");
+
+// 2) Moving a shape: the agent's move re-routes around shapes; a mouse drag keeps the fixed middle.
+const endBefore = absPts(raFull).at(-1);
+const bBefore = el("rB");
+await call("move", { ids: ["rB"], dy: 120 });
+raFull = await elFull(ra.id);
+scene = await call("get_scene");
+assert.equal(raFull.endBinding?.elementId, "rB", "still bound after moving B");
+assert.ok(!crossesBox(absPts(raFull), el("rWall")), "re-routed around the wall after the move");
+const raEnd = absPts(raFull).at(-1);
+assert.ok(
+  Math.abs(raEnd.x - el("rB").x - (endBefore.x - bBefore.x)) < 2 && Math.abs(raEnd.y - el("rB").y - (endBefore.y - bBefore.y)) < 2,
+  "still arrives at the same place on B after the move: " + JSON.stringify([endBefore, raEnd]),
+);
+const bNow = await screenOf(960, 550);
+await page.mouse.move(bNow.x, bNow.y);
+await page.mouse.down();
+await page.mouse.move(bNow.x + 40, bNow.y + 30, { steps: 6 });
+await page.mouse.up();
+await sleep(300);
+raFull = await elFull(ra.id);
+assert.equal(raFull.endBinding?.elementId, "rB", "still bound after dragging B");
+assert.ok(raFull.elbowed && raFull.points.length >= 3, "still an elbow arrow after the drag");
+await call("select", { ids: [] });
+
+// 3) Choosing the target side (near its top edge) and a bend point.
+scene = await call("get_scene");
+const rbBox = el("rB");
+await startLinkFrom("rA", "bottom");
+await pointAt(450, 720); // empty canvas below: a bend point
+const wpScreen = await screenOf(450, 720);
+await page.mouse.click(wpScreen.x, wpScreen.y);
+await waitFor(async () => (await page.locator(".md-qc-wp").count()) === 1, "bend point added");
+const topOfB = await pointAt(rbBox.x + rbBox.width * 0.75, rbBox.y + 3);
+await page.waitForSelector(".md-qc-port");
+await page.screenshot({ path: path.join(shots, "link-preview-bend-side.png") });
+await page.mouse.click(topOfB.x, topOfB.y);
+await waitFor(async () => (await arrowsNow()).length === 2, "second arrow");
+const rb2 = (await arrowsNow()).find((a) => a.id !== ra.id);
+const rb2Full = await elFull(rb2.id);
+const rb2Pts = absPts(rb2Full);
+const onRoute = (pts, x, y) =>
+  pts.some((p, i) => {
+    if (!i) return false;
+    const q = pts[i - 1];
+    const within = (v, a, b) => v >= Math.min(a, b) - 1.5 && v <= Math.max(a, b) + 1.5;
+    return within(x, p.x, q.x) && within(y, p.y, q.y) && (Math.abs(p.x - q.x) < 0.5 || Math.abs(p.y - q.y) < 0.5);
+  });
+assert.ok(onRoute(rb2Pts, 450, 720), "the route passes through the bend point: " + JSON.stringify(rb2Pts));
+const last = rb2Pts.at(-1);
+assert.ok(last.y < rbBox.y + 1, "it arrives on B's top side, as pointed at");
+assert.ok(Math.abs(last.x - (rbBox.x + rbBox.width * 0.75)) < 2, "at the quarter point nearest the pointer");
+
+await page.mouse.move(5, 5);
+await page.screenshot({ path: path.join(shots, "link-created.png") });
+// 4) Style keys: straight arrows, then a free end with a double-click.
+await startLinkFrom("rA", "top");
+await page.keyboard.press("r");
+await page.keyboard.press("r");
+await waitFor(async () => (await page.textContent(".md-qc-link-keys"))?.includes("Straight"), "R cycles to straight");
+const cOnWall = await pointAt(630, 430);
+await page.mouse.click(cOnWall.x, cOnWall.y);
+await waitFor(async () => (await arrowsNow()).length === 3, "straight arrow added");
+const straight = (await arrowsNow()).find((a) => a.to === "rWall");
+assert.equal((await elFull(straight.id)).elbowed, false, "straight style is not an elbow");
+await page.evaluate(() => localStorage.removeItem("mydraw.linkStyle"));
+await startLinkFrom("rA", "left");
+const freeSpot = await pointAt(500, 780); // clear canvas (the properties panel covers the left side)
+await page.mouse.dblclick(freeSpot.x, freeSpot.y);
+await waitFor(async () => (await arrowsNow()).length === 4, "free-ended arrow added");
+const free = (await arrowsNow()).find((a) => !a.to && a.from === "rA");
+assert.ok(free, "a double-click on empty canvas ends the arrow there, unattached");
+
+// 5) ⌘-drag from a handle onto a target; Shift-click keeps linking.
+await page.mouse.move(5, 5);
+await call("select", { ids: [] });
+await waitFor(async () => (await qcHandles()).length === 0, "no handles");
+await call("select", { ids: ["rWall"] });
+await waitFor(async () => (await qcHandles()).length === 4, "handles on the wall");
+const wallRight = await page.$eval('.md-qc-handle[data-side="right"]', (e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+const bDrop = await screenOf(rbBox.x + 60, rbBox.y + 30);
+await page.keyboard.down("Meta");
+await page.mouse.move(wallRight.x, wallRight.y);
+await page.mouse.down();
+await page.mouse.move(bDrop.x, bDrop.y, { steps: 8 });
+await page.mouse.up();
+await page.keyboard.up("Meta");
+await waitFor(async () => (await arrowsNow()).some((a) => a.from === "rWall" && a.to === "rB"), "⌘-drag from a handle onto B connects");
+const before5 = (await arrowsNow()).length;
+await startLinkFrom("rWall", "bottom");
+const aAgain = await pointAt(360, 430);
+await page.keyboard.down("Shift");
+await page.mouse.click(aAgain.x, aAgain.y);
+await page.keyboard.up("Shift");
+await waitFor(async () => (await arrowsNow()).length === before5 + 1, "Shift-click connects...");
+assert.ok(await page.$(".md-qc-linkmode"), "...and keeps linking from the same shape");
+const bAgain = await pointAt(rbBox.x + 60, rbBox.y + 30);
+await page.mouse.click(bAgain.x, bAgain.y);
+await waitFor(async () => (await arrowsNow()).length === before5 + 2, "second link from the same shape");
+await waitFor(async () => !(await page.$(".md-qc-linkmode")), "a plain click ends linking");
+
+// 6) Existing arrows: the palette command and the MCP tools route them around shapes.
+await call("delete_elements", { ids: (await arrowsNow()).map((a) => a.id) });
+await call("move", { ids: ["rB"], x: 900, y: 400 });
+const through = (await call("connect", { from: "rA", to: "rB" })).id;
+scene = await call("get_scene");
+assert.ok(crossesBox(absPts(await elFull(through)), el("rWall")), "a plain straight arrow crosses the wall");
+await call("select", { ids: [through] });
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+await page.keyboard.press(`${MOD}+Shift+P`);
+await page.fill(".md-pal-input", "route arrows around");
+await page.keyboard.press("Enter");
+await waitFor(async () => !crossesBox(absPts(await elFull(through)), el("rWall")), "the palette command routes it around the wall");
+await call("undo");
+await waitFor(async () => crossesBox(absPts(await elFull(through)), el("rWall")), "one undo puts it back");
+await call("route_around", { ids: [through] });
+assert.ok(!crossesBox(absPts(await elFull(through)), el("rWall")), "MCP route_around");
+const avoided = (await call("connect", { from: "rB", to: "rA", avoid: true })).id;
+assert.ok(!crossesBox(absPts(await elFull(avoided)), el("rWall")), "MCP connect with avoid:true");
+assert.equal((await callRaw("route_around", { ids: ["rA"] })).isError, true, "only arrows");
+// auto_layout keeps arrows that go around shapes doing so (and their Excalidraw segments match the new route).
+await call("auto_layout");
+const avoidedAfter = await elFull(avoided);
+assert.equal(avoidedAfter.customData?.mydrawAvoid, true, "still routed around shapes after auto_layout");
+assert.ok((avoidedAfter.fixedSegments ?? []).every((f) => f.index >= 2 && f.index <= avoidedAfter.points.length - 2), "fixed segments fit the new route");
 await call("select", { ids: [] });
 
 step("Phase 7: diagram lint (⌥⌘L): rules over MCP, fix:true is one undo step, panel rows select and fix");

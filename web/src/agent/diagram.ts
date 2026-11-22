@@ -35,6 +35,7 @@ import {
   zoneTitleOf,
   type El,
   type ElMap,
+  rerouteAround,
 } from "./sceneOps";
 
 type Loose = Record<string, unknown>;
@@ -761,6 +762,14 @@ export async function autoLayout(
   const changed = new Map(r.changed.map((c) => [c.id, c]));
   for (const e of edges) {
     let arrow = after.get(e.id)!;
+    // Arrows that go around shapes keep doing so on the new layout (unless a routing is asked for).
+    if (arrow.customData?.mydrawAvoid && p.routing === undefined) {
+      for (const x of rerouteAround(arrow, after)) {
+        after.set(x.id, x);
+        changed.set(x.id, x);
+      }
+      continue;
+    }
     const want = p.routing ?? routingOf(arrow);
     const a = after.get((arrow as El & { startBinding: { elementId: string } }).startBinding.elementId)!;
     const b = after.get((arrow as El & { endBinding: { elementId: string } }).endBinding.elementId)!;
@@ -768,11 +777,14 @@ export async function autoLayout(
     const route = routeBetween(a, b, want, given ? inset(tidyRoute(given, 20 + ELBOW_GAP), ELBOW_GAP) : undefined);
     const elbowed = want === "elbow" && arrow.type === "arrow";
     const data = { ...(arrow.customData ?? {}) };
+    delete data.mydrawAvoid;
     if (want === "curved" || (want === "elbow" && !elbowed)) data.mydrawRouting = want;
     else delete data.mydrawRouting;
     arrow = newElementWith(arrow, {
       ...arrowShape(route),
       ...bindingsFor(route, a, b, elbowed),
+      // A fresh route: Excalidraw's fixed segments of the old one would no longer match it.
+      ...(elbowed ? { fixedSegments: null, startIsSpecial: null, endIsSpecial: null } : {}),
       elbowed,
       roundness: want === "curved" ? { type: 2 } : want === "elbow" ? null : arrow.roundness,
       customData: Object.keys(data).length ? data : undefined,

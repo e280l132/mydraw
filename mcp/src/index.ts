@@ -285,13 +285,14 @@ tool(
 );
 tool(
   "connect",
-  "Draw an arrow (or line) between two elements, edge to edge, bound so it follows them when moved. routing: straight (default), elbow (right angles, re-routes itself when shapes move) or curved.",
+  "Draw an arrow (or line) between two elements, edge to edge, bound so it follows them when moved. routing: straight (default), elbow (right angles, re-routes itself when shapes move) or curved. avoid: true routes the arrow AROUND the shapes in between (right angles, kept clear of other shapes; the route's middle stays put when the ends move; re-run route_around after big moves).",
   {
     drawing,
     from: z.string(),
     to: z.string(),
     label: z.string().optional(),
     routing: z.enum(["straight", "elbow", "curved"]).optional(),
+    avoid: z.boolean().optional().describe("Route the arrow around the shapes in between"),
     type: z.enum(["arrow", "line"]).optional(),
     id: z.string().optional(),
     startArrowhead: z.enum(["arrow", "bar", "dot", "circle", "triangle", "diamond"]).nullable().optional(),
@@ -425,6 +426,12 @@ tool(
   ].join(" "),
   { drawing, format: z.enum(["csv", "yaml", "mermaid"]).optional(), text: z.string().optional(), path: z.string().optional().describe("Absolute path of a .csv/.yaml/.mmd file"), ...layoutOpts, ...placeOpts },
   call("import_diagram"),
+);
+tool(
+  "route_around",
+  "Re-route arrows so they go around the shapes in their way (right angles, a steady distance from other shapes), keeping the sides they leave and arrive on. ids: these arrows (default: every arrow in the drawing). Use after moving things or when arrows cross shapes. One undo step.",
+  { drawing, ids: ids.optional() },
+  call("route_around"),
 );
 tool("list_templates", "List starter diagram templates (3-tier web app, AWS VPC, GCP project, home network, k8s cluster, homelab).", {}, call("list_templates"), {
   readOnlyHint: true,
