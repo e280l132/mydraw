@@ -6,6 +6,7 @@ import {
   getCommonBounds,
   getLibraryItemsHash,
   loadLibraryFromBlob,
+  restoreAppState,
   serializeLibraryAsJSON,
   viewportCoordsToSceneCoords,
 } from "@excalidraw/excalidraw";
@@ -28,6 +29,10 @@ import { ExportDialog, loadExportOptions } from "./ExportDialog";
 import { CommandPalette } from "./CommandPalette";
 import { FindReplace } from "./FindReplace";
 import { PagesPanel } from "./PagesPanel";
+import { InventoryDialog } from "./InventoryDialog";
+import { ImportDialog } from "./ImportDialog";
+import { VersionHistoryDialog } from "./VersionHistoryDialog";
+import { PresentationMode } from "./PresentationMode";
 import { LintPanel } from "./LintPanel";
 import { QuickConnect } from "./QuickConnect";
 import { listFrames } from "./exportImage";
@@ -37,6 +42,7 @@ import { buildPaletteItems } from "./paletteItems";
 import { PacksDialog, RenameDialog, SaveStencilDialog } from "./library/dialogs";
 import { CUSTOM_COLOR_KEY } from "./library/IconColorSection";
 import { StyleSection } from "./StyleSection";
+import { PropertiesSection } from "./PropertiesSection";
 import { followZones, type Positions } from "./zoneFollow";
 import { colorOfElement, elementAt } from "./library/pickColor";
 import { normalizeHex } from "../../shared/colorMath";
@@ -52,6 +58,7 @@ import { DEFAULT_EXPORT_OPTIONS, renderClipboard, renderExport, type ExportForma
 import { apiSceneHash, parseDrawing, sceneHash, serializeScene, type LoadedScene } from "./scene";
 import { TabBar, type TabInfo } from "./TabBar";
 import { createAgentExecutor } from "./agent/executor";
+import { drawioToScene } from "./drawioImport";
 import type { AgentReply } from "../../shared/agent";
 
 const bridge = window.mydraw;
@@ -193,6 +200,17 @@ export function App() {
   const [exportFormat, setExportFormat] = useState<ExportFormat | undefined>(undefined);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [presenting, setPresenting] = useState(false);
+  useEffect(() => {
+    if (presenting) bridge.setFullScreen(true);
+    return () => {
+      if (presenting) bridge.setFullScreen(false);
+    };
+  }, [presenting]);
+  useEffect(() => bridge.onPresentationEnded(() => setPresenting(false)), []);
   const [pagesOpen, setPagesOpen] = useState(() => localStorage.getItem("mydraw.pagesOpen") === "1");
   const togglePages = useCallback(() => {
     setPagesOpen((v) => {
@@ -297,7 +315,7 @@ export function App() {
   );
 
   const doSave = useCallback(
-    async (id: string, saveAs: boolean): Promise<boolean> => {
+    async (id: string, saveAs: boolean, auto: boolean): Promise<boolean> => {
       const tab = getTab(id);
       const api = apis.current.get(id);
       if (!tab || !api) return false;
@@ -314,7 +332,7 @@ export function App() {
           if (tab.filePath && tab.filePath !== chosen) void bridge.unwatchFile(tab.filePath);
           filePath = chosen;
         } else {
-          await bridge.saveFile(filePath, content);
+          await bridge.saveFile(filePath, content, auto);
         }
       } catch (e) {
         showToast(`Save failed: ${(e as Error).message}`, true);
@@ -334,9 +352,9 @@ export function App() {
 
   /** Saves for one tab run one after another, never in parallel. */
   const save = useCallback(
-    (id: string, saveAs = false): Promise<boolean> => {
+    (id: string, saveAs = false, auto = false): Promise<boolean> => {
       const prev = saveChains.current.get(id) ?? Promise.resolve(true);
-      const next = prev.then(() => doSave(id, saveAs));
+      const next = prev.then(() => doSave(id, saveAs, auto));
       saveChains.current.set(id, next);
       return next;
     },
@@ -365,7 +383,7 @@ export function App() {
       t.recovery = window.setTimeout(() => writeRecoveryNow(id), RECOVERY_DELAY);
       window.clearTimeout(t.autosave);
       if (settingsRef.current?.autosave && tab.filePath && !tab.conflict) {
-        t.autosave = window.setTimeout(() => void save(id), AUTOSAVE_DELAY);
+        t.autosave = window.setTimeout(() => void save(id, false, true), AUTOSAVE_DELAY);
       }
       timers.current.set(id, t);
     },
@@ -693,6 +711,30 @@ export function App() {
     async (files: OpenedFile[]) => {
       const style = settingsRef.current?.drawingStyle ?? "clean";
       for (const f of files) {
+        if (/\.drawio$/i.test(f.path)) {
+          // draw.io: convert into a new drawing that has no file yet (Save asks where).
+          try {
+            const st = restoreAppState(drawingStyleAppState(style) as never, null) as AppState;
+            const imported = await drawioToScene(f.content, st);
+            // Unsaved until saved: marked dirty (and baselined like a recovered drawing) so closing asks
+            // about it and crash recovery keeps it.
+            const tabId = newId();
+            baselines.current.set(tabId, RECOVERED);
+            addTab({
+              id: tabId,
+              title: (f.path.split(/[\\/]/).pop() ?? "diagram").replace(/\.drawio$/i, "") || "diagram",
+              filePath: null,
+              dirty: true,
+              conflict: null,
+              keep: true,
+              initialData: initialDataFor({ elements: imported.elements, appState: {}, files: Object.fromEntries(imported.files.map((x) => [x.id, x])) }, style),
+            });
+            if (imported.warnings.length) showToast(`Imported ${f.path.split(/[\\/]/).pop()} with notes: ${imported.warnings.join("; ")}`);
+          } catch (e) {
+            showToast(`Could not import ${f.path}: ${(e as Error).message}`, true);
+          }
+          continue;
+        }
         const existing = tabsRef.current.find((t) => t.filePath === f.path);
         if (existing) {
           setActive(existing.id);
@@ -858,6 +900,20 @@ export function App() {
           return togglePages();
         case "toggleLint":
           return toggleLint();
+        case "present":
+          if (apis.current.get(activeRef.current)) setPresenting(true);
+          return;
+        case "versionHistory":
+          if (!apis.current.get(activeRef.current)) return;
+          if (!tabsRef.current.find((t) => t.id === activeRef.current)?.filePath) return showToast("Save the drawing first: its version history starts with the first save.", true);
+          setHistoryOpen(true);
+          return;
+        case "importText":
+          if (apis.current.get(activeRef.current)) setImportOpen(true);
+          return;
+        case "inventory":
+          if (apis.current.get(activeRef.current)) setInventoryOpen(true);
+          return;
         case "findReplace":
           if (apis.current.get(activeRef.current)) setFindOpen(true);
           return;
@@ -1044,6 +1100,30 @@ export function App() {
         // ⌥⌘L: diagram lint panel.
         e.preventDefault();
         toggleLint();
+        return;
+      }
+      if (e.altKey && !e.shiftKey && e.code === "Enter") {
+        // ⌥⌘Return: start the presentation.
+        e.preventDefault();
+        void onCommand({ type: "present" });
+        return;
+      }
+      if (e.altKey && !e.shiftKey && e.code === "KeyV") {
+        // ⌥⌘V: version history.
+        e.preventDefault();
+        void onCommand({ type: "versionHistory" });
+        return;
+      }
+      if (e.altKey && !e.shiftKey && e.code === "KeyU") {
+        // ⌥⌘U: import a diagram from text (CSV / YAML / Mermaid).
+        e.preventDefault();
+        if (apis.current.get(activeRef.current)) setImportOpen(true);
+        return;
+      }
+      if (e.altKey && !e.shiftKey && e.code === "KeyT") {
+        // ⌥⌘T: inventory table.
+        e.preventDefault();
+        if (apis.current.get(activeRef.current)) setInventoryOpen(true);
         return;
       }
       if (e.altKey && !e.shiftKey && e.code === "KeyF") {
@@ -1297,7 +1377,7 @@ export function App() {
             onOpenLink={onOpenLink}
           />
         ))}
-        {styleHost && createPortal(<StyleSection api={apis.current.get(activeId)} tick={selTick} onToast={showToast} custom={customColor} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} />, styleHost)}
+        {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} onToast={showToast} custom={customColor} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} /><PropertiesSection api={apis.current.get(activeId)} tick={selTick} /></>, styleHost)}
       </div>
       {lintOpen && <LintPanel api={activeApi} onClose={toggleLint} />}
       {panelOpen && (
@@ -1348,6 +1428,23 @@ export function App() {
           library={libraryIndex}
           blocked={exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
           onToast={showToast}
+        />
+      )}
+      {presenting && activeApi && <PresentationMode key={activeId} api={activeApi} darkMode={theme === "dark"} onClose={() => setPresenting(false)} />}
+      {historyOpen && activeApi && active?.filePath && (
+        <VersionHistoryDialog key={activeId} api={activeApi} filePath={active.filePath} title={active.title} onClose={() => setHistoryOpen(false)} onDone={showToast} />
+      )}
+      {importOpen && activeApi && <ImportDialog onClose={() => setImportOpen(false)} onDone={showToast} />}
+      {inventoryOpen && activeApi && (
+        <InventoryDialog
+          key={activeId}
+          api={activeApi}
+          onClose={() => setInventoryOpen(false)}
+          onExportCsv={() => {
+            setInventoryOpen(false);
+            setExportFormat("csv");
+            setExportOpen(true);
+          }}
         />
       )}
       {findOpen && activeApi && <FindReplace key={activeId} api={activeApi} onClose={() => setFindOpen(false)} onToast={showToast} />}

@@ -2,16 +2,19 @@
 // that touches a drawing is forwarded to the renderer, which owns the scene and runs commands one
 // at a time (see web/src/agent/executor.ts).
 import { app, ipcMain, type BrowserWindow } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { AGENT_EXPORT_FORMATS, exportFormatForPath, isPagedFormat, type AgentCommand, type AgentReply } from "../../shared/agent";
 import { normalizeSpec, type DiagramSpec } from "../../shared/diagram";
 import { findStencil as lookupStencil, searchItems, type LibraryItem } from "../../shared/library";
 import { findTemplate, TEMPLATES } from "../../shared/templates";
+import { csvToSpec, importFormatForPath, yamlToSpec } from "../../shared/importers";
 import { batchFileStems, ensureExtension } from "../../shared/names";
 import type { OpenedFile } from "../../shared/types";
 import { writeBinary } from "./files";
 import type { LibraryStore } from "./library";
 
+const MAX_IMPORT_BYTES = 2_000_000;
 const RENDERER_TIMEOUT = 120_000;
 const READY_TIMEOUT = 30_000;
 
@@ -99,6 +102,25 @@ export function setupAgent(deps: AgentDeps): (method: string, params: Record<str
       // ----- diagrams -----
       case "build_diagram":
         return buildDiagram(normalizeSpec(params.diagram ?? params), params);
+      case "import_diagram": {
+        // CSV / YAML / Mermaid text (inline or from a file) -> a laid-out diagram in the drawing.
+        let text = typeof params.text === "string" ? params.text : null;
+        const file = params.path !== undefined ? absPath(params.path, "path") : null;
+        if (text === null && file) {
+          if (fs.statSync(file).size > MAX_IMPORT_BYTES) throw new Error(`${file} is larger than ${MAX_IMPORT_BYTES / 1_000_000} MB`);
+          text = fs.readFileSync(file, "utf8");
+        }
+        if (!text || !text.trim()) throw new Error("give `text` or a `path` to a CSV, YAML or Mermaid file");
+        if (text.length > MAX_IMPORT_BYTES) throw new Error(`the text is larger than ${MAX_IMPORT_BYTES / 1_000_000} MB`);
+        const format = typeof params.format === "string" ? params.format : file ? importFormatForPath(file) : null;
+        if (format !== "csv" && format !== "yaml" && format !== "mermaid") throw new Error("format must be csv, yaml or mermaid (or give a path ending in .csv, .yaml or .mmd)");
+        if (format === "mermaid") return renderer("mermaid_to_scene", { ...params, mermaid: text });
+        const { spec, warnings } = format === "csv" ? csvToSpec(text) : yamlToSpec(text);
+        for (const k of ["direction", "algorithm", "routing", "spacing", "x", "y", "title", "legend", "iconSize"]) if (params[k] !== undefined) spec[k] = params[k];
+        const result = (await buildDiagram(normalizeSpec(spec), params, true)) as Record<string, unknown>;
+        const built = Array.isArray(result.warnings) ? (result.warnings as string[]) : [];
+        return { ...result, format, warnings: [...warnings, ...built] };
+      }
       case "list_templates":
         return TEMPLATES.map((t) => ({ name: t.name, title: t.title, description: t.description }));
       case "apply_template": {

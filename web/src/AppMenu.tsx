@@ -108,6 +108,18 @@ export function AppMenu({ settings, onCommand, onSettings }: Props) {
         <MainMenu.Item onSelect={() => onCommand({ type: "toggleLint" })} shortcut="⌥⌘L">
           Show / hide diagram lint
         </MainMenu.Item>
+        <MainMenu.Item onSelect={() => onCommand({ type: "present" })} shortcut="⌥⌘↵">
+          Start presentation
+        </MainMenu.Item>
+        <MainMenu.Item onSelect={() => onCommand({ type: "versionHistory" })} shortcut="⌥⌘V">
+          Version history…
+        </MainMenu.Item>
+        <MainMenu.Item onSelect={() => onCommand({ type: "importText" })} shortcut="⌥⌘U">
+          Import diagram from text…
+        </MainMenu.Item>
+        <MainMenu.Item onSelect={() => onCommand({ type: "inventory" })} shortcut="⌥⌘T">
+          Inventory table…
+        </MainMenu.Item>
         <MainMenu.Item onSelect={() => onCommand({ type: "findReplace" })} shortcut="⌥⌘F">
           Find and replace…
         </MainMenu.Item>

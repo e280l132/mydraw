@@ -51,6 +51,10 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
   cmd("View", "Show / hide diagram lint", { type: "toggleLint" }, { hint: "⌥⌘L", keywords: "check problems review overlap unconnected arrows palette colors fix" });
   add("Edit", "Link selection to a drawing…", c.linkSelection, { keywords: "hyperlink drill down open diagram" });
   add("Edit", "Remove links from selection", c.clearLinks, { keywords: "hyperlink unlink" });
+  cmd("View", "Start presentation (frames as slides)", { type: "present" }, { hint: "⌥⌘↵", keywords: "slides fullscreen present show pages" });
+  cmd("File", "Version history…", { type: "versionHistory" }, { hint: "⌥⌘V", keywords: "snapshots restore previous older undo save" });
+  cmd("File", "Import diagram from text (CSV / YAML / Mermaid)…", { type: "importText" }, { hint: "⌥⌘U", keywords: "paste hosts list diagram as code build generate" });
+  cmd("Edit", "Inventory table…", { type: "inventory" }, { hint: "⌥⌘T", keywords: "nodes hosts ip hostname properties grid spreadsheet" });
   cmd("Edit", "Find and replace…", { type: "findReplace" }, { hint: "⌥⌘F", keywords: "search text rename" });
 
   // ----- export -----

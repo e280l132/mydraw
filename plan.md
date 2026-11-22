@@ -141,7 +141,14 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
    - **Quick connect**: hover a shape for four "+" handles; click adds a connected copy with a bound elbow arrow, Shift/right-click picks a stencil; zones/frames grow to fit; one undo step. Built by an Opus subagent.
    - **Diagram lint** (⌥⌘L, MCP `lint_diagram`): overlap, unconnected arrow, unlabeled node, missing IP, off-palette color; safe one-click fixes (bind a free arrow end, snap a color); `fix: true` is one undo step. Built by an Opus subagent.
    - Not done: Excalidraw's own palette items (⌘/) can't be extended; no thumbnails in the pages panel; no replace-one (only replace all).
-8. **Data features:** properties panel, inventory table, CSV/YAML import, snapshots, presentation mode, drawio import.
+8. ✅ **Data features** (done 2026-11-21):
+   - **Properties panel**: hostname, IP, VLAN, role, owner, URL, notes for one selected shape or icon node, in Excalidraw's properties column under "Colors & styles"; stored in `customData` (`shared/properties.ts`, alias tolerant). Excalidraw's undo does not track `customData`, so property edits are not undoable. MCP: `get_inventory`, `set_properties`. Exports (CSV/Markdown) gained vlan, role, owner, url columns.
+   - **Inventory table** (⌥⌘T): every node in an editable grid; click headers to sort (IPs by octet, natural text order, empty last), filter box, name edits the label, other cells edit properties, "◎" selects the node, "Export CSV…" opens the export dialog on CSV.
+   - **Import from text** (⌥⌘U, MCP `import_diagram`): CSV (host list with `name`, `type`/`icon`, `zone` "Prod / DMZ", `connects_to`, any other column as a property; or `from`/`to`/`label` list), YAML (the DiagramSpec with shortcuts: node names, maps, `a -> b: label` edges), Mermaid (via `mermaid_to_scene`); paste box or file; same ELK layout and icons as `build_diagram`.
+   - **Version history** (⌥⌘V): a snapshot per changed save in `<userData>/snapshots` (autosaves at most every 2 min, 60 kept); preview and restore (one undo step; the open state is snapshotted first).
+   - **Presentation mode** (⌥⌘Return): frames as full-screen slides in page order, arrows/space/click, Esc; a drawing without frames is one slide.
+   - **draw.io import**: Open (and MCP `open_drawing`) accept `.drawio`; it becomes a new unsaved drawing, never saved back into the .drawio.
+   - Not done: Ask Claude box (plan: later); properties on hover; Mermaid *export* round trip UI beyond the existing export; snapshots are per path (a renamed file starts a new history).
 9. **Package:** `electron-builder` → unsigned macOS `.app`/DMG; `mydraw` CLI symlink. Later: Ask Claude box.
 
 Tests: vitest for catalog builder, exporters (format headers/dimensions), drawio/Mermaid writers, `build_diagram` layout, control-server auth; Playwright-Electron smoke test.

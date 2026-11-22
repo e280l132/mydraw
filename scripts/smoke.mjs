@@ -752,14 +752,14 @@ await call("activate_drawing", { drawing: "Exports" });
 const csv = path.join(outDir, "inventory.csv");
 await call("export", { path: csv });
 const csvLines = fs.readFileSync(csv, "utf8").split("\r\n");
-assert.equal(csvLines[0], "name,kind,type,zone,ip,hostname,notes", "CSV header");
+assert.equal(csvLines[0], "name,kind,type,zone,ip,hostname,vlan,role,owner,url,notes", "CSV header");
 assert.ok(csvLines.some((l) => l.startsWith("Web | 1,Server,rectangle,DMZ,") && l.includes("10.0.0.5") && l.includes("web-1") && l.includes("DMZ")), "CSV row for the web node");
 assert.ok(csvLines.some((l) => l.startsWith("Database,") && l.includes("Core") && l.includes("10.0.1.9")), "CSV row for the database");
 assert.ok(fs.readFileSync(csv, "utf8").includes('"public, ""edge"""'), "CSV quotes notes");
 const md = path.join(outDir, "inventory.md");
 await call("export", { path: md });
 const mdLines = fs.readFileSync(md, "utf8").split("\n");
-assert.equal(mdLines[0], "| Name | Kind | Type | Zone | Ip | Hostname | Notes |", "Markdown table header");
+assert.equal(mdLines[0], "| Name | Kind | Type | Zone | Ip | Hostname | Vlan | Role | Owner | Url | Notes |", "Markdown table header");
 assert.ok(mdLines.some((l) => l.includes("Web \\| 1") && l.includes("10.0.0.5")), "Markdown row, pipe escaped");
 
 const html = path.join(outDir, "diagram.html");
@@ -837,6 +837,11 @@ const drawioFrames = path.join(outDir, "frames.drawio");
 await call("export", { path: drawioFrames, scope: "frames" });
 assert.equal((fs.readFileSync(drawioFrames, "utf8").match(/<diagram /g) ?? []).length, 2, "one draw.io page per frame");
 const exportsFile = (await call("save", { path: path.join(work, "exports-test.excalidraw") })).path;
+// Autosave keeps rewriting that file while later steps edit the drawing; the CLI checks need it as it was.
+const frozenDir = path.join(work, "frozen");
+fs.mkdirSync(frozenDir, { recursive: true });
+const exportsFrozen = path.join(frozenDir, "exports-test.excalidraw");
+fs.copyFileSync(exportsFile, exportsFrozen);
 
 // Clipboard (File > Copy As ...): text and image.
 const clip = (fn) => app.evaluate(fn);
@@ -1220,6 +1225,223 @@ await page.waitForSelector(".md-lint-empty >> text=No problems found");
 await page.keyboard.press(`${MOD}+Alt+KeyL`);
 await waitFor(async () => !(await page.$(".md-lint")), "lint panel toggles closed");
 
+// ---------- Phase 8: data features ----------
+step("Phase 8: properties panel edits a node's hostname/IP/role; get_inventory and set_properties agree");
+await call("new_drawing", { title: "Props" });
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "p1", x: 300, y: 300, width: 160, height: 80, label: "Core" },
+    { type: "rectangle", id: "p2", x: 700, y: 300, width: 160, height: 80, label: "Edge" },
+  ],
+});
+await call("select", { ids: ["p1"] });
+const propInput = (key) => `.md-props [data-prop="${key}"]`;
+await page.waitForSelector(propInput("ip"), { timeout: 10000 });
+await page.fill(propInput("ip"), "10.0.0.1");
+await page.fill(propInput("hostname"), "core-1");
+await page.press(propInput("hostname"), "Enter");
+await waitFor(async () => {
+  const d = (await call("get_element", { id: "p1" }))[0].element.customData ?? {};
+  return d.ip === "10.0.0.1" && d.hostname === "core-1";
+}, "typing in the panel stores ip and hostname");
+await page.fill(propInput("role"), "core switch");
+await page.press(propInput("role"), "Tab");
+await waitFor(async () => (await call("get_element", { id: "p1" }))[0].element.customData?.role === "core switch", "blur commits");
+let inv = await call("get_inventory");
+let core = inv.nodes.find((n) => n.name === "Core");
+assert.equal(core.ip, "10.0.0.1");
+assert.equal(core.hostname, "core-1");
+assert.equal(core.role, "core switch");
+assert.ok(inv.columns.includes("vlan") && inv.columns.includes("owner"));
+
+await call("set_properties", { id: "p2", properties: { ip: "10.0.0.2", rack: "A1", vlan: "20" } });
+inv = await call("get_inventory");
+const edge = inv.nodes.find((n) => n.name === "Edge");
+assert.deepEqual([edge.ip, edge.vlan, edge.extra.rack], ["10.0.0.2", "20", "A1"]);
+await call("select", { ids: ["p2"] });
+await waitFor(async () => (await page.inputValue(propInput("ip"))) === "10.0.0.2", "panel follows the selection");
+await call("set_properties", { id: "p2", properties: { ip: null } });
+assert.equal((await call("get_inventory")).nodes.find((n) => n.name === "Edge").ip, "");
+assert.equal((await callRaw("set_properties", { id: "p2", properties: { mydrawNode: "x" } })).isError, true, "reserved keys refused");
+await call("select", { ids: ["p1", "p2"] });
+await waitFor(async () => !(await page.$(".md-props")), "no properties section for a multi-selection");
+
+step("Phase 8: inventory table (⌥⌘T) lists nodes, filters, sorts, and edits the diagram");
+await call("select", { ids: [] });
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+await page.keyboard.press(`${MOD}+Alt+KeyT`);
+await page.waitForSelector(".md-inv");
+const invNames = () => page.$$eval('.md-inv-cell[data-col="name"]', (els) => els.map((e) => e.value));
+await waitFor(async () => (await invNames()).join() === "Core,Edge", "both nodes listed");
+await page.fill(".md-inv-filter", "core");
+await waitFor(async () => (await invNames()).join() === "Core", "filter narrows the rows");
+assert.ok((await page.textContent(".md-inv-count")).includes("1 of 2"));
+await page.fill(".md-inv-filter", "");
+await page.fill('.md-inv-cell[data-row="p2"][data-col="ip"]', "10.0.0.20");
+await page.press('.md-inv-cell[data-row="p2"][data-col="ip"]', "Enter");
+await waitFor(async () => (await call("get_inventory")).nodes.find((n) => n.id === "p2").ip === "10.0.0.20", "ip edit reaches the diagram");
+await page.fill('.md-inv-cell[data-row="p2"][data-col="name"]', "Edge-1");
+await page.press('.md-inv-cell[data-row="p2"][data-col="name"]', "Enter");
+await waitFor(async () => JSON.stringify(await call("get_scene")).includes("Edge-1"), "rename edits the label on the canvas");
+await page.click('.md-inv-table th:has-text("IP")');
+await waitFor(async () => (await invNames()).join() === "Core,Edge-1", "sorted by IP ascending");
+await page.click('.md-inv-table th:has-text("IP")');
+await waitFor(async () => (await invNames()).join() === "Edge-1,Core", "sorted by IP descending");
+await page.click('.md-modal-actions button:text-is("Export CSV…")');
+await page.waitForSelector(".md-export-options .md-seg button.on:text-is('CSV')", { timeout: 10000 });
+await page.keyboard.press("Escape");
+await waitFor(async () => !(await page.$(".md-export")), "export dialog closed");
+
+step("Phase 8: import_diagram builds CSV, YAML and Mermaid; the import dialog (⌥⌘U) does the same");
+await call("new_drawing", { title: "Import" });
+const csvText = [
+  "name,zone,ip,hostname,role,connects_to",
+  "core,Prod,10.0.1.1,core-1,switch,web-1;web-2;Internet",
+  "web-1,Prod / DMZ,10.0.1.10,,web,",
+  "web-2,Prod / DMZ,10.0.1.11,,web,core",
+].join("\n");
+let imp = await call("import_diagram", { format: "csv", text: csvText });
+assert.equal(imp.nodes.length, 4, "three rows plus the linked-to Internet node");
+assert.equal(imp.edges.length, 3, "core-web-1, core-web-2 (both ways merged), core-Internet");
+assert.equal(imp.zones.length, 2, "Prod and Prod / DMZ");
+assert.ok(imp.warnings.some((w) => w.includes("Internet")), "unlisted link target is reported");
+inv = await call("get_inventory");
+core = inv.nodes.find((n) => n.name === "core");
+assert.deepEqual([core.ip, core.hostname, core.role, core.zone], ["10.0.1.1", "core-1", "switch", "Prod"]);
+assert.equal(inv.nodes.find((n) => n.name === "web-1").zone, "Prod / DMZ");
+
+const yamlFile = path.join(work, "net.yaml");
+fs.writeFileSync(yamlFile, "direction: right\nnodes:\n  users: Users\n  api: { label: API, data: { ip: 10.9.0.1 } }\n  db: Database\nedges:\n  - users -> api: HTTPS\n  - api -> db: SQL\n");
+imp = await call("import_diagram", { path: yamlFile });
+assert.equal(imp.format, "yaml");
+assert.equal(imp.nodes.length, 3);
+assert.equal(imp.edges.length, 2);
+assert.equal((await call("get_inventory")).nodes.find((n) => n.name === "API").ip, "10.9.0.1");
+
+imp = await call("import_diagram", { format: "mermaid", text: "flowchart LR\n  A[Alpha] --> B[Beta]\n  B --> C[Gamma]" });
+assert.equal(imp.nodes.length, 3);
+
+for (const [args, what] of [
+  [{ format: "csv", text: "a,b\n1,2" }, "csv without a name column"],
+  [{ format: "yaml", text: "nodes: [a\n" }, "invalid yaml"],
+  [{ text: "x" }, "no format"],
+  [{ format: "csv", path: path.join(work, "does-not-exist.csv") }, "missing file"],
+]) {
+  assert.equal((await callRaw("import_diagram", args)).isError, true, what);
+}
+
+// The dialog.
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+const beforeCount = (await call("get_inventory")).nodes.length;
+await page.keyboard.press(`${MOD}+Alt+KeyU`);
+await page.waitForSelector(".md-import");
+await page.click('.md-import .md-seg button:text-is("YAML")');
+await page.fill(".md-import-text", "nodes: [a\n");
+await page.click('.md-import .md-modal-actions button:text-is("Import")');
+await page.waitForSelector(".md-import-error", { timeout: 10000 });
+assert.ok((await page.textContent(".md-import-error")).includes("invalid YAML"), "errors show in the dialog");
+await page.fill(".md-import-text", "nodes: [Router A, Router B]\nedges:\n  - Router A -> Router B");
+await page.click('.md-import .md-modal-actions button:text-is("Import")');
+await waitFor(async () => !(await page.$(".md-import")), "dialog closes after a successful import");
+await waitFor(async () => (await call("get_inventory")).nodes.length === beforeCount + 2, "two nodes imported from the dialog");
+await page.waitForSelector(".md-toast", { timeout: 5000 });
+assert.ok((await page.textContent(".md-toast")).includes("Imported 2 nodes, 1 connection"), "toast summarises the import");
+
+step("Phase 8: version history keeps a snapshot per changed save; preview and restore (one undo step)");
+await call("new_drawing", { title: "Snap" });
+const snapFile = path.join(work, "snap", "versions.excalidraw");
+fs.mkdirSync(path.dirname(snapFile), { recursive: true });
+await call("add_elements", { elements: [{ type: "rectangle", id: "s1", x: 300, y: 300, width: 160, height: 80, label: "One" }] });
+await call("save", { path: snapFile });
+await call("add_elements", { elements: [{ type: "rectangle", id: "s2", x: 600, y: 300, width: 160, height: 80, label: "Two" }] });
+await call("save", { path: snapFile });
+await call("save", { path: snapFile }); // unchanged: no new snapshot
+const snapList = await page.evaluate((f) => window.mydraw.listSnapshots(f), snapFile);
+assert.equal(snapList.length, 2, "one snapshot per changed save, none for an identical one");
+assert.ok(snapList[0].time > snapList[1].time, "newest first");
+
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+await page.keyboard.press(`${MOD}+Alt+KeyV`);
+await page.waitForSelector(".md-hist");
+await waitFor(async () => (await page.locator(".md-hist-item").count()) === 2, "two versions listed");
+await page.waitForSelector(".md-hist-preview img", { timeout: 10000 });
+await page.click(".md-hist-item >> nth=1"); // the older version
+await page.waitForSelector(".md-hist-preview img", { timeout: 10000 });
+await page.click('.md-hist .md-modal-actions button:text-is("Restore this version")');
+await waitFor(async () => !(await page.$(".md-hist")), "dialog closes after restoring");
+await waitFor(async () => (await call("get_inventory")).nodes.map((n) => n.name).join() === "One", "the older version is back (Two is gone)");
+await call("undo");
+await waitFor(async () => (await call("get_inventory")).nodes.map((n) => n.name).sort().join() === "One,Two", "one undo brings the newer state back");
+
+await call("new_drawing", { title: "Never saved" });
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+await page.keyboard.press(`${MOD}+Alt+KeyV`);
+await page.waitForSelector(".md-toast.error", { timeout: 5000 });
+assert.ok((await page.textContent(".md-toast.error")).includes("Save the drawing first"), "unsaved drawings have no history yet");
+assert.equal(await page.$(".md-hist"), null);
+
+step("Phase 8: presentation mode shows each frame as a slide; keys and clicks navigate; Esc leaves");
+await call("new_drawing", { title: "Deck" });
+await call("add_elements", {
+  elements: [
+    { type: "frame", id: "d-intro", x: 0, y: 300, width: 600, height: 340, name: "Intro", children: [] },
+    { type: "frame", id: "d-net", x: 700, y: 300, width: 600, height: 340, name: "Network", children: [] },
+    { type: "rectangle", id: "d-a", x: 80, y: 380, width: 160, height: 80, label: "Hello" },
+    { type: "rectangle", id: "d-b", x: 780, y: 380, width: 160, height: 80, label: "Core" },
+  ],
+});
+await call("raw_update", { elements: [{ id: "d-a", frameId: "d-intro" }, { id: "d-b", frameId: "d-net" }] });
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+await page.keyboard.press(`${MOD}+Shift+P`);
+await page.fill(".md-pal-input", "start presentation");
+await page.keyboard.press("Enter");
+await page.waitForSelector(".md-present");
+const slideState = () => page.evaluate(() => {
+  const el = document.querySelector(".md-present");
+  return el ? `${el.dataset.index}/${el.dataset.count}|${document.querySelector(".md-present-hud span:nth-child(2)")?.textContent}` : null;
+});
+assert.equal(await slideState(), "0/2|Intro");
+await page.waitForSelector(".md-present-slide", { timeout: 15000 });
+await page.keyboard.press("ArrowRight");
+await waitFor(async () => (await slideState()) === "1/2|Network", "arrow right goes to the next slide");
+await page.waitForSelector(".md-present-slide", { timeout: 15000 });
+await page.keyboard.press("ArrowRight");
+assert.equal(await slideState(), "1/2|Network", "stays on the last slide");
+await page.keyboard.press("ArrowLeft");
+await waitFor(async () => (await slideState()) === "0/2|Intro", "arrow left goes back");
+await page.mouse.click(1100, 400); // right part of the window: next
+await waitFor(async () => (await slideState()) === "1/2|Network", "clicking the right side advances");
+await page.mouse.click(100, 400); // left third: back
+await waitFor(async () => (await slideState()) === "0/2|Intro", "clicking the left side goes back");
+await page.keyboard.press("Escape");
+await waitFor(async () => !(await page.$(".md-present")), "Escape leaves the presentation");
+
+// Without frames the whole drawing is one slide.
+await call("new_drawing", { title: "One slide" });
+await call("add_elements", { elements: [{ type: "rectangle", id: "o1", x: 300, y: 300, width: 160, height: 80, label: "Only" }] });
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+await page.keyboard.press(`${MOD}+Alt+Enter`);
+await page.waitForSelector(".md-present");
+assert.equal(await slideState(), "0/1|Drawing");
+await page.waitForSelector(".md-present-slide", { timeout: 15000 });
+await page.click('.md-present-hud button[aria-label="End presentation"]');
+await waitFor(async () => !(await page.$(".md-present")), "the close button leaves too");
+
+step("Phase 8: a .drawio file opens as a new unsaved drawing (labels, properties, zones, edges), never saved back into the .drawio");
+const opened = await call("open_drawing", { path: drawioFile });
+assert.equal(opened.path, null, "an imported drawing has no file yet");
+assert.equal((await t((x) => x.state())).tabs.find((tab) => tab.id === opened.id)?.dirty, true, "unsaved import: closing asks, recovery keeps it");
+const importedInv = await call("get_inventory");
+assert.ok(importedInv.nodes.some((n) => n.name === "Web | 1" && n.ip === "10.0.0.5"), "labels and properties survive");
+assert.ok(importedInv.nodes.some((n) => n.name === "Database"));
+const importedScene = await call("get_scene");
+assert.ok(importedScene.elements.some((e) => e.type === "arrow" && e.from && e.to), "edges come in bound");
+assert.ok((await page.evaluate(() => window.mydraw.getSettings())).recentFiles.every((f) => !f.endsWith(".drawio")), "not added to the recent files");
+const importedSave = path.join(work, "from-drawio.excalidraw");
+await call("save", { path: importedSave });
+assert.equal(JSON.parse(fs.readFileSync(importedSave, "utf8")).type, "excalidraw");
+assert.ok(fs.readFileSync(drawioFile, "utf8").startsWith("<"), "the .drawio file itself is untouched");
+
 await client.close();
 
 app.process().kill("SIGKILL");
@@ -1236,26 +1458,26 @@ assert.ok(help.out.includes("mydraw export"), "CLI help");
 assert.equal(cli("export").code, 2, "usage error exit code");
 
 const cliJpg = path.join(work, "cli-prod.jpg");
-let r = cli("export", exportsFile, "--format", "jpg", "--scale", "2", "--frame", "Prod", "-o", cliJpg);
+let r = cli("export", exportsFrozen, "--format", "jpg", "--scale", "2", "--frame", "Prod", "-o", cliJpg);
 assert.equal(r.code, 0, r.err);
 assert.deepEqual([...fs.readFileSync(cliJpg).subarray(0, 3)], [0xff, 0xd8, 0xff], "CLI JPG magic");
-r = cli("export", exportsFile, "--frame", "Nope", "-o", path.join(work, "nope.png"));
+r = cli("export", exportsFrozen, "--frame", "Nope", "-o", path.join(work, "nope.png"));
 assert.equal(r.code, 1);
 assert.ok(/no frame "Nope"/.test(r.err), r.err);
 
-r = cli("export", exportsFile, "--scope", "frames", "--format", "pdf", "--page", "a4", "-o", path.join(work, "cli.pdf"));
+r = cli("export", exportsFrozen, "--scope", "frames", "--format", "pdf", "--page", "a4", "-o", path.join(work, "cli.pdf"));
 assert.equal(r.code, 0, r.err);
 assert.ok(r.out.includes("2 pages"));
 assert.equal(pdfPages(path.join(work, "cli.pdf")), 2, "CLI PDF, one page per frame");
-r = cli("export", exportsFile, "--scope", "frames", "-f", "pptx", "-o", path.join(work, "cli.pptx"), "--slides", "4:3", "--dark");
+r = cli("export", exportsFrozen, "--scope", "frames", "-f", "pptx", "-o", path.join(work, "cli.pptx"), "--slides", "4:3", "--dark");
 assert.equal(r.code, 0, r.err);
 assert.equal(zipSlides(path.join(work, "cli.pptx")), 2, "CLI PPTX slides");
-r = cli("export", exportsFile, "--scope", "frames", "-o", path.join(work, "cli-frames"), "--format", "webp", "--no-background");
+r = cli("export", exportsFrozen, "--scope", "frames", "-o", path.join(work, "cli-frames"), "--format", "webp", "--no-background");
 assert.equal(r.code, 0, r.err);
 assert.deepEqual(fs.readdirSync(path.join(work, "cli-frames")).sort(), ["Prod.webp", "Staging.webp"]);
-r = cli("export", exportsFile, "-f", "csv");
+r = cli("export", exportsFrozen, "-f", "csv");
 assert.equal(r.code, 0, r.err);
-assert.ok(fs.readFileSync(path.join(work, "exports-test.csv"), "utf8").startsWith("name,kind,type,zone"), "CLI default output next to the input");
+assert.ok(fs.readFileSync(path.join(frozenDir, "exports-test.csv"), "utf8").startsWith("name,kind,type,zone"), "CLI default output next to the input");
 
 // draw.io -> excalidraw keeps the node labels (and the properties).
 const labelsOf = (file) => {
@@ -1269,7 +1491,7 @@ const labelsOf = (file) => {
 const converted = path.join(work, "converted.excalidraw");
 r = cli("convert", drawioFile, "--to", "excalidraw", "-o", converted);
 assert.equal(r.code, 0, r.err);
-assert.deepEqual(labelsOf(converted), labelsOf(exportsFile), "draw.io round trip keeps the node labels");
+assert.deepEqual(labelsOf(converted), labelsOf(exportsFrozen), "draw.io round trip keeps the node labels");
 assert.ok(labelsOf(converted).includes("Web | 1"));
 const convEls = JSON.parse(fs.readFileSync(converted, "utf8")).elements;
 assert.ok(convEls.some((e) => e.customData?.ip === "10.0.0.5"), "properties survive the round trip");

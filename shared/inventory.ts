@@ -1,20 +1,25 @@
 // Inventory export: one row per node (icon nodes and labelled shapes) as CSV or a Markdown table.
+import { extraProperties, propertyOf, type PropertyKey } from "./properties";
 import { zonePath, type GraphNode, type SceneGraph } from "./sceneGraph";
 
-export const INVENTORY_COLUMNS = ["name", "kind", "type", "zone", "ip", "hostname", "notes"] as const;
+export const INVENTORY_COLUMNS = ["name", "kind", "type", "zone", "ip", "hostname", "vlan", "role", "owner", "url", "notes"] as const;
 export type InventoryRow = Record<(typeof INVENTORY_COLUMNS)[number], string>;
 
-const ALIASES: Record<string, string[]> = {
-  ip: ["ip", "ipaddress", "ip_address", "address", "addr"],
-  hostname: ["hostname", "host", "fqdn", "dns"],
-  notes: ["notes", "note", "description", "comment", "comments"],
-};
+/** A node's value for an inventory field, matching the aliases (see shared/properties.ts). */
+export function inventoryField(n: GraphNode, field: PropertyKey): string {
+  return propertyOf(n.data, field);
+}
 
-/** A node's value for an inventory field (ip, hostname, notes), matching the aliases. */
-export function inventoryField(n: GraphNode, field: "ip" | "hostname" | "notes"): string {
-  const wanted = ALIASES[field];
-  for (const [k, v] of Object.entries(n.data)) if (wanted.includes(k.toLowerCase())) return v;
-  return "";
+/** An inventory row plus the node's element id and any user properties that are not inventory columns. */
+export type InventoryEntry = InventoryRow & { id: string; extra: Record<string, string> };
+
+export function inventoryEntries(graph: SceneGraph): InventoryEntry[] {
+  const rows = inventoryRows(graph);
+  return graph.nodes.map((n, i) => ({
+    ...rows[i],
+    id: n.id,
+    extra: Object.fromEntries(Object.entries(extraProperties(n.data))),
+  }));
 }
 
 export function inventoryRows(graph: SceneGraph): InventoryRow[] {
@@ -25,6 +30,10 @@ export function inventoryRows(graph: SceneGraph): InventoryRow[] {
     zone: zonePath(graph, n.zone),
     ip: inventoryField(n, "ip"),
     hostname: inventoryField(n, "hostname"),
+    vlan: inventoryField(n, "vlan"),
+    role: inventoryField(n, "role"),
+    owner: inventoryField(n, "owner"),
+    url: inventoryField(n, "url"),
     notes: inventoryField(n, "notes"),
   }));
 }

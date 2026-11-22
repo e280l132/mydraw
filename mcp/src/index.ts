@@ -192,7 +192,7 @@ const call = (method: string) => (args: Args) => rpc(method, args);
 // files / drawings
 tool("list_drawings", "List open drawings (tabs): id, title, file path, unsaved changes, which is active, element count.", {}, call("list_drawings"), { readOnlyHint: true });
 tool("new_drawing", "Open a new empty drawing tab and make it active. Returns its id.", { title: z.string().optional() }, call("new_drawing"));
-tool("open_drawing", "Open an .excalidraw file (absolute path) in a tab, or switch to it if already open.", { path: z.string() }, call("open_drawing"));
+tool("open_drawing", "Open an .excalidraw file (absolute path) in a tab, or switch to it if already open. A .drawio file is converted into a NEW unsaved drawing (shapes, edges, containers become zones, properties, embedded images; what draw.io has that Excalidraw has not becomes plain rectangles and is reported); save it with `save {path}`.", { path: z.string() }, call("open_drawing"));
 tool("activate_drawing", "Switch the app to an open drawing's tab.", { drawing: z.string() }, call("activate_drawing"));
 tool(
   "save",
@@ -247,6 +247,19 @@ tool(
   { drawing, ids: ids.optional(), type: z.string().optional().describe("Only elements of this type"), full: z.boolean().optional() },
   call("get_scene"),
   { readOnlyHint: true },
+);
+tool(
+  "get_inventory",
+  "List every node (labelled shape or icon node) as an inventory row: id, name, kind, type, zone, ip, hostname, vlan, role, owner, url, notes, plus `extra` (other custom properties). Use it to document a diagram (e.g. render a Markdown table) or to find nodes with missing properties; change them with set_properties.",
+  { drawing },
+  call("get_inventory"),
+  { readOnlyHint: true },
+);
+tool(
+  "set_properties",
+  "Set node properties (stored in the element's custom data, shown in the app's Properties panel and the inventory table/CSV). properties: {hostname, ip, vlan, role, owner, url, notes, or any other key}: text sets, null or \"\" removes. Works on shapes and icon nodes (give the node id; an icon image/caption id maps to its node). Not undoable with ⌘Z (Excalidraw's undo ignores custom data): to revert, set the old value again.",
+  { drawing, id: z.string().optional(), ids: ids.optional(), properties: z.record(z.string(), z.string().nullable()) },
+  call("set_properties"),
 );
 tool("get_selection", "Describe the elements the user has selected.", { drawing }, call("get_selection"), { readOnlyHint: true });
 tool(
@@ -401,6 +414,17 @@ tool(
   "Turn Mermaid text into a diagram. Flowcharts (flowchart/graph: shapes, labelled links, subgraphs -> zones, style/classDef colors) get the same ELK layout and elbow arrows as build_diagram; other Mermaid types (sequence, class, ...) are converted by Mermaid itself.",
   { drawing, mermaid: z.string(), ...layoutOpts, ...placeOpts },
   call("mermaid_to_scene"),
+);
+tool(
+  "import_diagram",
+  [
+    "Build a diagram from text in a file or inline. format csv | yaml | mermaid (guessed from the path extension .csv/.tsv, .yaml/.yml, .mmd).",
+    "CSV host list: columns name (or device/host), type or icon (stencil search text, e.g. Firewall), kind, zone (\"Prod / DMZ\" nests), connects_to (names separated by ; or |), and any other column as a property (ip, hostname, vlan, role, owner, url, notes, ...). CSV connection list: columns from, to, optional label.",
+    "YAML: the build_diagram spec written as YAML (nodes list or map, zones, edges, direction) with shortcuts: a node can be just a name; an edge can be a string like `web -> db: SQL`, `a <-> b`, `a -- b`.",
+    "Mermaid: same as mermaid_to_scene. Same layout, zones, icons and elbow arrows as build_diagram; returns warnings (icons not found, nodes created from links). One undo step.",
+  ].join(" "),
+  { drawing, format: z.enum(["csv", "yaml", "mermaid"]).optional(), text: z.string().optional(), path: z.string().optional().describe("Absolute path of a .csv/.yaml/.mmd file"), ...layoutOpts, ...placeOpts },
+  call("import_diagram"),
 );
 tool("list_templates", "List starter diagram templates (3-tier web app, AWS VPC, GCP project, home network, k8s cluster, homelab).", {}, call("list_templates"), {
   readOnlyHint: true,

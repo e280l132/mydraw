@@ -18,7 +18,10 @@ const bridge: MydrawBridge = {
   takePendingFiles: () => ipcRenderer.invoke("file:take-pending"),
   openRecent: (path) => ipcRenderer.invoke("file:open-recent", path),
   clearRecent: () => ipcRenderer.invoke("file:clear-recent"),
-  saveFile: (path, content) => ipcRenderer.invoke("file:save", path, content),
+  saveFile: (path, content, auto) => ipcRenderer.invoke("file:save", path, content, auto),
+  listSnapshots: (path) => ipcRenderer.invoke("snapshots:list", path),
+  readSnapshot: (path, id) => ipcRenderer.invoke("snapshots:read", path, id),
+  addSnapshot: (path, content) => ipcRenderer.invoke("snapshots:add", path, content),
   saveFileAs: (defaultName, content) => ipcRenderer.invoke("file:save-as", defaultName, content),
   exportFile: (req) => ipcRenderer.invoke("file:export", req),
   exportFiles: (req) => ipcRenderer.invoke("file:export-files", req),
@@ -63,7 +66,11 @@ const bridge: MydrawBridge = {
   agentReply: (reply) => ipcRenderer.send("agent:reply", reply),
   applyTemplate: (name) => ipcRenderer.invoke("ui:apply-template", name),
   openLink: (link, baseFile) => ipcRenderer.invoke("link:open", link, baseFile),
+  setFullScreen: (on) => ipcRenderer.send("ui:set-fullscreen", on),
+  onPresentationEnded: (cb) => subscribe("ui:presentation-ended", () => cb()),
   pickDrawingForLink: () => ipcRenderer.invoke("link:pick-drawing"),
+  importDiagram: (req) => ipcRenderer.invoke("ui:import-diagram", req),
+  pickImportFile: () => ipcRenderer.invoke("ui:pick-import-file"),
 };
 
 contextBridge.exposeInMainWorld("mydraw", bridge);

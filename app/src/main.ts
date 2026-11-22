@@ -3,7 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { batchFileStems, ensureExtension, siblingPath } from "../../shared/names";
 import { resolveLink } from "../../shared/links";
-import type { AutoExportRequest, ClipboardRequest, ExportExtension, ExportFileRequest, ExportFilesRequest, LinkResult, OpenedFile, RecoveryEntry, Settings, UnsavedChoice } from "../../shared/types";
+import { importFormatForPath } from "../../shared/importers";
+import { addSnapshot, listSnapshots, readSnapshot } from "./snapshots";
+import type { AutoExportRequest, ClipboardRequest, ExportExtension, ExportFileRequest, ExportFilesRequest, ImportSummary, LinkResult, OpenedFile, RecoveryEntry, Settings, UnsavedChoice } from "../../shared/types";
 import {
   deleteRecovery,
   listRecovery,
@@ -44,12 +46,16 @@ const allowedPaths = new Set<string>();
 const DRAWING_FILTERS = [{ name: "Excalidraw drawing", extensions: ["excalidraw"] }];
 
 function isDrawingPath(p: string): boolean {
-  return /\.excalidraw(\.json)?$/i.test(p);
+  return /\.(excalidraw(\.json)?|drawio)$/i.test(p);
 }
+
+/** draw.io files are converted into a new, unsaved drawing by the renderer: never a file to save back into. */
+const isDrawio = (p: string) => /\.drawio$/i.test(p);
 
 function open(filePath: string): OpenedFile {
   const abs = path.resolve(filePath);
   const file = readDrawing(abs);
+  if (isDrawio(abs)) return file; // imported, not opened: not allowed for saving, not in the recent list
   allowedPaths.add(abs);
   rememberRecent(abs);
   return file;
@@ -122,7 +128,11 @@ function registerIpc(): void {
     if (!win) return [];
     const res = await dialog.showOpenDialog(win, {
       properties: ["openFile", "multiSelections"],
-      filters: DRAWING_FILTERS,
+      filters: [
+        { name: "Drawings (Excalidraw, draw.io)", extensions: ["excalidraw", "drawio"] },
+        { name: "Excalidraw drawing", extensions: ["excalidraw"] },
+        { name: "draw.io diagram", extensions: ["drawio"] },
+      ],
     });
     return res.canceled ? [] : openPaths(res.filePaths);
   });
@@ -151,6 +161,30 @@ function registerIpc(): void {
       return { type: "error", message: `Could not open ${abs}: ${(err as Error).message}` };
     }
   });
+  // Presentation mode asks for full screen (not in tests: it would resize the test window).
+  // We only leave full screen if we were the ones who entered it, and if the user leaves it some
+  // other way (green button, ⌃⌘F) the presentation overlay is told to end.
+  let enteredFullScreen = false;
+  const watched = new WeakSet<BrowserWindow>();
+  ipcMain.on("ui:set-fullscreen", (e, on: unknown) => {
+    if (e.sender !== win?.webContents || typeof on !== "boolean" || isTest) return;
+    const w = win;
+    if (!watched.has(w)) {
+      watched.add(w);
+      w.on("leave-full-screen", () => {
+        if (!enteredFullScreen) return;
+        enteredFullScreen = false;
+        if (!w.isDestroyed()) w.webContents.send("ui:presentation-ended");
+      });
+    }
+    if (on) {
+      enteredFullScreen = !w.isFullScreen();
+      if (enteredFullScreen) w.setFullScreen(true);
+    } else if (enteredFullScreen) {
+      enteredFullScreen = false;
+      w.setFullScreen(false);
+    }
+  });
   // Pick a drawing to link to. Returns its absolute path (nothing is opened).
   ipcMain.handle("link:pick-drawing", async (e): Promise<string | null> => {
     if (e.sender !== win?.webContents || !win) throw new Error("invalid request");
@@ -170,13 +204,29 @@ function registerIpc(): void {
     if (!getSettings().recentFiles.includes(filePath) || !checkRecent(filePath)) return [];
     return openPaths([filePath]);
   });
+  // Version history: only for drawings the user opened or saved.
+  const snapshotPath = (p: unknown): string => {
+    assertString(p, "path");
+    if (!allowedPaths.has(p)) throw new Error("path was not opened or chosen by the user");
+    return p;
+  };
+  ipcMain.handle("snapshots:list", (_e, p: unknown) => listSnapshots(snapshotPath(p)));
+  ipcMain.handle("snapshots:read", (_e, p: unknown, id: unknown) => {
+    assertString(id, "id");
+    return readSnapshot(snapshotPath(p), id);
+  });
+  ipcMain.handle("snapshots:add", (_e, p: unknown, content: unknown) => {
+    if (typeof content !== "string") throw new Error("content must be a string");
+    return addSnapshot(snapshotPath(p), content, { auto: false });
+  });
   ipcMain.handle("file:clear-recent", () => clearRecent());
 
-  ipcMain.handle("file:save",(_e, filePath: unknown, content: unknown) => {
+  ipcMain.handle("file:save",(_e, filePath: unknown, content: unknown, auto: unknown) => {
     assertString(filePath, "path");
     if (typeof content !== "string") throw new Error("content must be a string");
     if (!allowedPaths.has(filePath)) throw new Error("path was not opened or chosen by the user");
     writeDrawing(filePath, content);
+    addSnapshot(filePath, content, { auto: auto === true });
     rememberRecent(filePath);
   });
 
@@ -192,6 +242,7 @@ function registerIpc(): void {
     const target = ensureExtension(res.filePath, "excalidraw");
     allowedPaths.add(target);
     writeDrawing(target, content);
+    addSnapshot(target, content, { auto: false });
     rememberRecent(target);
     return target;
   });
@@ -383,6 +434,30 @@ async function startAgentControl(store: ReturnType<typeof setupLibrary>): Promis
   ipcMain.handle("ui:apply-template", async (e, name: unknown) => {
     if (e.sender !== win?.webContents || typeof name !== "string") throw new Error("invalid request");
     await handler("apply_template", { name, zoom: true });
+  });
+  // Text import (CSV / YAML / Mermaid): the dialog's paste box and file button.
+  ipcMain.handle("ui:import-diagram", async (e, req: unknown): Promise<ImportSummary> => {
+    if (e.sender !== win?.webContents) throw new Error("invalid request");
+    if (!req || typeof req !== "object") throw new Error("invalid request");
+    const { format, text } = req as { format?: unknown; text?: unknown };
+    if ((format !== "csv" && format !== "yaml" && format !== "mermaid") || typeof text !== "string") throw new Error("invalid request");
+    const r = (await handler("import_diagram", { format, text, zoom: true })) as { nodes?: unknown; edges?: unknown; warnings?: unknown };
+    const count = (v: unknown) => (Array.isArray(v) ? v.length : typeof v === "number" ? v : undefined);
+    return { nodes: count(r.nodes), edges: count(r.edges), warnings: Array.isArray(r.warnings) ? r.warnings.map(String) : [] };
+  });
+  ipcMain.handle("ui:pick-import-file", async (e) => {
+    if (e.sender !== win?.webContents || !win) throw new Error("invalid request");
+    const res = await dialog.showOpenDialog(win, {
+      properties: ["openFile"],
+      filters: [
+        { name: "Diagram text", extensions: ["csv", "tsv", "yaml", "yml", "mmd", "mermaid"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+    if (res.canceled || !res.filePaths[0]) return null;
+    const file = path.resolve(res.filePaths[0]);
+    if (fs.statSync(file).size > 2_000_000) throw new Error("that file is larger than 2 MB");
+    return { name: path.basename(file), format: importFormatForPath(file), text: fs.readFileSync(file, "utf8") };
   });
   try {
     const server = await startControlServer(handler);

@@ -132,7 +132,7 @@ describe("inventory", () => {
   });
   it("CSV has a header and quotes cells", () => {
     const csv = toCsv(rows);
-    expect(csv.split("\r\n")[0]).toBe("name,kind,type,zone,ip,hostname,notes");
+    expect(csv.split("\r\n")[0]).toBe("name,kind,type,zone,ip,hostname,vlan,role,owner,url,notes");
     expect(csv).toContain('"Web ""server"" | 1"');
     expect(csv).toContain('"line1\nline2"');
   });
@@ -145,8 +145,8 @@ describe("inventory", () => {
   });
   it("Markdown table escapes pipes and newlines", () => {
     const md = toMarkdownTable(rows).split("\n");
-    expect(md[0]).toBe("| Name | Kind | Type | Zone | Ip | Hostname | Notes |");
-    expect(md[1]).toBe("| --- | --- | --- | --- | --- | --- | --- |");
+    expect(md[0]).toBe("| Name | Kind | Type | Zone | Ip | Hostname | Vlan | Role | Owner | Url | Notes |");
+    expect(md[1]).toBe("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
     expect(md.join("\n")).toContain('Web "server" \\| 1');
     expect(md.join("\n")).toContain("line1<br>line2");
   });

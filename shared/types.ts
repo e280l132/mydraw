@@ -20,6 +20,13 @@ export interface Settings {
   autoExport: Record<string, "png" | "svg">;
 }
 
+/** What an import built (see shared/importers.ts). */
+export interface ImportSummary {
+  nodes?: number;
+  edges?: number;
+  warnings: string[];
+}
+
 /** Outcome of following a drill-down link (see shared/links.ts). */
 export type LinkResult = { type: "opened"; files: OpenedFile[] } | { type: "external" } | { type: "error"; message: string };
 
@@ -101,7 +108,11 @@ export type MenuCommand =
   | { type: "commandPalette" }
   | { type: "findReplace" }
   | { type: "togglePages" }
-  | { type: "toggleLint" };
+  | { type: "toggleLint" }
+  | { type: "inventory" }
+  | { type: "importText" }
+  | { type: "versionHistory" }
+  | { type: "present" };
 
 export interface MydrawBridge {
   platform: string;
@@ -116,12 +127,26 @@ export interface MydrawBridge {
   takePendingFiles(): Promise<OpenedFile[]>;
   /** Follow a shape's `link`: opens a web address in the browser or a .excalidraw drawing as a tab. `baseFile` = the drawing holding the link. */
   openLink(link: string, baseFile: string | null): Promise<LinkResult>;
+  /** Enter or leave the window's full-screen mode (presentation mode). */
+  setFullScreen(on: boolean): void;
+  /** The window left full screen by itself (the user did it): end the presentation. */
+  onPresentationEnded(cb: () => void): () => void;
   /** Ask for a drawing to link to; returns its absolute path (nothing is opened). */
   pickDrawingForLink(): Promise<string | null>;
+  /** Build a diagram from CSV / YAML / Mermaid text in the active drawing (same as the MCP `import_diagram`). */
+  importDiagram(req: { format: "csv" | "yaml" | "mermaid"; text: string }): Promise<ImportSummary>;
+  /** Ask for a CSV / YAML / Mermaid file; returns its text, or null if cancelled. */
+  pickImportFile(): Promise<{ name: string; format: "csv" | "yaml" | "mermaid" | null; text: string } | null>;
   /** Open a file from the recent list; missing files are dropped from the list. */
   openRecent(path: string): Promise<OpenedFile[]>;
   clearRecent(): Promise<void>;
-  saveFile(path: string, content: string): Promise<void>;
+  /** `auto` = an autosave (snapshots are throttled for those). */
+  saveFile(path: string, content: string, auto?: boolean): Promise<void>;
+  /** Version history of a saved drawing, newest first. */
+  listSnapshots(path: string): Promise<import("./snapshots").SnapshotInfo[]>;
+  readSnapshot(path: string, id: string): Promise<string>;
+  /** Snapshot `content` now (e.g. before restoring an older version). Returns false if it matches the newest snapshot. */
+  addSnapshot(path: string, content: string): Promise<boolean>;
   saveFileAs(defaultName: string, content: string): Promise<string | null>;
   exportFile(req: ExportFileRequest): Promise<string | null>;
   /** Batch export (every frame): asks for a folder, returns the written paths or null if cancelled. */

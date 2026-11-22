@@ -6,6 +6,9 @@ import { CaptureUpdateAction, convertToExcalidrawElements, newElementWith, resto
 import { normalizeSpec, tint, uniquifySpec, type DiagramSpec } from "../../../shared/diagram";
 import { isFlowchart, parseMermaidFlowchart } from "../../../shared/mermaid";
 import { PALETTES, requireColor, resolveColor } from "../../../shared/palettes";
+import { applyProperties } from "../../../shared/properties";
+import { INVENTORY_COLUMNS, inventoryEntries } from "../../../shared/inventory";
+import { extractGraph, type SceneEl } from "../../../shared/sceneGraph";
 import { FONTS, normalizeStyle, type StyleSpec } from "../../../shared/styles";
 import { allPresets, allThemes, deletePreset, deleteTheme, findPreset, findTheme, savePreset, saveTheme, stylesReady } from "../styleStore";
 import { applyThemeToScene, styleElements } from "./styles";
@@ -370,9 +373,12 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
 
       case "open_files": {
         const files = p.files as OpenedFile[];
+        const tabsBefore = host.tabs().length;
         await host.openFiles(files);
-        const t = host.tabs().find((x) => x.filePath === files[0]?.path);
-        if (!t) throw new Error("could not open the drawing");
+        // A draw.io file becomes a new unsaved tab (no file path): it is the active one.
+        const imported = /\.drawio$/i.test(files[0]?.path ?? "");
+        const t = host.tabs().find((x) => (imported ? x.id === host.activeId() : x.filePath === files[0]?.path));
+        if (!t || (imported && host.tabs().length === tabsBefore)) throw new Error(imported ? "could not import the draw.io file (the app shows the reason)" : "could not open the drawing");
         await apiFor(t.id);
         return tabSummary(t.id);
       }
@@ -435,6 +441,33 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
         }
         const out = await renderExport(api, opts, typeof p.maxSize === "number" ? p.maxSize : undefined, ids);
         return { data: out.data, pages: out.pages, warnings: out.warnings };
+      }
+
+      case "get_inventory": {
+        const { api } = await target(p);
+        const graph = extractGraph(api.getSceneElements() as unknown as SceneEl[]);
+        return { nodes: inventoryEntries(graph), columns: INVENTORY_COLUMNS };
+      }
+
+      case "set_properties": {
+        const { api } = await target(p);
+        const map = liveMap(api);
+        const ids = Array.isArray(p.ids) ? strArray(p.ids, "ids") : [String(p.id ?? "")];
+        if (!p.properties || typeof p.properties !== "object" || Array.isArray(p.properties)) throw new Error("properties must be an object like {ip: \"10.0.0.5\", role: \"core\"}; null or \"\" removes a property");
+        const patch: Record<string, string | null> = {};
+        for (const [k, v] of Object.entries(p.properties as Params)) {
+          if (v !== null && typeof v !== "string" && typeof v !== "number") throw new Error(`property "${k}" must be text (or null to remove it)`);
+          patch[k] = v === null ? null : String(v);
+        }
+        const owners = new Map<string, El>();
+        for (const id of ids) {
+          const el = map.get(id);
+          if (!el) throw new Error(`no element with id "${id}"`);
+          const owner = bindTarget(el, map);
+          owners.set(owner.id, owner);
+        }
+        commit(api, [...owners.values()].map((el) => newElementWith(el, { customData: applyProperties(el.customData, patch) } as never)));
+        return { updated: [...owners.keys()] };
       }
 
       case "get_scene": {
