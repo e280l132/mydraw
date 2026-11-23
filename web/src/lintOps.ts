@@ -6,7 +6,7 @@ import { newElementWith } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { lintScene, type LintEl, type LintIssue, type LintOptions, type LintResult } from "../../shared/lint";
 import { resolveColor } from "../../shared/palettes";
-import { BIND_GAP, reroute, type El, type ElMap } from "./agent/sceneOps";
+import { BIND_GAP, boundTextOf, reroute, rerouteAround, type El, type ElMap } from "./agent/sceneOps";
 import { allPresets, allThemes } from "./styleStore";
 import { commitElements } from "./uiActions";
 
@@ -60,6 +60,17 @@ export function fixChanges(api: ExcalidrawImperativeAPI, issues: readonly LintIs
     if (fix.kind === "color") {
       if ((el as unknown as Record<string, unknown>)[fix.property] === fix.color) continue;
       put(newElementWith(el, { [fix.property]: fix.color } as never));
+      fixed++;
+    } else if (fix.kind === "label" && el.type === "arrow") {
+      // Put the arrow's label at its new spot (a free stretch of the arrow).
+      const label = boundTextOf(el, map);
+      if (!label) continue;
+      put(newElementWith(label, { x: fix.x - label.width / 2, y: fix.y - label.height / 2 }));
+      fixed++;
+    } else if (fix.kind === "reroute" && el.type === "arrow") {
+      const routed = rerouteAround(el, map);
+      if (!routed.length) continue;
+      for (const r of routed) put(r);
       fixed++;
     } else if (fix.kind === "bind" && el.type === "arrow") {
       let arrow = el;

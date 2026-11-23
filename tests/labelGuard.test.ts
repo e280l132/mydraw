@@ -38,6 +38,13 @@ describe("detached arrow labels", () => {
     expect(detachedLabels([arrow(), label(300, 100 + DETACHED_PX - 5)]).size).toBe(0);
   });
 
+  it("accepts a wide label placed beside a vertical arrow, but not one that floats away", () => {
+    const vertical = arrow({ points: [[0, 0], [0, 300]], width: 0, height: 300, x: 100, y: 100 });
+    // 200 px wide label, centre 108 px (half the width + 8) left of the arrow: beside it, fine
+    expect(detachedLabels([vertical, label(100 - 108, 250, { width: 200, x: 100 - 108 - 100 })]).size).toBe(0);
+    expect(detachedLabels([vertical, label(100 - 300, 250, { width: 200, x: 100 - 300 - 100 })]).size).toBe(1);
+  });
+
   it("puts a label that floats far away back at the arrow's label point", () => {
     // the point list's middle point is (300, 100)
     const fixes = detachedLabels([arrow(), label(-14, 590)]);

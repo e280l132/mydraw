@@ -149,9 +149,71 @@ describe("lint: ordering and summary", () => {
     const els = [...rect("u", 0, 0), ...rect("a", 0, 300, "A"), ...rect("b", 20, 310, "B"), ...rect("u2", 400, 600)];
     const r = lintScene(els);
     expect(r.issues.map((i) => `${i.rule}:${i.id}`)).toEqual(["overlap:b", "unlabeled-node:u", "unlabeled-node:u2"]);
-    expect(r.summary).toEqual({ overlap: 1, "unconnected-arrow": 0, "unlabeled-node": 2, "missing-ip": 0, "off-palette-color": 0 });
+    expect(r.summary).toEqual({
+      overlap: 1,
+      "unconnected-arrow": 0,
+      "unlabeled-node": 2,
+      "missing-ip": 0,
+      "off-palette-color": 0,
+      "edge-overlap": 0,
+      "label-collision": 0,
+      "edge-through-node": 0,
+      "crowded-node": 0,
+      "long-edge": 0,
+    });
   });
   it("skips deleted elements", () => {
     expect(rules([...rect("u", 0, 0, undefined, { isDeleted: true })])).toEqual([]);
   });
 });
+
+describe("lint: how clean the arrows are", () => {
+  const QUALITY = ["edge-overlap", "label-collision", "edge-through-node", "crowded-node", "long-edge"];
+  const labelled = (id: string, x: number, y: number, dx: number, dy: number, from: string, to: string, text: string, at: { x: number; y: number }): LintEl[] => [
+    arrow(id, x, y, dx, dy, from, to, { boundElements: [{ id: `${id}-label`, type: "text" }] }),
+    { id: `${id}-label`, type: "text", x: at.x - 30, y: at.y - 10, width: 60, height: 20, text, containerId: id },
+  ];
+
+  it("finds a label sitting under another arrow and offers a free spot on its own arrow", () => {
+    // e1 runs a -> b along y=30; the vertical arrow e2 passes through its midpoint (x=250)
+    const els = [...rect("a", 0, 0, "A"), ...rect("b", 400, 0, "B"), ...labelled("e1", 105, 30, 290, 0, "a", "b", "x", { x: 250, y: 30 }), arrow("e2", 250, -100, 0, 200, "c", "d")];
+    const issues = lintScene(els, { rules: QUALITY }).issues;
+    expect(issues.map((i) => `${i.rule}:${i.id}`)).toEqual(["label-collision:e1"]);
+    const fix = issues[0].fix as { kind: string; x: number; y: number };
+    expect(fix.kind).toBe("label");
+    expect(fix.y).toBe(30); // still on its arrow
+    expect(Math.abs(fix.x - 250)).toBeGreaterThan(20); // off the other arrow
+  });
+
+  it("does not flag a label that is clear", () => {
+    const els = [...rect("a", 0, 0, "A"), ...rect("b", 400, 0, "B"), ...labelled("e1", 105, 30, 290, 0, "a", "b", "x", { x: 250, y: 30 })];
+    expect(rules(els, QUALITY)).toEqual([]);
+  });
+
+  it("finds arrows on top of each other and arrows through nodes, with a re-route fix for the latter", () => {
+    const els = [
+      ...rect("a", 0, 0, "A"),
+      ...rect("b", 600, 0, "B"),
+      ...rect("c", 250, -10, "C"), // in the way of e1
+      arrow("e1", 105, 30, 490, 0, "a", "b"),
+      arrow("e2", 105, 25, 490, 0, "a", "b"),
+    ];
+    const issues = lintScene(els, { rules: QUALITY }).issues;
+    expect(issues.some((i) => i.rule === "edge-overlap")).toBe(true);
+    const through = issues.filter((i) => i.rule === "edge-through-node");
+    expect(through.map((i) => i.other)).toEqual(["c", "c"]);
+    expect(through[0].fix).toEqual({ kind: "reroute" });
+  });
+
+  it("flags crowded nodes and very long arrows only in big diagrams", () => {
+    const hub = rect("hub", 0, 0, "Hub");
+    const spokes = Array.from({ length: 7 }, (_, i) => [...rect(`s${i}`, 300, i * 100, `S${i}`), arrow(`e${i}`, 105, 30 + i * 10, 190, i * 90, "hub", `s${i}`)]).flat();
+    const small = lintScene([...hub, ...spokes], { rules: ["crowded-node", "long-edge"] }).issues;
+    expect(small.map((i) => `${i.rule}:${i.id}`)).toEqual(["crowded-node:hub"]);
+    // stretch the diagram: one arrow longer than 60% of it
+    const far = [...rect("far", 2000, 0, "Far"), arrow("long", 105, 30, 1890, 0, "hub", "far")];
+    const big = lintScene([...hub, ...far], { rules: ["long-edge"] }).issues;
+    expect(big.map((i) => `${i.rule}:${i.id}`)).toEqual(["long-edge:long"]);
+  });
+});
+

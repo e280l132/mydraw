@@ -190,6 +190,7 @@ const server = new McpServer(
       "For a whole diagram use build_diagram (nodes, edges, zones -> automatic ELK layout, icons, elbow arrows, legend) or mermaid_to_scene / apply_template; then refine with the element tools.",
       "Icons (AWS, Azure, GCP, Kubernetes, network, logos) come from the stencil library: search_stencils then place_stencil (or `icon` on a build_diagram node); connect arrows to the returned node id.",
       "Zones (VPC, subnet, VLAN, ...) are locked tinted boxes; moving a zone moves what is inside it.",
+      "Draw clean diagrams: about 40 arrows at most, one arrow to a zone instead of many to its nodes, labels only on short arrows, one colour per kind of relationship. After build_diagram read `quality` (and `advice`), run lint_diagram (it finds arrows on top of each other or through nodes, labels in the way; fix:true repairs labels and re-routes) and look at a screenshot before telling the user it is done. Save the drawing to a file when it is finished: an unsaved drawing is lost if the app quits.",
       "Every tool takes an optional `drawing` (tab id, file path or title); default is the active drawing.",
     ].join("\n"),
   },
@@ -451,7 +452,9 @@ tool(
   [
     "Build a whole diagram in one step (one undo step): nodes (shapes or stencil icons with captions), edges (bound arrows) and zones (nested tinted boxes like VPC > subnet),",
     "laid out automatically with ELK (layered by default) and connected with elbow arrows that re-route when nodes move. The main 'draw me X' tool.",
-    "Ids you give become element ids. Returns ids, bounds and warnings (e.g. icons not found). Check the result with screenshot.",
+    "Ids you give become element ids. It tries several layouts, keeps the cleanest (arrows moved apart, labels on free stretches) and returns ids, bounds, warnings (e.g. icons not found) and `quality`:",
+    "score (lower is better), arrowsOnTopOfEachOther, arrowsThroughNodes, labelsColliding, crossings and `advice` (what to change in the spec if it is crowded). Read `quality`, then check the result with screenshot.",
+    "Drawing well: keep to about 40 arrows or fewer; draw one arrow to a ZONE (from/to may be a zone id) instead of one per node; give a label only to short arrows; one colour per kind of relationship (use `kind` and a legend); if `advice` says a node has many arrows or an arrow is very long, change the spec and build again rather than accepting it.",
   ].join(" "),
   {
     drawing,
@@ -525,7 +528,7 @@ tool(
 );
 tool(
   "auto_layout",
-  "Re-arrange existing shapes, icon nodes, groups and zones with ELK, using their arrows as edges (keeps the top-left corner). Optional ids limit it to part of the drawing; routing switches all affected arrows.",
+  "Re-arrange existing shapes, icon nodes, groups and zones with ELK, using their arrows as edges (keeps the top-left corner). Like build_diagram it picks the cleanest of several layouts and returns `quality` (score, arrows on top of each other or through nodes, colliding labels, advice). Optional ids limit it to part of the drawing; routing switches all affected arrows.",
   { drawing, ids: ids.optional(), ...layoutOpts },
   call("auto_layout"),
 );
@@ -595,7 +598,7 @@ tool(
   "lint_diagram",
   [
     "Check a drawing for common diagram problems. Run it after build_diagram, mermaid_to_scene, apply_template or a batch of edits, and when asked to review a diagram (together with screenshot).",
-    "Rules: overlap (warning: two nodes' boxes overlap; containment in zones/frames is fine), unconnected-arrow (warning: an arrow with a free start/end; `ends` says which), unlabeled-node (info: shape without label, icon without caption), missing-ip (info: only when some nodes have an ip in their data, the labelled nodes that lack one), off-palette-color (info: a stroke/fill color outside the app palettes and themes).",
+    "Rules: overlap (warning: two nodes' boxes overlap; containment in zones/frames is fine), unconnected-arrow (warning: an arrow with a free start/end; `ends` says which), unlabeled-node (info: shape without label, icon without caption), missing-ip (info: only when some nodes have an ip in their data, the labelled nodes that lack one), off-palette-color (info: a stroke/fill color outside the app palettes and themes), edge-overlap (warning: two arrows run on top of each other), label-collision (warning: an arrow label sits under a node, zone title, another label or arrow; fix moves it to a free stretch), edge-through-node (warning: an arrow runs through a node it does not connect; fix re-routes it around), crowded-node (info: 7+ arrows meet at one node), long-edge (info: an arrow longer than 60% of the diagram).",
     "Each issue: {rule, severity, id, label, message, other? (overlap partner), ends?, fix?}; summary counts per rule; warnings first, then top-left to bottom-right.",
     "fix:true applies every safe fix as ONE undo step (binds free arrow ends to a node within 40px, snaps off-palette colors to the nearest palette color) and returns the issues left plus `fixed`. Overlaps, labels and IPs are never changed automatically: fix them with move / update_elements.",
   ].join(" "),
@@ -603,7 +606,7 @@ tool(
     drawing,
     fix: z.boolean().optional().describe("Apply all safe fixes (one undo step)"),
     rules: z
-      .array(z.enum(["overlap", "unconnected-arrow", "unlabeled-node", "missing-ip", "off-palette-color"]))
+      .array(z.enum(["overlap", "unconnected-arrow", "unlabeled-node", "missing-ip", "off-palette-color", "edge-overlap", "label-collision", "edge-through-node", "crowded-node", "long-edge"]))
       .optional()
       .describe("Only these rules (default all)"),
   },

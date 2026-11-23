@@ -6,10 +6,13 @@ import type { ExcalidrawImageElement } from "@excalidraw/excalidraw/element/type
 import type { AppState, BinaryFileData, BinaryFiles } from "@excalidraw/excalidraw/types";
 import { zoneColors, zoneDepths, type DiagramNode, type DiagramSpec } from "../../../shared/diagram";
 import type { Box, Point } from "../../../shared/geometry";
-import { layoutGraph, translateLayout, type LayoutAlgorithm, type LayoutDirection, type LayoutResult } from "../../../shared/layout";
+import { translateLayout, type LayoutAlgorithm, type LayoutDirection, type LayoutResult } from "../../../shared/layout";
+import { layoutBest, qualitySummary, translateRoutes } from "../../../shared/layoutBest";
+import { labelOffsetLimit } from "../../../shared/edgeTidy";
+import { distToPolyline } from "../../../shared/labelGuard";
 import type { LibraryItem } from "../../../shared/library";
 import { resolveColor } from "../../../shared/palettes";
-import { ELBOW_GAP, inset, tidyRoute, type Routing } from "../../../shared/routing";
+import type { Routing } from "../../../shared/routing";
 import { isRecolorableIcon, recoloredIcon } from "../library/iconColor";
 import { loadStencil } from "../library/stencilContent";
 import { trueColorFile } from "../library/trueColor";
@@ -320,7 +323,7 @@ export async function buildDiagram(
     return false;
   });
   const zoneSizes = new Map((spec.zones ?? []).map((z) => [z.id, zoneTitleSize(z.label, font)]));
-  let layout: LayoutResult = await layoutGraph({
+  const best = await layoutBest({
     nodes: spec.nodes.map((n) => ({ id: n.id, width: plans.get(n.id)!.width, height: plans.get(n.id)!.height, zone: n.zone })),
     zones: (spec.zones ?? []).map((z) => ({ id: z.id, parent: z.parent, ...zoneSizes.get(z.id)! })),
     edges: edges.map((e) => {
@@ -331,6 +334,7 @@ export async function buildDiagram(
     algorithm: spec.algorithm,
     spacing: spec.spacing,
   });
+  let layout: LayoutResult = best.layout;
 
   // Where: given, else right of the existing content, top-aligned.
   const live = scene.filter((e) => !e.isDeleted);
@@ -353,6 +357,8 @@ export async function buildDiagram(
     origin = { x: origin.x, y: origin.y + t.height + 24 };
   }
   layout = translateLayout(layout, origin);
+  // The tidied routes (arrows moved apart, labels on free stretches) move with the layout.
+  const tidied = new Map(translateRoutes(best.routes, layout.bounds.x - best.layout.bounds.x, layout.bounds.y - best.layout.bounds.y).map((r) => [r.id, r]));
 
   const byId: ElMap = new Map();
   // Zones, outermost first so inner ones draw on top.
@@ -434,7 +440,7 @@ export async function buildDiagram(
     const a = byId.get(e.from)!;
     const b = byId.get(e.to)!;
     const routing: Routing = e.routing ?? spec.routing ?? "elbow";
-    const given = layout.orthogonal && routing === "elbow" ? layout.edges.get(e.id!) : undefined;
+    const given = layout.orthogonal && routing === "elbow" ? tidied.get(e.id!) : undefined;
     const sk: Loose = {
       type: "arrow",
       id: e.id,
@@ -446,7 +452,7 @@ export async function buildDiagram(
       ...(e.label ? { label: { text: e.label, fontSize: EDGE_FONT_SIZE, fontFamily: font, strokeColor: e.color ?? ink } } : {}),
       ...(e.kind ? { customData: { mydrawKind: e.kind } } : {}),
     };
-    arrowEls.push(...connectorElements(sk, a, b, routing, given ? inset(tidyRoute(given, 20 + ELBOW_GAP), ELBOW_GAP) : undefined));
+    arrowEls.push(...connectorElements(sk, a, b, routing, given?.points, given?.label?.center));
     for (const id of [a.id, b.id]) boundTo.set(id, [...(boundTo.get(id) ?? []), { id: e.id!, type: "arrow" }]);
   }
   const withArrows = (el: El) => {
@@ -482,6 +488,7 @@ export async function buildDiagram(
       title: titleId,
       legend: legend[0]?.id ?? null,
       bounds: boundsOf(added),
+      quality: qualitySummary(best),
       warnings: warnings.length ? warnings : undefined,
     },
   };
@@ -721,8 +728,7 @@ export async function autoLayout(
     const pz = zoneOf(z);
     return pz && zoneIds.has(pz) ? pz : undefined;
   };
-  const layout = translateLayout(
-    await layoutGraph({
+  const best = await layoutBest({
       nodes: units.map((u) => ({ id: u.id, width: u.box.width, height: u.box.height, zone: u.zone })),
       zones: zones.map((z) => {
         const title = zoneTitleOf(z, map) as (El & { text: string }) | undefined;
@@ -735,9 +741,9 @@ export async function autoLayout(
       direction: p.direction,
       algorithm: p.algorithm,
       spacing: p.spacing,
-    }),
-    { x: startBox.x, y: startBox.y },
-  );
+  });
+  const layout = translateLayout(best.layout, { x: startBox.x, y: startBox.y });
+  const tidied = new Map(translateRoutes(best.routes, layout.bounds.x - best.layout.bounds.x, layout.bounds.y - best.layout.bounds.y).map((r) => [r.id, r]));
 
   // Move units and zones.
   const updates: Loose[] = [];
@@ -773,8 +779,8 @@ export async function autoLayout(
     const want = p.routing ?? routingOf(arrow);
     const a = after.get((arrow as El & { startBinding: { elementId: string } }).startBinding.elementId)!;
     const b = after.get((arrow as El & { endBinding: { elementId: string } }).endBinding.elementId)!;
-    const given = layout.orthogonal && want === "elbow" && a.id === unitMain(units, e.from) && b.id === unitMain(units, e.to) ? layout.edges.get(e.id) : undefined;
-    const route = routeBetween(a, b, want, given ? inset(tidyRoute(given, 20 + ELBOW_GAP), ELBOW_GAP) : undefined);
+    const given = layout.orthogonal && want === "elbow" && a.id === unitMain(units, e.from) && b.id === unitMain(units, e.to) ? tidied.get(e.id) : undefined;
+    const route = routeBetween(a, b, want, given?.points);
     const elbowed = want === "elbow" && arrow.type === "arrow";
     const data = { ...(arrow.customData ?? {}) };
     delete data.mydrawAvoid;
@@ -794,7 +800,8 @@ export async function autoLayout(
     // Re-centre the label on the route just applied (reroute() would compute a different one).
     const label = boundTextOf(arrow, after);
     if (label) {
-      const mid = labelPoint(route);
+      const at = given?.label?.center;
+      const mid = at && distToPolyline(at, route) <= labelOffsetLimit(label.width) ? at : labelPoint(route);
       changed.set(label.id, newElementWith(label, { x: mid.x - label.width / 2, y: mid.y - label.height / 2 }));
     }
   }
@@ -821,7 +828,7 @@ export async function autoLayout(
   return {
     changed: [...changed.values()],
     added: r.added,
-    result: { nodes: units.length, zones: zones.length, edges: edges.length, bounds, legendsMoved: legends || undefined },
+    result: { nodes: units.length, zones: zones.length, edges: edges.length, bounds, legendsMoved: legends || undefined, quality: qualitySummary(best) },
   };
 }
 

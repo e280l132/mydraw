@@ -1,9 +1,9 @@
 // Diagram lint panel (⌥⌘L): problems in the drawing (overlaps, free arrow ends, unlabeled nodes,
-// missing IPs, off-palette colors), re-checked as the drawing changes. Click a row to select and
+// missing IPs, off-palette colors, arrows on top of each other or through nodes, labels in the way), re-checked as the drawing changes. Click a row to select and
 // show the element; "Fix" applies a safe fix (one undo step), "Fix all safe issues" all of them.
 import { useEffect, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import type { LintIssue, LintResult } from "../../shared/lint";
+import { LINT_RULES, type LintIssue, type LintResult } from "../../shared/lint";
 import { applyLintFixes, lintDrawing, revealIssue, sceneKey } from "./lintOps";
 
 interface Props {
@@ -11,7 +11,7 @@ interface Props {
   onClose(): void;
 }
 
-const EMPTY: LintResult = { issues: [], summary: { overlap: 0, "unconnected-arrow": 0, "unlabeled-node": 0, "missing-ip": 0, "off-palette-color": 0 } };
+const EMPTY: LintResult = { issues: [], summary: Object.fromEntries(LINT_RULES.map((r) => [r, 0])) as LintResult["summary"] };
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 

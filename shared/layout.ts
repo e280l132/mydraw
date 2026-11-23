@@ -43,6 +43,8 @@ export interface LayoutInput {
   spacing?: number;
   /** Padding inside zones (default 24). */
   zonePadding?: number;
+  /** ELK options applied last (the variants `layoutBest` tries). */
+  elkOptions?: Record<string, string>;
 }
 
 export interface LayoutResult {
@@ -117,6 +119,7 @@ export async function layoutGraph(input: LayoutInput): Promise<LayoutResult> {
     "elk.radial.compactor": "WEDGE_COMPACTION",
     "elk.force.iterations": "300",
     "elk.rectpacking.widthApproximation.targetWidth": "-1",
+    ...(layered ? input.elkOptions : {}),
   };
 
   // Build the nested ELK graph: zones are compound nodes.

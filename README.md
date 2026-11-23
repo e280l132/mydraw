@@ -73,7 +73,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 - **Shift-click or right-click**: pick a stencil for a new connected node.
 
 **Checks and layout**
-- **Diagram lint** (⌥⌘L): overlaps, unconnected arrows, unlabeled nodes, missing IPs, off-palette colors. Safe one-click fixes; "Fix all" is one undo step.
+- **Diagram lint** (⌥⌘L): overlaps, unconnected arrows, unlabeled nodes, missing IPs, off-palette colors, arrows on top of each other or through nodes, labels in the way, crowded nodes, very long arrows. Safe one-click fixes; "Fix all" is one undo step.
 - **Layout grid** (⌘', or Grid settings… in the menu): lines or dots, spacing 4–100 px, a stronger line every N cells, any color, adjustable strength. Drawn behind the shapes. **Snap to grid** while moving, drawing and resizing (hold ⌘ to move freely); "Snap selection to grid" lines up existing shapes in one undo step. The grid is an app preference: it is never saved into drawings or exports.
 - **Align and distribute**: select 2+ shapes or icons and the Align section is in the left panel just above Edges (distribute needs 3+). Also in the command palette ("Arrange") and on Excalidraw's keys: ⇧⌘←/→/↑/↓ align, ⌥H / ⌥V distribute.
 - **Route arrows around shapes** (command palette): re-routes the selected arrows (or all of them) around shapes.

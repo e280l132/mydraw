@@ -2732,7 +2732,7 @@ await page.evaluate(() => window.__mydrawTest.api().updateScene({ appState: { se
 
 step("Arrow labels stay on their arrows (nested zones, zone-to-zone arrows); a detached label is put back; stale builds are reported");
 await call("new_drawing", { title: "Label check" });
-await call("build_diagram", {
+const labelBuild = await call("build_diagram", {
   direction: "right",
   zones: [
     { id: "lzA", label: "Zone A" },
@@ -2760,21 +2760,38 @@ await call("build_diagram", {
     { from: "ln5", to: "lnOut", label: "long way" },
   ],
 });
+// Distance from each arrow's label centre to the arrow itself (labels sit on a free stretch of their arrow).
 const labelOffsets = () =>
   page.evaluate(() => {
     const els = window.__mydrawTest.api().getSceneElements();
+    const dist = (p, a, b) => {
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len2 = dx * dx + dy * dy;
+      const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+      return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+    };
     return els
       .filter((a) => a.type === "arrow")
       .map((a) => {
         const t = els.find((e) => e.type === "text" && e.containerId === a.id);
         if (!t) return null;
         const pts = a.points.map(([x, y]) => ({ x: a.x + x, y: a.y + y }));
-        const n = pts.length;
-        const mid = n % 2 ? pts[(n - 1) / 2] : { x: (pts[n / 2 - 1].x + pts[n / 2].x) / 2, y: (pts[n / 2 - 1].y + pts[n / 2].y) / 2 };
-        return { id: a.id, label: t.text, off: Math.hypot(t.x + t.width / 2 - mid.x, t.y + t.height / 2 - mid.y) };
+        const c = { x: t.x + t.width / 2, y: t.y + t.height / 2 };
+        let off = Infinity;
+        for (let i = 1; i < pts.length; i++) off = Math.min(off, dist(c, pts[i - 1], pts[i]));
+        return { id: a.id, label: t.text, off };
       })
       .filter(Boolean);
   });
+// build_diagram reports how clean the layout is.
+assert.equal(typeof labelBuild.quality.score, "number", "quality score reported");
+for (const k of ["arrowsOnTopOfEachOther", "arrowsThroughNodes", "labelsColliding", "crossings", "layout"]) assert.ok(k in labelBuild.quality, `quality.${k}`);
+assert.equal(labelBuild.quality.labelsColliding, 0, "the chosen layout has no colliding labels");
+assert.equal(labelBuild.quality.arrowsThroughNodes, 0, "and no arrow through a node");
+const qLint = await call("lint_diagram", { rules: ["edge-overlap", "label-collision", "edge-through-node"] });
+assert.equal(qLint.summary["label-collision"], 0, "lint agrees: no label collisions after build_diagram");
+assert.equal(qLint.summary["edge-through-node"], 0, "lint agrees: no arrow through a node");
 let offsets = await labelOffsets();
 assert.equal(offsets.length, 8, "every labelled arrow has its label");
 for (const o of offsets) assert.ok(o.off < 6, `label "${o.label}" sits on its arrow (off by ${Math.round(o.off)} px)`);
@@ -2789,6 +2806,21 @@ assert.ok((await labelOffsets()).find((o) => o.id === victim.id).off > 1000, "la
 await call("update_elements", { updates: [{ id: victim.id, strokeColor: "#c2255c" }] });
 offsets = await labelOffsets();
 assert.ok(offsets.find((o) => o.id === victim.id).off < 6, "the safety net put the detached label back on its arrow");
+// lint_diagram finds a label dropped on a node and fixes it (one undo step).
+const dropVictim = offsets[3];
+await page.evaluate((id) => {
+  const api = window.__mydrawTest.api();
+  const els = api.getSceneElements();
+  const label = els.find((e) => e.type === "text" && e.containerId === id);
+  const node = els.find((e) => e.id === "ln1");
+  api.updateScene({ elements: api.getSceneElementsIncludingDeleted().map((e) => (e.id === label.id ? { ...e, x: node.x + 5, y: node.y + 5, version: e.version + 1 } : e)) });
+}, dropVictim.id);
+const foundLabels = await call("lint_diagram", { rules: ["label-collision"] });
+assert.ok(foundLabels.issues.some((i) => i.id === dropVictim.id && i.rule === "label-collision"), "lint finds the label sitting on a node");
+const fixedLabelLint = await call("lint_diagram", { rules: ["label-collision"], fix: true });
+assert.ok(fixedLabelLint.fixed >= 1, "fix:true moves the label");
+assert.ok((await labelOffsets()).find((o) => o.id === dropVictim.id).off < 6, "the label is back on its arrow");
+assert.equal((await call("lint_diagram", { rules: ["label-collision"] })).summary["label-collision"], 0, "and nothing collides now");
 // The app records the build it started with; the MCP server warns when disk has a newer one.
 const { buildId } = await import("../shared/buildId.ts");
 const ctl = JSON.parse(fs.readFileSync(controlFile, "utf8"));

@@ -6,7 +6,8 @@ import { convertToExcalidrawElements, getCommonBounds, newElementWith } from "@e
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState } from "@excalidraw/excalidraw/types";
 import { boxFromBounds, connectorEndpoints, outlinePoint, type Box, type OutlineShape, type Point } from "../../../shared/geometry";
-import { labelPoint } from "../../../shared/labelGuard";
+import { labelOffsetLimit } from "../../../shared/edgeTidy";
+import { distToPolyline, labelPoint } from "../../../shared/labelGuard";
 import { linkProblem } from "../../../shared/links";
 import { requireColor } from "../../../shared/palettes";
 import { curvedPoints, ELBOW_GAP, elbowRoute, fixedPointFor, isOrthogonal, type Routing, type Side } from "../../../shared/routing";
@@ -759,7 +760,7 @@ export function parseRouting(v: unknown, fallback: Routing): Routing {
  * skeleton with id and style; `route` an optional absolute route from a layout. Callers add the
  * arrow to `a` and `b`'s boundElements.
  */
-export function connectorElements(sk: Loose, a: El, b: El, routing: Routing, route?: Point[]): El[] {
+export function connectorElements(sk: Loose, a: El, b: El, routing: Routing, route?: Point[], labelAt?: Point): El[] {
   const path = routeBetween(a, b, routing, route);
   const fields = routingFields(routing, String(sk.type), sk.customData as Loose | undefined);
   const skeleton: Loose = { ...sk, ...arrowShape(path) };
@@ -769,9 +770,10 @@ export function connectorElements(sk: Loose, a: El, b: El, routing: Routing, rou
     // The converter normalizes points (e.g. shifts the first one); keep our route exactly.
     el.id === sk.id ? ({ ...el, ...arrowShape(path), ...fields, roundness: (el as El).roundness, ...bindingsFor(path, a, b, fields.elbowed === true) } as El) : el,
   ).map((el) => {
-    // Re-centre the label on the route.
+    // Re-centre the label on the route: at `labelAt` (a free stretch picked by the layout) when that
+    // lies on the route, else at Excalidraw's own label point.
     if (el.type !== "text" || (el as El & Loose).containerId !== sk.id) return el;
-    const mid = labelPoint(path);
+    const mid = labelAt && distToPolyline(labelAt, path) <= labelOffsetLimit(el.width) ? labelAt : labelPoint(path);
     return { ...el, x: mid.x - el.width / 2, y: mid.y - el.height / 2 } as El;
   });
 }

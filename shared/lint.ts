@@ -5,11 +5,12 @@
 import { normalizeHex, hexToRgb } from "./colorMath";
 import { tint, ZONE_PALETTE } from "./diagram";
 import { inventoryField } from "./inventory";
+import { qualityLint, type QEl } from "./lintQuality";
 import { PALETTES, resolveColor } from "./palettes";
 import { extractGraph, type SceneEl } from "./sceneGraph";
 import { BUILTIN_PRESETS, BUILTIN_THEMES } from "./styles";
 
-export const LINT_RULES = ["overlap", "unconnected-arrow", "unlabeled-node", "missing-ip", "off-palette-color"] as const;
+export const LINT_RULES = ["overlap", "unconnected-arrow", "unlabeled-node", "missing-ip", "off-palette-color", "edge-overlap", "label-collision", "edge-through-node", "crowded-node", "long-edge"] as const;
 export type LintRule = (typeof LINT_RULES)[number];
 export type LintSeverity = "warning" | "info";
 
@@ -19,6 +20,11 @@ export const LINT_SEVERITY: Record<LintRule, LintSeverity> = {
   "unlabeled-node": "info",
   "missing-ip": "info",
   "off-palette-color": "info",
+  "edge-overlap": "warning",
+  "label-collision": "warning",
+  "edge-through-node": "warning",
+  "crowded-node": "info",
+  "long-edge": "info",
 };
 
 export type ArrowEnd = "start" | "end";
@@ -27,7 +33,11 @@ export type LintFix =
   /** Bind the free end(s) of an arrow to these nodes. */
   | { kind: "bind"; start?: string; end?: string }
   /** Set one color property to a palette color. */
-  | { kind: "color"; property: "strokeColor" | "backgroundColor"; color: string; name: string };
+  | { kind: "color"; property: "strokeColor" | "backgroundColor"; color: string; name: string }
+  /** Move an arrow's label so its centre is at (x, y), a free stretch of its arrow. */
+  | { kind: "label"; x: number; y: number }
+  /** Re-route an arrow around the shapes in its way. */
+  | { kind: "reroute" };
 
 export interface LintIssue {
   rule: LintRule;
@@ -322,6 +332,12 @@ export function lintScene(elements: readonly LintEl[], opts: LintOptions = {}): 
         });
       }
     }
+  }
+
+  // 6-10. arrows: on top of each other, through nodes, labels in the way, crowded nodes, very long arrows
+  for (const q of qualityLint(live as unknown as QEl[], want)) {
+    const el = map.get(q.id);
+    if (el) push(q.rule, el, q.message, { ...(q.other ? { other: q.other } : {}), ...(q.fix ? { fix: q.fix } : {}) });
   }
 
   const order = (i: LintIssue) => LINT_RULES.indexOf(i.rule);

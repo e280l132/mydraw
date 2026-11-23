@@ -52,6 +52,8 @@ export function distToPolyline(p: Point, pts: readonly Point[]): number {
 
 /** A label farther than this from its arrow is detached (curved arrows differ from the polyline by far less). */
 export const DETACHED_PX = 60;
+/** ... or farther than this for a wide label, which sits further out when placed beside a vertical arrow. */
+const detachedLimit = (labelWidth: number) => Math.max(DETACHED_PX, labelWidth / 2 + 24);
 
 /** The arrow's points in scene coordinates. */
 export function absolutePoints(arrow: Pick<GuardEl, "x" | "y" | "points">): Point[] {
@@ -72,7 +74,7 @@ export function detachedLabels(elements: readonly GuardEl[], arrowIds?: Readonly
     const pts = absolutePoints(arrow);
     if (!label || label.containerId !== arrow.id || pts.length < 2) continue;
     const center = { x: label.x + label.width / 2, y: label.y + label.height / 2 };
-    if (distToPolyline(center, pts) <= DETACHED_PX) continue;
+    if (distToPolyline(center, pts) <= detachedLimit(label.width)) continue;
     const mid = labelPoint(pts);
     fixes.set(label.id, { x: mid.x - label.width / 2, y: mid.y - label.height / 2 });
   }
