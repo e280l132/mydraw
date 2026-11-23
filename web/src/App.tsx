@@ -30,6 +30,9 @@ import { canvasStatusByTab, useCanvasHook, type CanvasHealth } from "./useCanvas
 import { GridPanel } from "./GridPanel";
 import { darkImageStats } from "./darkImages";
 import { tagArrangeSection } from "./arrange";
+import { applyPanelOrder, installPanelDrag, setArranging } from "./panelOrder";
+import { PanelFooter } from "./PanelFooter";
+import { attachFineTuneHosts, FineTune, sameHosts, type FineTuneHosts } from "./FineTune";
 import { snapSelectionToGrid } from "./gridOps";
 import { DEFAULT_GRID, type GridSettings } from "../../shared/grid";
 import { InventoryDialog } from "./InventoryDialog";
@@ -279,6 +282,10 @@ export function App() {
   const selKey = useRef("");
   const zonePositions = useRef(new Map<string, Positions>());
   const [selTick, setSelTick] = useState(0);
+  // Selection + any change to a selected element (version): fine-tune sliders, Properties section.
+  const tuneKey = useRef("");
+  const [tuneTick, setTuneTick] = useState(0);
+  const [ftHosts, setFtHosts] = useState<FineTuneHosts>({});
 
   // Refs hold the latest values for callbacks fired by Excalidraw, IPC and timers.
   const tabsRef = useRef<Tab[]>([]);
@@ -436,6 +443,14 @@ export function App() {
         if (sk !== selKey.current) {
           selKey.current = sk;
           setSelTick((n) => n + 1);
+        }
+        const tk = elements
+          .filter((e) => appState.selectedElementIds[e.id])
+          .map((e) => `${e.id}:${e.version}`)
+          .join(",");
+        if (tk !== tuneKey.current) {
+          tuneKey.current = tk;
+          setTuneTick((n) => n + 1);
         }
         const key = `${sel.count}:${sel.raster}:${sel.color}`;
         if (key !== iconsKey.current) {
@@ -596,12 +611,30 @@ export function App() {
   // has no API for adding panel sections, so we keep a host <div> at the top of its panel column and
   // render into it with a portal; a MutationObserver re-attaches it when Excalidraw re-renders.
   const [styleHost, setStyleHost] = useState<HTMLElement | null>(null);
+  const [footHost, setFootHost] = useState<HTMLElement | null>(null);
+  // Rearrange mode for the panel sections (button at the bottom of the panel), kept across restarts.
+  const [arranging, setArrangingState] = useState(() => localStorage.getItem("mydraw.panelArrange") === "1");
+  const toggleArranging = useCallback(() => {
+    setArrangingState((on) => {
+      localStorage.setItem("mydraw.panelArrange", on ? "0" : "1");
+      return !on;
+    });
+  }, []);
+  useEffect(() => {
+    setArranging(arranging);
+    const column = contentRef.current?.querySelector<HTMLElement>(".md-drawing:not([style*='none']) .App-menu__left .panelColumn");
+    if (column) applyPanelOrder(column, settingsRef.current?.panelOrder ?? []);
+  }, [arranging]);
   useEffect(() => {
     const root = contentRef.current;
     if (!root) return;
     const attach = () => {
       const column = root.querySelector<HTMLElement>(".md-drawing:not([style*='none']) .App-menu__left .panelColumn");
-      if (!column) return setStyleHost(null);
+      if (!column) {
+        setFtHosts((prev) => (sameHosts(prev, {}) ? prev : {}));
+        setFootHost(null);
+        return setStyleHost(null);
+      }
       let host = column.querySelector<HTMLElement>(":scope > .md-style-host");
       if (!host) {
         root.querySelectorAll(".md-style-host").forEach((n) => n.remove());
@@ -609,21 +642,54 @@ export function App() {
         host.className = "md-style-host";
       }
       if (column.firstElementChild !== host) column.prepend(host);
+      // Footer (Rearrange sections): always the last flex item.
+      let foot = column.querySelector<HTMLElement>(":scope > .md-panel-foot-host");
+      if (!foot) {
+        root.querySelectorAll(".md-panel-foot-host").forEach((n) => n.remove());
+        foot = document.createElement("div");
+        foot.className = "md-panel-foot-host";
+        foot.style.order = "100000";
+      }
+      if (column.lastElementChild !== foot) column.append(foot);
       // Our Colors tab replaces Excalidraw's Stroke and Background rows (same job, bigger palettes).
       column.querySelectorAll<HTMLElement>(".color-picker__top-picks").forEach((picks) => {
         let section: HTMLElement | null = picks;
         while (section && section.parentElement !== column) section = section.parentElement;
         if (section && !section.classList.contains("md-style-host")) section.classList.add("md-native-color");
       });
-      // Excalidraw's Align & distribute section goes to the top of the panel (CSS order).
       tagArrangeSection(column);
+      const ft = attachFineTuneHosts(column);
+      setFtHosts((prev) => (sameHosts(prev, ft) ? prev : ft));
+      // Section order (drag a section by its title; global setting): inline CSS `order`.
+      applyPanelOrder(column, settingsRef.current?.panelOrder ?? []);
       setStyleHost((prev) => (prev === host ? prev : host));
+      setFootHost((prev) => (prev === foot ? prev : foot));
     };
     attach();
     const mo = new MutationObserver(attach);
     mo.observe(root, { childList: true, subtree: true });
     return () => mo.disconnect();
   }, [activeId]);
+
+  // Re-apply the section order when it changes (drop here, reset from the palette, another window).
+  const panelOrderKey = settings?.panelOrder.join("|") ?? "";
+  useEffect(() => {
+    const column = contentRef.current?.querySelector<HTMLElement>(".md-drawing:not([style*='none']) .App-menu__left .panelColumn");
+    if (column) applyPanelOrder(column, settingsRef.current?.panelOrder ?? []);
+  }, [panelOrderKey, activeId]);
+
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!root) return;
+    return installPanelDrag(
+      root,
+      () => settingsRef.current?.panelOrder ?? [],
+      (panelOrder) => {
+        if (settingsRef.current) settingsRef.current = { ...settingsRef.current, panelOrder };
+        void bridge.updateSettings({ panelOrder });
+      },
+    );
+  }, []);
 
   const openSaveStencil = useCallback(() => {
     const api = apis.current.get(activeRef.current);
@@ -1428,7 +1494,7 @@ export function App() {
         api()
           .getSceneElements()
           .filter((e) => e.type === type)
-          .map((e) => ({ id: e.id, strokeColor: e.strokeColor, backgroundColor: e.backgroundColor, roughness: e.roughness, strokeStyle: e.strokeStyle })),
+          .map((e) => ({ id: e.id, strokeColor: e.strokeColor, backgroundColor: e.backgroundColor, roughness: e.roughness, strokeStyle: e.strokeStyle, strokeWidth: e.strokeWidth, roundness: e.roundness })),
       viewBackground: () => api().getAppState().viewBackgroundColor,
       imageColors: () =>
         api()
@@ -1471,7 +1537,18 @@ export function App() {
             onGridHealth={onGridHealth}
           />
         ))}
-        {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} onToast={showToast} custom={customColor} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} /><PropertiesSection api={apis.current.get(activeId)} tick={selTick} /></>, styleHost)}
+        {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} changeTick={tuneTick} onToast={showToast} custom={customColor} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} /><PropertiesSection api={apis.current.get(activeId)} tick={tuneTick} /></>, styleHost)}
+        <FineTune api={apis.current.get(activeId)} tick={tuneTick} hosts={ftHosts} />
+        {footHost &&
+          createPortal(
+            <PanelFooter
+              arranging={arranging}
+              canReset={!!settings?.panelOrder.length}
+              onToggle={toggleArranging}
+              onReset={() => onSettings({ panelOrder: [] })}
+            />,
+            footHost,
+          )}
       </div>
       {gridPanelOpen && settings && (
         <GridPanel
@@ -1585,6 +1662,7 @@ export function App() {
             onSettings,
             linkSelection: () => void linkSelectionToDrawing(),
             clearLinks: clearSelectionLinks,
+            toggleArrangePanel: toggleArranging,
           })}
         />
       )}

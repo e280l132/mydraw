@@ -219,10 +219,10 @@ await page.fill(".md-panel-search input", "");
 step("recolor icons from the Colors tab (Icon target): swatch, any-color picker (live), Original, undo");
 await t((x) => x.selectImages());
 const SECTION = ".md-drawing:not([style*='none']) .App-menu__left .md-style";
-await page.waitForSelector(`${SECTION} .md-chip:text-is('Icon')`);
+await page.waitForSelector(`${SECTION} .md-target[data-target='icon']`);
 assert.match(await t((x) => x.iconSelection()), /^2:0:original$/, "two SVG icons selected, original colors");
-assert.equal(await page.locator(`${SECTION} .md-chip:text-is('Icon')`).getAttribute("class").then((c) => c.includes("on")), true, "Icon target is active when only icons are selected");
-assert.equal(await page.locator(`${SECTION} .md-chip:text-is('Fill')`).isDisabled(), true, "Fill is disabled when only icons are selected (it would do nothing)");
+assert.equal(await page.locator(`${SECTION} .md-target[data-target='icon']`).getAttribute("class").then((c) => c.includes("on")), true, "Icon target is active when only icons are selected");
+assert.equal(await page.locator(`${SECTION} .md-target[data-target='fill']`).isDisabled(), true, "Fill is disabled when only icons are selected (it would do nothing)");
 assert.equal(await page.locator(".md-drawing:not([style*='none']) .App-menu__left .md-iconcolor").count(), 0, "no separate icon color section any more");
 await page.click(`${SECTION} .md-iconcolor-grid [aria-label="blue"]`);
 await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "#1971c2"), "icons recolored blue");
@@ -283,8 +283,44 @@ await waitFor(async () => (await t((x) => x.elementProps("rectangle"))).every((e
 await page.waitForSelector(`${STYLE} .md-shades .md-shade`);
 assert.equal(await page.locator(`${STYLE} .md-shades .md-shade`).count(), 10, "ten shades ramp off the chosen basic color");
 await page.screenshot({ path: path.join(shots, "style-colors.png") });
+// Nothing in the panel is wider than the panel (it would scroll sideways and cut off the left edge).
+const panelOverflow = await page.evaluate(() => {
+  const menu = document.querySelector(".md-drawing:not([style*='none']) .App-menu__left");
+  const left = menu.scrollLeft;
+  menu.scrollLeft = 0;
+  const box = menu.getBoundingClientRect();
+  const wide = [...menu.querySelectorAll("*")]
+    .filter((el) => el.getClientRects().length && el.getBoundingClientRect().right > box.right - 1)
+    .map((el) => `${el.tagName.toLowerCase()}.${[...el.classList].join(".")} ${Math.round(el.getBoundingClientRect().width)}px`)
+    .slice(0, 8);
+  return { scroll: menu.scrollWidth - menu.clientWidth, left, wide };
+});
+assert.ok(panelOverflow.scroll <= 0 && panelOverflow.left === 0, `panel never scrolls sideways (${JSON.stringify(panelOverflow)})`);
 await page.click(`${STYLE} .md-shade[title='orange 800']`);
 await waitFor(async () => (await t((x) => x.elementProps("rectangle"))).every((e) => e.strokeColor !== "#f08c00"), "shade applied");
+// Stroke/Fill choice sticks across selections (it used to snap back to Stroke).
+await page.click(`${STYLE} .md-target[data-target='fill']`);
+await page.click(`${STYLE} .md-swatch[title='teal']`);
+await waitFor(async () => (await t((x) => x.elementProps("rectangle"))).every((e) => e.backgroundColor !== "transparent"), "Fill target sets the background");
+await t((x) => x.selectType("none"));
+await t((x) => x.selectType("rectangle"));
+await waitFor(async () => (await page.locator(`${STYLE} .md-target.on[data-target='fill']`).count()) === 1, "Fill stays selected after a selection change");
+// The choice survives a restart-like remount via localStorage, and the Fill button previews the fill.
+assert.equal(await page.evaluate(() => localStorage.getItem("mydraw.colorTarget")), "fill");
+{
+  const well = await page.getAttribute(`${STYLE} .md-target[data-target='fill'] .md-well`, "class");
+  const bgs = (await t((x) => x.elementProps("rectangle"))).map((e) => e.backgroundColor);
+  assert.ok(well.includes("md-well-color"), `Fill button shows the fill color (${well}; ${bgs})`);
+}
+// ⌥-click a swatch: sets the stroke while staying on Fill.
+const beforeAlt = await t((x) => x.elementProps("rectangle"));
+await page.click(`${STYLE} .md-swatch[title='violet']`, { modifiers: ["Alt"] });
+await waitFor(async () => {
+  const now = await t((x) => x.elementProps("rectangle"));
+  return now.every((e, i) => e.strokeColor !== beforeAlt[i].strokeColor && e.strokeColor === now[0].strokeColor && e.backgroundColor === beforeAlt[i].backgroundColor);
+}, "⌥-click sets the stroke, fill untouched");
+assert.equal(await page.locator(`${STYLE} .md-target.on[data-target='fill']`).count(), 1, "still on Fill after ⌥-click");
+await page.click(`${STYLE} .md-target[data-target='stroke']`);
 await page.click(`${STYLE} [role=tab]:text-is('Presets')`);
 await page.click(`${STYLE} .md-group-head:has-text('Zones')`);
 await page.click(`${STYLE} .md-chip:text-is('DMZ')`);
@@ -298,6 +334,114 @@ await page.keyboard.press("Escape");
 await page.evaluate(() => document.querySelector(".md-drawing:not([style*='none']) .excalidraw-container")?.focus());
 await page.keyboard.press("Meta+Z");
 await waitFor(async () => (await t((x) => x.viewBackground())) === "#ffffff", "theme is one undo step");
+
+step("panel sections: drag one by its title, order saved; fine-tune sliders for stroke width, sloppiness, radius");
+await t((x) => x.selectType("rectangle"));
+const COL = ".md-drawing:not([style*='none']) .App-menu__left .panelColumn";
+const sectionOrder = () =>
+  page.evaluate((col) => [...document.querySelectorAll(`${col} [data-md-key]`)].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).map((el) => el.dataset.mdKey), COL);
+await page.waitForSelector(`${COL} [data-md-key="stroke-width"] > legend`);
+let order = await sectionOrder();
+assert.ok(order[0] === "colors" && order.indexOf("align") === order.indexOf("edges") - 1, `native order: Colors first, Align just above Edges (${order})`);
+// Drag "Stroke width" by its title to the top of the panel.
+const swLegend = page.locator(`${COL} [data-md-key="stroke-width"] > legend`);
+// Dragging only works in rearrange mode (button at the bottom of the panel).
+const dragTo = async (src, dst) => {
+  const a = await src.boundingBox();
+  await page.mouse.move(a.x + 20, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(a.x + 20, a.y + a.height / 2 - 10, { steps: 2 });
+  await page.mouse.move(dst.x + 20, dst.y + 4, { steps: 4 });
+  await page.mouse.up();
+};
+await swLegend.scrollIntoViewIfNeeded();
+assert.equal(await swLegend.getAttribute("title"), null, "no drag tooltip outside rearrange mode");
+await dragTo(swLegend, { x: (await swLegend.boundingBox()).x, y: (await swLegend.boundingBox()).y - 120 });
+assert.deepEqual(await sectionOrder(), order, "no drag outside rearrange mode");
+const toggleBtn = page.locator(`${COL} .md-panel-foot .md-arrange-toggle`);
+await toggleBtn.scrollIntoViewIfNeeded();
+assert.equal((await toggleBtn.textContent()).trim(), "Rearrange sections");
+const footLast = await page.evaluate((col) => {
+  const items = [...document.querySelector(col).querySelectorAll("[data-md-key], .md-panel-foot")].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+  return items.at(-1).classList.contains("md-panel-foot");
+}, COL);
+assert.ok(footLast, "Rearrange button sits at the very bottom of the panel");
+await toggleBtn.click();
+await waitFor(async () => (await page.locator("body.md-panel-arrange").count()) === 1, "rearrange mode on");
+await swLegend.scrollIntoViewIfNeeded();
+await swLegend.hover();
+await waitFor(async () => (await swLegend.getAttribute("title")) === "Drag to move this section", "drag tooltip in rearrange mode");
+await page.screenshot({ path: path.join(shots, "panel-grip.png") });
+let lb = await swLegend.boundingBox();
+await page.mouse.move(lb.x + 20, lb.y + lb.height / 2);
+await page.mouse.down();
+await page.mouse.move(lb.x + 20, lb.y + lb.height / 2 - 10, { steps: 2 });
+await page.evaluate((col) => document.querySelector(`${col} [data-md-key="colors"]`).scrollIntoView({ block: "start" }), COL);
+const colorsBox = await page.locator(`${COL} [data-md-key="colors"]`).boundingBox();
+await page.mouse.move(colorsBox.x + 20, colorsBox.y + 4, { steps: 4 });
+assert.equal(await page.locator(".md-drop-line").count(), 1, "drop line shows while dragging");
+await page.mouse.up();
+await waitFor(async () => (await sectionOrder())[0] === "stroke-width", "Stroke width is now the first section");
+await toggleBtn.scrollIntoViewIfNeeded();
+await toggleBtn.click();
+await waitFor(async () => (await page.locator("body.md-panel-arrange").count()) === 0, "Done ends rearrange mode");
+await waitFor(() => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(userData, "settings.json"), "utf8")).panelOrder?.[0] === "stroke-width";
+  } catch {
+    return false;
+  }
+}, "panel order saved in settings.json");
+assert.equal(await page.locator(".md-drop-line").count(), 0, "drop line removed");
+
+// Fine-tune: number box (stroke width), keyboard on the slider (sloppiness: one undo step), radius.
+const ftOpen = async (kind) => {
+  const btn = page.locator(`${COL} .md-ft-btn[data-ft-kind="${kind}"]`);
+  await btn.scrollIntoViewIfNeeded();
+  await btn.click();
+  await page.waitForSelector(`.md-ft-pop[data-ft-pop="${kind}"]`);
+};
+const rectProps = async () => (await t((x) => x.elementProps("rectangle")))[0];
+await ftOpen("strokeWidth");
+await page.fill(".md-ft-pop .md-ft-num", "12");
+await page.press(".md-ft-pop .md-ft-num", "Enter");
+await waitFor(async () => (await rectProps()).strokeWidth === 12, "stroke width 12 from the number box");
+await waitFor(async () => (await page.locator(`${COL} .md-ft-btn[data-ft-kind="strokeWidth"].active`).count()) === 1, "button shows a custom value");
+await page.screenshot({ path: path.join(shots, "fine-tune.png") });
+await page.keyboard.press("Escape");
+await waitFor(async () => (await page.locator(".md-ft-pop").count()) === 0, "Esc closes the popover");
+
+const roughBefore = (await rectProps()).roughness;
+await ftOpen("roughness");
+await page.focus(".md-ft-pop .md-ft-range");
+await page.keyboard.press("End");
+await waitFor(async () => (await rectProps()).roughness === 10, "sloppiness 10 from the slider");
+await page.keyboard.press("Escape");
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*='none']) .excalidraw-container")?.focus());
+await page.keyboard.press("Meta+Z");
+await waitFor(async () => (await rectProps()).roughness === roughBefore, "slider change is one undo step");
+
+await ftOpen("radius");
+assert.match(await page.textContent(".md-ft-pop .md-ft-note"), /Up to \d+ px/, "radius max shown");
+await page.fill(".md-ft-pop .md-ft-num", "10");
+await page.press(".md-ft-pop .md-ft-num", "Enter");
+await waitFor(async () => JSON.stringify((await rectProps()).roundness) === JSON.stringify({ type: 3, value: 10 }), "custom corner radius");
+await page.keyboard.press("Escape");
+
+// Nothing selected, pen tool: stroke width sets the default for the next stroke.
+await page.click(".md-drawing:not([style*='none']) canvas.interactive", { position: { x: 900, y: 700 } });
+await waitFor(async () => (await t((x) => x.selectedCount())) === 0, "nothing selected");
+await page.keyboard.press("p");
+await waitFor(async () => (await t((x) => x.api().getAppState().activeTool.type)) === "freedraw", "pen tool active");
+const strokeBefore = (await rectProps()).strokeWidth;
+await ftOpen("strokeWidth");
+await page.fill(".md-ft-pop .md-ft-num", "7");
+await page.press(".md-ft-pop .md-ft-num", "Enter");
+await waitFor(async () => (await t((x) => x.api().getAppState().currentItemStrokeWidth)) === 7, "pen stroke width 7 with nothing selected");
+assert.equal((await rectProps()).strokeWidth, strokeBefore, "existing shapes untouched");
+await page.keyboard.press("Escape");
+await waitFor(async () => (await page.locator(`${COL} .md-ft-btn[data-ft-kind="strokeWidth"].active`).count()) === 1, "button shows the custom default");
+await t((x) => x.api().setActiveTool({ type: "selection" }));
 
 step("save selection as stencil; it appears in the library");
 // Excalidraw handles keys only when its canvas has focus: click an empty spot first.
@@ -393,6 +537,13 @@ assert.ok(recoveredTab.title.startsWith("Untitled"));
 assert.equal(await t((x) => x.elementCount()), 2);
 await page.screenshot({ path: path.join(shots, "recovered.png") });
 assert.ok((await t((x) => x.library())).items.some((i) => i.name === "Core pair"), "saved stencil survives restart");
+await t((x) => x.selectType("rectangle"));
+await page.waitForSelector(".md-drawing:not([style*='none']) .App-menu__left .panelColumn [data-md-key=\"stroke-width\"]");
+await waitFor(async () => (await sectionOrder())[0] === "stroke-width", "panel order survives restart");
+await page.evaluate(() => window.mydraw.updateSettings({ panelOrder: [] }));
+await waitFor(async () => (await sectionOrder())[0] === "colors", "reset restores the default order");
+await t((x) => x.selectType("none"));
+
 
 step("MCP: control file is private; requests without the key are refused");
 const controlFile = path.join(userData, "control.json");
@@ -1787,9 +1938,22 @@ const edge = inv.nodes.find((n) => n.name === "Edge");
 assert.deepEqual([edge.ip, edge.vlan, edge.extra.rack], ["10.0.0.2", "20", "A1"]);
 await call("select", { ids: ["p2"] });
 await waitFor(async () => (await page.inputValue(propInput("ip"))) === "10.0.0.2", "panel follows the selection");
-await call("set_properties", { id: "p2", properties: { ip: null } });
+// Typed-but-uncommitted text in one field survives an outside edit of another field.
+await page.fill(propInput("owner"), "draft owner");
+await call("set_properties", { id: "p2", properties: { ip: null, role: "edge router" } });
+await waitFor(async () => (await page.inputValue(propInput("ip"))) === "" && (await page.inputValue(propInput("role"))) === "edge router", "panel shows an MCP edit without reselecting");
+assert.equal(await page.inputValue(propInput("owner")), "draft owner", "text being typed is kept");
+await page.fill(propInput("owner"), "");
 assert.equal((await call("get_inventory")).nodes.find((n) => n.name === "Edge").ip, "");
 assert.equal((await callRaw("set_properties", { id: "p2", properties: { mydrawNode: "x" } })).isError, true, "reserved keys refused");
+await page.click(".md-props .md-collapse-btn");
+await waitFor(async () => (await page.locator(".md-props [data-prop]").count()) === 0, "Properties collapses");
+assert.equal(await page.textContent(".md-props .md-props-count"), "2 set", "collapsed title counts the filled fields (vlan, role)");
+await page.screenshot({ path: path.join(shots, "props-collapsed.png") });
+await call("select", { ids: ["p1"] });
+await waitFor(async () => (await page.locator(".md-props.md-collapsed").count()) === 1, "stays collapsed for another shape");
+await page.click(".md-props legend .md-legend-text");
+await waitFor(async () => (await page.locator(".md-props [data-prop]").count()) > 0, "clicking the title expands it again");
 await call("select", { ids: ["p1", "p2"] });
 await waitFor(async () => !(await page.$(".md-props")), "no properties section for a multi-selection");
 

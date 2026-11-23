@@ -24,6 +24,8 @@ export interface Settings {
   quickConnect: QuickConnectSettings;
   /** Layout grid overlay (see shared/grid.ts). Global, not per drawing. */
   grid: GridSettings;
+  /** Order of the properties panel sections, top first (see shared/panelOrder.ts). Empty = native order. */
+  panelOrder: string[];
 }
 
 /** What an import built (see shared/importers.ts). */

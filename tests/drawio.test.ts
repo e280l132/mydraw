@@ -197,6 +197,21 @@ describe("drawio writer ids", () => {
   });
 });
 
+describe("drawio writer corner radius", () => {
+  it("writes a custom radius as an absolute arcSize (diameter), capped like Excalidraw", () => {
+    const els: DrawioEl[] = [
+      { id: "r1", type: "rectangle", x: 0, y: 0, width: 200, height: 100, roundness: { type: 3, value: 10 } },
+      { id: "r2", type: "rectangle", x: 300, y: 0, width: 200, height: 100, roundness: { type: 3, value: 80 } },
+      { id: "r3", type: "rectangle", x: 600, y: 0, width: 200, height: 100, roundness: { type: 3 } },
+    ];
+    const cells = findAll(parseXml(toDrawio([{ name: "P", elements: els }], {}).xml), "mxCell");
+    const style = (id: string) => cells.find((c) => c.attrs.id === id)!.attrs.style;
+    expect(style("r1")).toContain("absoluteArcSize=1;arcSize=20;");
+    expect(style("r2")).toContain("arcSize=50;");
+    expect(style("r3")).not.toContain("arcSize");
+  });
+});
+
 describe("drawio reader", () => {
   it("reads back what the writer wrote (round trip)", async () => {
     const { xml } = toDrawio([{ name: "Main", elements: scene() }], files);

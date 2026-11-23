@@ -27,6 +27,8 @@ interface Props {
   api: ExcalidrawImperativeAPI | undefined;
   /** Bumped when the selection changes, so the section re-reads it. */
   tick: number;
+  /** Bumped by App when the selection or a selected element changes (any edit). */
+  changeTick: number;
   onToast(msg: string, isError?: boolean): void;
   /** The "last picked color" swatch (shared with the icon color section). */
   custom: string | null;
@@ -373,10 +375,42 @@ function ThemeEditor({
 
 // ---------- section ----------
 
-export function StyleSection({ api, tick, onToast, custom: customColor, onCustomChange, onPick, picking, icons, onIconColor }: Props) {
+const TARGET_KEY = "mydraw.colorTarget";
+const FILL_TYPES = new Set(["rectangle", "ellipse", "diamond", "freedraw"]);
+
+/** One color for a set of elements: the shared value, "mixed", or null (none). */
+function wellColor(colors: string[]): string | null {
+  if (!colors.length) return null;
+  return colors.every((c) => c === colors[0]) ? colors[0] : "mixed";
+}
+
+/** Small color chip inside a Stroke / Fill / Icon button. */
+function Well({ color }: { color: string | null }) {
+  const kind = color === "mixed" ? "mixed" : !color || color === "transparent" ? "none" : "color";
+  return (
+    <span
+      className={`md-well md-well-${kind}`}
+      style={kind === "color" ? { background: color! } : undefined}
+      title={kind === "mixed" ? "Mixed" : kind === "none" ? "None" : color!}
+      aria-hidden="true"
+    />
+  );
+}
+
+export function StyleSection({ api, tick, changeTick, onToast, custom: customColor, onCustomChange, onPick, picking, icons, onIconColor }: Props) {
   useStyleLibrary();
   const [tab, setTab] = useState<Tab>("colors");
-  const [wanted, setTarget] = useState<Target | null>(null);
+  // Stroke/Fill: one app-wide choice that sticks from item to item and across restarts.
+  const [sticky, setSticky] = useState<"stroke" | "fill">(() => (localStorage.getItem(TARGET_KEY) === "fill" ? "fill" : "stroke"));
+  // A pick made for the current selection (Icon is only ever this); cleared when the selection changes.
+  const [pick, setPick] = useState<Target | null>(null);
+  const setTarget = (t: Target) => {
+    if (t !== "icon") {
+      setSticky(t);
+      localStorage.setItem(TARGET_KEY, t);
+    }
+    setPick(t);
+  };
   const [base, setBase] = useState<string | null>(null); // the basic color the shades ramp from
   const [custom, setCustom] = useState(false);
   const [wholeDrawing, setWholeDrawing] = useState(true);
@@ -385,9 +419,10 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
   const [presetDraft, setPresetDraft] = useState<PresetDraft | null>(null);
   const [themeDraft, setThemeDraft] = useState<ThemeDraft | null>(null);
   const [filter, setFilter] = useState("");
+  const [, rerender] = useState(0); // tool defaults (no selection) live in app state: re-read after a change
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const selected = useMemo(() => (api ? api.getSceneElements().filter((e) => api.getAppState().selectedElementIds[e.id]) : []), [api, tick]);
+  const selected = useMemo(() => (api ? api.getSceneElements().filter((e) => api.getAppState().selectedElementIds[e.id]) : []), [api, tick, changeTick]);
   const styleable = selected.filter((e) => e.type !== "image");
   const first = styleable[0];
   // Icons are recolored, not stroked: with only icons selected the Icon target is the only one that
@@ -399,13 +434,20 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
   const noSelection = !styleable.length && !hasIcons;
   const canFill = noSelection || styleable.some((e) => !isIconNode(e) && (e.type === "rectangle" || e.type === "ellipse" || e.type === "diamond" || e.type === "freedraw"));
   const canStroke = noSelection || styleable.length > 0;
-  // Which property the swatches set. Automatic (icons -> Icon, else Stroke) until the user picks one
-  // for this selection.
-  const auto: Target = iconOnly || (hasIcons && !canStroke) ? "icon" : "stroke";
-  const asked = wanted ?? auto;
-  const target: Target = asked === "icon" && !hasIcons ? "stroke" : asked === "fill" && !canFill ? auto : asked === "stroke" && !canStroke ? auto : asked;
+  // Which property the swatches (palette, shades, custom swatch, Any color…) set. Only icons selected ->
+  // Icon unless picked otherwise for this selection; else the sticky Stroke/Fill choice. Where that
+  // can't apply (Fill on arrows, lines, text) the other one is used without changing the choice.
+  const auto: Target = iconOnly || (hasIcons && !canStroke) ? "icon" : sticky;
+  const asked = pick ?? auto;
+  const target: Target = (() => {
+    let t = asked;
+    if (t === "icon" && !hasIcons) t = sticky;
+    if (t === "fill" && !canFill) t = canStroke ? "stroke" : "icon";
+    if (t === "stroke" && !canStroke) t = hasIcons ? "icon" : "stroke";
+    return t;
+  })();
 
-  useEffect(() => setTarget(null), [tick]); // a new selection starts on the automatic target
+  useEffect(() => setPick(null), [tick]);
 
   const toggle = (key: string) =>
     setOpen((prev) => {
@@ -435,6 +477,7 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
         if (style.strokeColor) st.currentItemStrokeColor = resolveColor(style.strokeColor);
         if (style.backgroundColor) st.currentItemBackgroundColor = resolveColor(style.backgroundColor);
         a.updateScene({ appState: st as Partial<AppState> as AppState, captureUpdate: CaptureUpdateAction.NEVER });
+        rerender((n) => n + 1);
         return;
       }
       const scene = a.getSceneElements();
@@ -442,12 +485,17 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
       commit(a, r);
     });
 
-  const applyColor = (color: string, preview = false) => {
+  /** The other of Stroke/Fill, for ⌥-click on a swatch (null when it can't apply). */
+  const other: Target | null = target === "stroke" ? (canFill ? "fill" : null) : target === "fill" ? (canStroke ? "stroke" : null) : null;
+  const applyColor = (color: string, preview = false, toOther = false) => {
     const c = resolveColor(color);
     if (!c) return onToast(`"${color}" isn't a color`, true);
-    if (target === "icon") return onIconColor(c, preview);
-    applyStyle(target === "stroke" ? { strokeColor: c } : { backgroundColor: c });
+    const to = toOther && other ? other : target;
+    if (to === "icon") return onIconColor(c, preview);
+    applyStyle(to === "stroke" ? { strokeColor: c } : { backgroundColor: c });
   };
+  /** Swatch click: ⌥-click sets the other of Stroke/Fill without switching. */
+  const swatchClick = (color: string, e: React.MouseEvent) => applyColor(color, false, e.altKey);
 
   const applyTheme = (t: Theme) =>
     run((a) => {
@@ -475,6 +523,12 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
           ? first.strokeColor
           : first.backgroundColor
         : null;
+  // Color previews in the Stroke / Fill / Icon buttons (selection, or the defaults for new shapes).
+  const appState = api?.getAppState();
+  const fillable = styleable.filter((e) => !isIconNode(e) && FILL_TYPES.has(e.type));
+  const strokeWell = noSelection ? appState?.currentItemStrokeColor ?? null : wellColor(styleable.map((e) => e.strokeColor));
+  const fillWell = noSelection ? appState?.currentItemBackgroundColor ?? null : wellColor(fillable.map((e) => e.backgroundColor));
+  const iconWell = icons.color && icons.color !== "original" ? icons.color : null;
   const pickerValue = current && current !== "transparent" && resolveColor(current) ? current : "#1971c2";
   // Shades ramp off the chosen basic color; before one is chosen, off the selection's current color.
   const shadeBase = base ?? (current && current !== "transparent" ? resolveColor(current) : null) ?? customColor;
@@ -484,20 +538,27 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
   const colorsTab = (
     <>
       <div className="md-iconcolor-actions md-seg">
-        <button className={`md-chip${target === "stroke" ? " on" : ""}`} disabled={!canStroke} onClick={() => setTarget("stroke")}>
-          Stroke
+        <button
+          className={`md-chip md-target${target === "stroke" ? " on" : ""}`}
+          data-target="stroke"
+          disabled={!canStroke}
+          title={canFill ? "Swatches set the outline. ⌥-click a swatch to set the fill instead." : "Swatches set the outline."}
+          onClick={() => setTarget("stroke")}
+        >
+          <Well color={strokeWell} /> Stroke
         </button>
         <button
-          className={`md-chip${target === "fill" ? " on" : ""}`}
+          className={`md-chip md-target${target === "fill" ? " on" : ""}`}
+          data-target="fill"
           disabled={!canFill}
-          title={canFill ? undefined : "The selection has no fill (text, lines, arrows and icons don't)"}
+          title={canFill ? "Swatches set the fill. ⌥-click a swatch to set the outline instead." : "The selection has no fill (text, lines, arrows and icons don't)"}
           onClick={() => setTarget("fill")}
         >
-          Fill
+          <Well color={canFill ? fillWell : null} /> Fill
         </button>
         {hasIcons && (
-          <button className={`md-chip${target === "icon" ? " on" : ""}`} onClick={() => setTarget("icon")} title="Recolor the selected SVG icons">
-            Icon
+          <button className={`md-chip md-target${target === "icon" ? " on" : ""}`} data-target="icon" onClick={() => setTarget("icon")} title="Recolor the selected SVG icons">
+            <Well color={iconWell} /> Icon
           </button>
         )}
       </div>
@@ -509,14 +570,14 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
             style={{ background: s.color }}
             title={s.name}
             aria-label={s.name}
-            onClick={() => {
+            onClick={(e) => {
               setBase(s.color);
-              applyColor(s.color);
+              swatchClick(s.color, e);
             }}
           />
         ))}
         {target === "fill" && (
-          <button className={`md-swatch md-swatch-none${current === "transparent" ? " on" : ""}`} title="Transparent" aria-label="Transparent" onClick={() => applyColor("transparent")} />
+          <button className={`md-swatch md-swatch-none${current === "transparent" ? " on" : ""}`} title="Transparent" aria-label="Transparent" onClick={(e) => swatchClick("transparent", e)} />
         )}
         <button
           className={`md-swatch md-swatch-slot${customColor ? "" : " empty"}${customColor && current === customColor ? " on" : ""}`}
@@ -524,10 +585,10 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
           title={customColor ? `Last custom color ${customColor}` : "Last custom color: use Any color… or the eyedropper"}
           aria-label="Last custom color"
           disabled={!customColor}
-          onClick={() => {
+          onClick={(e) => {
             if (!customColor) return;
             setBase(customColor);
-            applyColor(customColor);
+            swatchClick(customColor, e);
           }}
         />
       </div>
@@ -542,7 +603,7 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
                 style={{ background: sh.color }}
                 title={`${baseName} ${sh.shade}`}
                 aria-label={`${baseName} ${sh.shade}`}
-                onClick={() => applyColor(sh.color)}
+                onClick={(e) => swatchClick(sh.color, e)}
               />
             ))}
           </div>
@@ -767,7 +828,7 @@ export function StyleSection({ api, tick, onToast, custom: customColor, onCustom
   );
 
   return (
-    <fieldset className="md-style" onMouseDown={(e) => e.stopPropagation()}>
+    <fieldset className="md-style" data-md-section="colors" onMouseDown={(e) => e.stopPropagation()}>
       <legend>Colors &amp; styles</legend>
       <div className="md-iconcolor-actions md-seg md-tabs" role="tablist">
         {(["colors", "presets", "themes"] as Tab[]).map((t) => (

@@ -941,7 +941,8 @@ li[data-testid="addToLibrary"] {
 
 .md-iconcolor-grid {
   display: grid;
-  grid-template-columns: repeat(6, 1.6rem);
+  /* six equal columns filling the panel width (the panel narrows when its scrollbar shows) */
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0.35rem;
   margin-top: 0.25rem;
 }
@@ -954,6 +955,12 @@ li[data-testid="addToLibrary"] {
   border-radius: var(--border-radius-md, 6px);
   cursor: pointer;
   box-sizing: border-box;
+}
+
+.md-iconcolor-grid .md-swatch {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
 }
 
 .md-swatch.on {
@@ -971,7 +978,8 @@ li[data-testid="addToLibrary"] {
   gap: 0.35rem;
   margin-top: 0.5rem;
   /* same width as the swatch grid, so the row never spills past the panel */
-  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .md-iconcolor-actions .md-chip {
@@ -1023,7 +1031,8 @@ li[data-testid="addToLibrary"] {
   flex-direction: column;
   gap: 8px;
   margin-top: 0.6rem;
-  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .md-picker-sv {
@@ -1154,12 +1163,14 @@ li[data-testid="addToLibrary"] {
 
 .md-style .md-seg {
   margin-top: 0.25rem;
-  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .md-style-select,
 .md-style-hex input {
-  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  width: 100%;
+  box-sizing: border-box;
   box-sizing: border-box;
   margin-top: 0.4rem;
   height: 1.75rem;
@@ -1195,7 +1206,8 @@ li[data-testid="addToLibrary"] {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
-  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  width: 100%;
+  box-sizing: border-box;
   margin-top: 0.3rem;
 }
 
@@ -1242,7 +1254,8 @@ li[data-testid="addToLibrary"] {
 }
 
 .md-group {
-  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  width: 100%;
+  box-sizing: border-box;
   margin-top: 0.3rem;
   border-top: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.12));
 }
@@ -1275,7 +1288,8 @@ li[data-testid="addToLibrary"] {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  width: 100%;
+  box-sizing: border-box;
   margin-top: 0.4rem;
   padding: 0.5rem;
   box-sizing: border-box;
@@ -1326,13 +1340,152 @@ li[data-testid="addToLibrary"] {
   flex-wrap: wrap;
 }
 
-/* Excalidraw's Align & distribute section (2+ selected) sits just above its Edges section instead
-   of below everything (web/src/arrange.ts). The panel is a flex column. */
-.md-canvas .panelColumn > .md-arrange {
-  order: 1;
+/* Panel sections are ordered with inline CSS `order` (web/src/panelOrder.ts; the panel is a flex
+   column). Our host is `display: contents` so Colors & styles and Properties order on their own. */
+.md-canvas .panelColumn > .md-style-host {
+  display: contents;
 }
-.md-canvas .panelColumn > .md-after-arrange {
-  order: 2;
+/* Rearrange mode (button at the bottom of the panel; body.md-panel-arrange): every section gets a
+   dashed outline and its title becomes a full-width drag handle with a grip and hover highlight. */
+body.md-panel-arrange .md-canvas .panelColumn [data-md-key] {
+  outline: 1px dashed var(--color-primary, #6965db);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.md-canvas .panelColumn [data-md-key] > legend {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  box-sizing: border-box;
+  min-height: 1.5rem;
+  margin: 0 0 0.25rem -0.3rem;
+  padding: 0.15rem 0.3rem;
+  width: calc(100% + 0.3rem);
+  border-radius: var(--border-radius-md, 6px);
+  transition: background-color 0.12s;
+}
+body.md-panel-arrange .md-canvas .panelColumn [data-md-key] > legend,
+body.md-panel-arrange .md-canvas .panelColumn > label.control-label[data-md-key] {
+  cursor: grab;
+}
+body.md-panel-arrange .md-canvas .panelColumn [data-md-key] > legend {
+  background: var(--color-surface-primary-container, rgba(105, 101, 219, 0.12));
+}
+body.md-panel-arrange .md-canvas .panelColumn [data-md-key] > legend:hover {
+  background: var(--button-hover-bg, rgba(127, 127, 127, 0.2));
+}
+body.md-panel-arrange .md-canvas .panelColumn [data-md-key] > legend::before,
+body.md-panel-arrange .md-canvas .panelColumn > label.control-label[data-md-key]::before {
+  content: "";
+  flex: none;
+  display: inline-block;
+  width: 6px;
+  height: 10px;
+  margin-right: 0.35rem;
+  vertical-align: -1px;
+  /* 2 x 3 dots */
+  background: radial-gradient(circle, currentColor 1px, transparent 1.3px) 0 0 / 3px 3.5px;
+  color: var(--color-primary, #6965db);
+}
+body.md-panel-arrange .md-canvas .panelColumn [data-md-key] > legend::before {
+  margin-right: 0;
+}
+
+/* Footer: Rearrange sections toggle */
+.md-panel-foot {
+  margin-top: 0.25rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--default-border-color, rgba(127, 127, 127, 0.2));
+}
+.md-panel-foot-hint {
+  margin: 0 0 0.45rem;
+  font-size: 0.7rem;
+  color: var(--color-gray-50, #888);
+}
+.md-panel-foot-row {
+  display: flex;
+  gap: 0.35rem;
+}
+.md-arrange-toggle,
+.md-arrange-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  height: 2rem;
+  padding: 0 0.6rem;
+  border: none;
+  border-radius: var(--border-radius-lg, 8px);
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+  color: var(--text-primary-color, inherit);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.md-arrange-toggle {
+  flex: 1;
+}
+.md-arrange-toggle:hover,
+.md-arrange-reset:hover:not(:disabled) {
+  background: var(--button-hover-bg, rgba(127, 127, 127, 0.2));
+}
+.md-panel-foot.on .md-arrange-toggle {
+  background: var(--color-primary, #6965db);
+  color: #fff;
+}
+.md-arrange-reset:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Collapsible Properties section */
+.md-props .md-legend-text {
+  flex: 1;
+}
+.md-props-count {
+  font-size: 0.68rem;
+  color: var(--color-gray-50, #888);
+}
+.md-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--border-radius-md, 6px);
+  background: transparent;
+  color: var(--text-primary-color, inherit);
+  cursor: pointer;
+}
+.md-collapse-btn:hover {
+  background: var(--button-hover-bg, rgba(127, 127, 127, 0.2));
+}
+.md-collapse-btn svg {
+  transition: transform 0.15s;
+}
+.md-collapsed .md-collapse-btn svg {
+  transform: rotate(-90deg);
+}
+.md-props.md-collapsed {
+  padding-bottom: 0;
+}
+.md-section-dragging {
+  opacity: 0.45;
+}
+body.md-panel-dragging,
+body.md-panel-dragging * {
+  user-select: none !important;
+  cursor: grabbing !important;
+}
+.md-drop-line {
+  position: fixed;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-primary, #6965db);
+  z-index: 10000;
+  pointer-events: none;
 }
 
 /* Excalidraw's own Stroke/Background rows are replaced by the Colors tab. */
@@ -1344,7 +1497,8 @@ li[data-testid="addToLibrary"] {
 .md-shades {
   display: grid;
   grid-template-columns: repeat(10, 1fr);
-  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  width: 100%;
+  box-sizing: border-box;
   margin-top: 0.25rem;
   border-radius: var(--border-radius-md, 6px);
   overflow: hidden;
@@ -2020,7 +2174,8 @@ li[data-testid="addToLibrary"] {
 
 .md-props-input {
   display: block;
-  width: calc(6 * 1.6rem + 5 * 0.35rem);
+  width: 100%;
+  box-sizing: border-box;
   box-sizing: border-box;
   margin-top: 0.4rem;
   min-height: 1.75rem;
@@ -2594,4 +2749,132 @@ li[data-testid="addToLibrary"] {
   border-radius: 6px;
   background: rgba(224, 138, 30, 0.15);
   font-size: 11.5px;
+}
+
+/* Fine-tune buttons (end of Stroke width / Sloppiness / Edges rows) and their slider popover
+   (web/src/FineTune.tsx). */
+.md-ft-host {
+  display: contents;
+}
+.md-ft-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--default-button-size, 2rem);
+  height: var(--default-button-size, 2rem);
+  padding: 0;
+  border: none;
+  border-radius: var(--border-radius-lg, 8px);
+  background: var(--button-bg, var(--color-surface-mid, #f1f0ff));
+  color: var(--button-color, var(--text-primary-color, inherit));
+  cursor: pointer;
+}
+.md-ft-btn:hover:not(:disabled) {
+  background: var(--button-hover-bg, var(--color-surface-high, #e0dfff));
+}
+.md-ft-btn.active,
+.md-ft-btn.open {
+  background: var(--color-surface-primary-container, #e0dfff);
+  color: var(--color-on-primary-container, inherit);
+}
+.md-ft-btn.open {
+  box-shadow: 0 0 0 1px var(--color-primary, #6965db);
+}
+.md-ft-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.md-ft-pop {
+  position: fixed;
+  z-index: 9000;
+  width: 15rem;
+  box-sizing: border-box;
+  padding: 0.65rem 0.75rem 0.6rem;
+  border-radius: var(--border-radius-lg, 8px);
+  background: var(--island-bg-color, #fff);
+  color: var(--text-primary-color, #1b1b1f);
+  box-shadow: var(--shadow-island, 0 2px 12px rgba(0, 0, 0, 0.2));
+  font-size: 0.8rem;
+}
+.md-ft-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.45rem;
+  font-weight: 600;
+}
+.md-ft-value {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary, #6965db);
+}
+.md-ft-range {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--color-primary, #6965db);
+}
+.md-ft-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+.md-ft-scale {
+  color: var(--color-gray-50, #888);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+.md-ft-num {
+  width: 4.5rem;
+  box-sizing: border-box;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.15));
+  border-radius: var(--border-radius-md, 6px);
+  background: var(--input-bg-color, transparent);
+  color: inherit;
+  font: inherit;
+  text-align: right;
+}
+.md-ft-note {
+  margin: 0.45rem 0 0;
+  color: var(--color-gray-50, #888);
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
+/* Our panel sections are fieldsets, whose default `min-width: min-content` let them grow wider than
+   the panel (it then scrolled sideways, cutting off the left edge). Keep them to the panel width. */
+.md-canvas .panelColumn fieldset.md-style {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.md-style .md-seg > *,
+.md-style .md-tabs > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.md-canvas .App-menu__left {
+  overflow-x: hidden;
+}
+
+/* Stroke / Fill / Icon buttons show the color they set (StyleSection `Well`). */
+.md-target {
+  gap: 0.35rem;
+}
+.md-well {
+  flex: none;
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  box-sizing: border-box;
+  border-radius: 3px;
+  border: 1px solid rgba(127, 127, 127, 0.55);
+}
+.md-well-none {
+  background: linear-gradient(135deg, transparent 45%, #e03131 45%, #e03131 55%, transparent 55%);
+}
+.md-well-mixed {
+  background: conic-gradient(#e03131 0 25%, #1971c2 0 50%, #2f9e44 0 75%, #f08c00 0);
 }

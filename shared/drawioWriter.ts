@@ -436,6 +436,10 @@ function pageXml(page: DrawioPage, files: Record<string, DrawioFile>, opts: Draw
         style: styleString({
           ...shape,
           rounded: el.type === "rectangle" ? (el.roundness ? 1 : 0) : undefined,
+          // Custom corner radius (fine-tune slider): draw.io's absolute arcSize is the corner diameter.
+          ...(el.type === "rectangle" && el.roundness?.type === 3 && el.roundness.value !== undefined
+            ? { absoluteArcSize: 1, arcSize: Math.round(2 * Math.min(el.roundness.value, Math.min(Math.abs(el.width ?? 0), Math.abs(el.height ?? 0)) / 4)) }
+            : {}),
           whiteSpace: "wrap",
           html: 1,
           fillColor: drawioColor(el.backgroundColor),

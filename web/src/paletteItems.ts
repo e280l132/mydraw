@@ -25,6 +25,7 @@ export interface PaletteContext {
   onSettings(patch: Partial<Settings>): void;
   linkSelection(): void;
   clearLinks(): void;
+  toggleArrangePanel(): void;
 }
 
 /** Most elements offered as "Go to" entries (a big drawing would flood the list). */
@@ -53,6 +54,11 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
   cmd("View", "Show / hide diagram lint", { type: "toggleLint" }, { hint: "⌥⌘L", keywords: "check problems review overlap unconnected arrows palette colors fix" });
   cmd("View", "Show / hide grid", { type: "toggleGrid" }, { hint: "⌘'", keywords: "layout align lines dots guide snap background" });
   cmd("View", "Grid settings (size, color, strength)…", { type: "gridSettings" }, { keywords: "layout align lines dots spacing color opacity light dark major minor" });
+  add("View", "Rearrange panel sections (on / off)", c.toggleArrangePanel, { keywords: "properties sidebar sections drag reorder move layout" });
+  add("View", "Reset panel section order", () => {
+    c.onSettings({ panelOrder: [] });
+    c.toast("Panel sections are back in their default order.");
+  }, { keywords: "properties sidebar sections drag reorder arrange layout default" });
   for (const a of ARRANGE_ACTIONS) {
     add("Arrange", a.label, () => {
       if (!runArrange(c.activeId, a.label)) {
