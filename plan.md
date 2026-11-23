@@ -150,6 +150,7 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
    - **Presentation mode** (⌥⌘Return): frames as full-screen slides in page order, arrows/space/click, Esc; a drawing without frames is one slide.
    - **draw.io import**: Open (and MCP `open_drawing`) accept `.drawio`; it becomes a new unsaved drawing, never saved back into the .drawio.
    - Not done: Ask Claude box (plan: later); properties on hover; Mermaid *export* round trip UI beyond the existing export; snapshots are per path (a renamed file starts a new history).
+   - **Menus** (done 2026-11-23): the in-app menu and the macOS menu bar share one grouping (File · View · Diagram · Preferences · Help, Reset canvas last). Excalidraw 0.18 has no submenus, so the in-app menu uses collapsible sections (one open at a time) and check-mark rows for panels and grid.
 9. **Package** (next, not started): `electron-builder` → unsigned macOS `.app`/DMG; `mydraw` CLI that uses the installed `.app`. Later: Ask Claude box.
 
 Tests: vitest for catalog builder, exporters (format headers/dimensions), drawio/Mermaid writers, `build_diagram` layout, control-server auth; Playwright-Electron smoke test.

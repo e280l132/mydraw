@@ -145,11 +145,40 @@ const openMenu = async () => {
   await page.waitForSelector(MENU);
 };
 const getSettings = () => page.evaluate(() => window.mydraw.getSettings());
+const section = (id) => `${MENU} .md-menu-section[data-section="${id}"]`;
+const openSection = async (id) => {
+  await openMenu();
+  if (!(await page.$(`${section(id)}.open`))) await page.click(section(id));
+  await page.waitForSelector(`${MENU} [data-section-body="${id}"]`);
+};
 await openMenu();
-assert.ok(await page.isVisible(`${MENU} >> text=Open recent`), "recent group shown");
-assert.ok(await page.isVisible(`${MENU} .dropdown-menu-item >> text=network`), "recent file listed");
+// Top level: sections collapsed, in order, the destructive Reset canvas last.
+const menuShape = await page.evaluate((sel) => {
+  const m = document.querySelector(sel);
+  const sections = [...m.querySelectorAll(".md-menu-section")].map((e) => e.dataset.section);
+  const items = [...m.querySelectorAll(".dropdown-menu-item")];
+  return { sections, bodies: m.querySelectorAll(".md-menu-section-body").length, last: items[items.length - 1]?.textContent.trim() };
+}, MENU);
+assert.deepEqual(menuShape.sections, ["recent", "view", "diagram", "preferences"], `menu sections: ${menuShape.sections}`);
+assert.equal(menuShape.bodies, 0, "sections collapsed by default");
+assert.match(menuShape.last, /reset the canvas/i, `last item: ${menuShape.last}`);
+assert.ok(await page.isVisible(`${MENU} .md-menu-row-inline [aria-label="Copy as"] >> text=Mermaid`), "copy as chip row");
+await openSection("recent");
+assert.ok(await page.isVisible(`${MENU} [data-section-body="recent"] >> text=network`), "recent file listed when expanded");
+assert.ok(await page.$(MENU), "menu stays open after expanding a section");
+// One section open at a time; View check marks follow the panels and keep the menu open.
+await openSection("view");
+assert.ok(!(await page.$(`${MENU} [data-section-body="recent"]`)), "opening View closes Open recent");
+const pagesItem = `${MENU} [role=menuitemcheckbox]:has-text("Pages panel")`;
+assert.equal(await page.getAttribute(pagesItem, "aria-checked"), "false", "pages unchecked");
+await page.click(pagesItem);
+await page.waitForSelector(".md-pages");
+await waitFor(async () => (await page.getAttribute(pagesItem, "aria-checked")) === "true", "pages checked");
+await page.click(pagesItem);
+await waitFor(async () => !(await page.$(".md-pages")), "pages closed from menu");
 await page.screenshot({ path: path.join(shots, "app-menu-light.png") });
 
+await openSection("preferences");
 await page.click(`${MENU} [role=radiogroup][aria-label="Theme"] >> text=Dark`);
 await waitFor(async () => (await getSettings()).theme === "dark", "theme setting dark");
 await page.waitForSelector(".excalidraw.theme--dark");

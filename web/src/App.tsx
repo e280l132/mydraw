@@ -15,11 +15,11 @@ import type {
   ExcalidrawInitialDataState,
 } from "@excalidraw/excalidraw/types";
 import { MY_STENCILS, type LibraryIndex, type LibraryItem } from "../../shared/library";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { safeFileName, titleFromPath } from "../../shared/names";
 import type { DrawingStyle, MenuCommand, OpenedFile, Settings } from "../../shared/types";
-import { AppMenu } from "./AppMenu";
+import { AppMenu, type MenuPanels } from "./AppMenu";
 import { drawingStyleAppState } from "./drawingStyle";
 import { ExportDialog, loadExportOptions } from "./ExportDialog";
 import { CommandPalette } from "./CommandPalette";
@@ -130,6 +130,7 @@ interface DrawingViewProps {
   theme: "light" | "dark";
   settings: Settings | null;
   grid: GridSettings;
+  panels: MenuPanels;
   onApi(id: string, api: ExcalidrawImperativeAPI): void;
   onChange(id: string, elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles): void;
   onCommand(cmd: MenuCommand): void;
@@ -147,6 +148,7 @@ const DrawingView = memo(function DrawingView({
   theme,
   settings,
   grid,
+  panels,
   onApi,
   onChange,
   onCommand,
@@ -211,7 +213,7 @@ const DrawingView = memo(function DrawingView({
           name={tab.title}
           UIOptions={UI_OPTIONS}
         >
-          <AppMenu settings={settings} onCommand={onCommand} onSettings={onSettings} />
+          <AppMenu settings={settings} panels={panels} onCommand={onCommand} onSettings={onSettings} />
         </Excalidraw>
         <GridOverlay grid={layoutGrid.overlay ? grid : GRID_OFF} viewRef={gridView} registerRedraw={registerGridRedraw} />
       </div>
@@ -267,6 +269,10 @@ export function App() {
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
   const [libraryIndex, setLibraryIndex] = useState<LibraryIndex | null>(null);
   const [panelOpen, setPanelOpen] = useState(() => localStorage.getItem("mydraw.panelOpen") !== "0");
+  const menuPanels = useMemo<MenuPanels>(
+    () => ({ stencils: panelOpen, pages: pagesOpen, lint: lintOpen }),
+    [panelOpen, pagesOpen, lintOpen],
+  );
   const [addLabels, setAddLabels] = useState(() => localStorage.getItem("mydraw.addLabels") !== "0");
   const [saveSelection, setSaveSelection] = useState<(StencilContent & { suggestedName: string }) | null>(null);
   const [renaming, setRenaming] = useState<LibraryItem | null>(null);
@@ -1562,6 +1568,7 @@ export function App() {
             theme={theme}
             settings={settings}
             grid={settings?.grid ?? DEFAULT_GRID}
+            panels={menuPanels}
             onApi={onApi}
             onChange={onChange}
             onCommand={onCommandSync}

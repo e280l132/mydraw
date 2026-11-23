@@ -27,7 +27,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 - Autosave for saved files, crash recovery for unsaved drawings, reload when a file changes on disk.
 - **Version history** (⌥⌘V): a snapshot is kept on each save (autosaves at most every 2 minutes, 60 kept). Preview a version and restore it as one undo step.
 
-**Export** (⇧⌘E, and File → Copy As)
+**Export** (⇧⌘E, and Copy as in the menu)
 - PNG, JPG, WebP, SVG, HTML viewer, PDF (vector; fit, A4/Letter, or actual size over sheets), PowerPoint (one picture per slide), draw.io, Mermaid flowchart, CSV and Markdown inventory.
 - Scope: whole drawing, selection, one frame, or every frame (one file each, or one page or slide per frame in PDF, PowerPoint and draw.io). Scale, padding, background, dark mode, quality, embedded editable scene.
 - **Keep an image up to date**: per drawing, every save also rewrites e.g. `network.png` next to `network.excalidraw`.
@@ -90,7 +90,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 | ⇧⌘Y | Stencils panel |
 | ⌘F, Alt+S, ? | Excalidraw's own find, object snapping, help |
 
-In the app, the main menu has two helps: **mydraw features and shortcuts…** (also in the command palette) and Excalidraw's own Help (`?`, or the corner button: drawing-tool and editing keys). Each dialog has a button that opens the other.
+The main menu groups everything into File, View, Diagram and Preferences (collapsible; the menu bar follows the same grouping). Two helps are there: **mydraw features and shortcuts…** (also in the command palette) and Excalidraw's own Help (`?`, or the corner button: drawing-tool and editing keys). Each dialog has a button that opens the other.
 
 On a quick-connect handle: click, Option-click, ⌘-click, Shift-click (see above). On Windows and Linux, Ctrl replaces ⌘.
 

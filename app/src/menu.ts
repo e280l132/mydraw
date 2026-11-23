@@ -21,8 +21,32 @@ export function buildMenu(settings: Settings, h: MenuHandlers): void {
       ]
     : [{ label: "No Recent Files", enabled: false }];
 
+  // Keys the renderer already handles in its capture keydown (App.tsx): shown in the menu, but
+  // not registered, so they keep reaching the page and never fire twice.
+  const shown = (accelerator: string) => ({ accelerator, registerAccelerator: false });
+
+  // Same grouping as the in-app menu (web/src/AppMenu.tsx): File, Edit, View, Diagram, Window, Help.
   const template: MenuItemConstructorOptions[] = [
-    ...(isMac ? [{ role: "appMenu" as const }] : []),
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: "about" as const },
+              { type: "separator" as const },
+              { label: "Quick Connect Shortcuts…", click: cmd({ type: "quickConnectSettings" }) },
+              { type: "separator" as const },
+              { role: "services" as const },
+              { type: "separator" as const },
+              { role: "hide" as const },
+              { role: "hideOthers" as const },
+              { role: "unhide" as const },
+              { type: "separator" as const },
+              { role: "quit" as const },
+            ],
+          },
+        ]
+      : []),
     {
       label: "File",
       submenu: [
@@ -66,14 +90,27 @@ export function buildMenu(settings: Settings, h: MenuHandlers): void {
         { role: "paste" },
         { role: "selectAll", registerAccelerator: false },
         { type: "separator" },
-        { label: "Save Selection as Stencil…", click: cmd({ type: "saveStencil" }) },
-        { label: "Quick Save as Stencil", accelerator: "Alt+CmdOrCtrl+S", click: cmd({ type: "quickSaveStencil" }) },
+        { label: "Find and Replace…", ...shown("Alt+CmdOrCtrl+F"), click: cmd({ type: "findReplace" }) },
+        { label: "Command Palette…", ...shown("CmdOrCtrl+Shift+P"), click: cmd({ type: "commandPalette" }) },
       ],
     },
     {
       label: "View",
       submenu: [
         { label: "Stencils Panel", accelerator: "CmdOrCtrl+Shift+Y", click: cmd({ type: "toggleStencils" }) },
+        { label: "Pages Panel", ...shown("Alt+CmdOrCtrl+P"), click: cmd({ type: "togglePages" }) },
+        { label: "Diagram Lint", ...shown("Alt+CmdOrCtrl+L"), click: cmd({ type: "toggleLint" }) },
+        { type: "separator" },
+        {
+          label: "Grid",
+          type: "checkbox",
+          checked: settings.grid.enabled,
+          ...shown("CmdOrCtrl+'"),
+          click: cmd({ type: "toggleGrid" }),
+        },
+        { label: "Grid Settings…", click: cmd({ type: "gridSettings" }) },
+        { type: "separator" },
+        { label: "Start Presentation", ...shown("Alt+CmdOrCtrl+Enter"), click: cmd({ type: "present" }) },
         { type: "separator" },
         {
           label: "Theme",
@@ -107,6 +144,24 @@ export function buildMenu(settings: Settings, h: MenuHandlers): void {
       ],
     },
     {
+      label: "Diagram",
+      submenu: [
+        { label: "Inventory Table…", ...shown("Alt+CmdOrCtrl+T"), click: cmd({ type: "inventory" }) },
+        { label: "Import Diagram from Text…", ...shown("Alt+CmdOrCtrl+U"), click: cmd({ type: "importText" }) },
+        { label: "Version History…", ...shown("Alt+CmdOrCtrl+V"), click: cmd({ type: "versionHistory" }) },
+        { label: "Snap Selection to Grid", click: cmd({ type: "snapToGrid" }) },
+        { type: "separator" },
+        { label: "Save Selection as Stencil…", click: cmd({ type: "saveStencil" }) },
+        { label: "Quick Save as Stencil", accelerator: "Alt+CmdOrCtrl+S", click: cmd({ type: "quickSaveStencil" }) },
+        ...(isMac
+          ? []
+          : [
+              { type: "separator" as const },
+              { label: "Quick Connect Shortcuts…", click: cmd({ type: "quickConnectSettings" }) },
+            ]),
+      ],
+    },
+    {
       label: "Window",
       submenu: [
         { label: "Next Tab", accelerator: "Ctrl+Tab", click: cmd({ type: "nextTab" }) },
@@ -121,6 +176,10 @@ export function buildMenu(settings: Settings, h: MenuHandlers): void {
         { role: "minimize" },
         ...(isMac ? [{ role: "front" as const }] : []),
       ],
+    },
+    {
+      role: "help",
+      submenu: [{ label: "mydraw Features and Shortcuts…", click: cmd({ type: "help" }) }],
     },
   ];
 

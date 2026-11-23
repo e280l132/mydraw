@@ -413,6 +413,84 @@ li[data-testid="addToLibrary"] {
   font-size: 12px;
 }
 
+/* Label and chips on one line ("Copy as  PNG  SVG  Mermaid"). */
+.md-menu-row.md-menu-row-inline.dropdown-menu-item-custom {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.md-menu-row-inline .md-menu-row-label {
+  font-size: 14px;
+  color: inherit;
+  padding-left: 26px; /* line up with item text (icon 16px + gap 10px) */
+}
+
+/* Rows without an icon line their text up with the rows that have one, so group titles
+   stand out on the left and every label starts in the same column. */
+.excalidraw .dropdown-menu .dropdown-menu-item:not(:has(.dropdown-menu-item__icon)) {
+  padding-left: calc(0.5rem + 26px);
+}
+
+.md-menu-row-inline .md-seg {
+  flex: none;
+}
+
+/* Collapsible section header (Open recent, View, Diagram, Preferences): chevron on the right,
+   turned down when open. */
+.md-menu-section .dropdown-menu-item__text {
+  flex: 1;
+}
+
+.md-menu-section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.md-menu-section-label svg {
+  color: var(--md-muted);
+  transition: transform 0.12s ease;
+}
+
+.md-menu-section.open .md-menu-section-label svg {
+  transform: rotate(90deg);
+}
+
+.md-menu-section.open {
+  font-weight: 600;
+}
+
+/* The open section's rows: indented under the header's icon with a thin guide line. */
+.md-menu-section-body {
+  margin: 0 0 4px calc(0.5rem + 8px);
+  padding-left: 6px;
+  border-left: 1px solid var(--md-border);
+}
+
+.excalidraw .dropdown-menu .md-menu-section-body .dropdown-menu-item:not(:has(.dropdown-menu-item__icon)) {
+  padding-left: 0.5rem;
+}
+
+.excalidraw .dropdown-menu .md-menu-section-body .dropdown-menu-item {
+  height: 2rem;
+}
+
+.excalidraw .dropdown-menu .md-menu-section-body .dropdown-menu-item-custom {
+  margin-top: 4px;
+}
+
+/* Excalidraw's Canvas background row: line its label up with Theme / Drawing style. */
+.excalidraw .dropdown-menu .md-menu-section-body .dropdown-menu-item-custom:not(.md-menu-row) {
+  padding-left: 8px;
+}
+
+.excalidraw .dropdown-menu .dropdown-menu-item.md-menu-muted {
+  color: var(--md-muted);
+}
+
 /* ---------- stencil panel ---------- */
 
 .md-panel {

@@ -19,6 +19,37 @@ function Icon({ children }: { children: ReactNode }) {
   );
 }
 
+/** Small chevron for an expandable menu row; points right, rotated by CSS when open. */
+export const ChevronIcon = () => (
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M9 6l6 6-6 6" />
+  </svg>
+);
+
+export const ViewIcon = () => (
+  <Icon>
+    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+    <circle cx="12" cy="12" r="3" />
+  </Icon>
+);
+
+export const DiagramIcon = () => (
+  <Icon>
+    <rect x="3" y="3" width="7" height="6" rx="1" />
+    <rect x="14" y="15" width="7" height="6" rx="1" />
+    <path d="M6.5 9v5a2 2 0 0 0 2 2H14" />
+  </Icon>
+);
+
+export const SettingsIcon = () => (
+  <Icon>
+    <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" />
+    <circle cx="16" cy="6" r="2" />
+    <circle cx="10" cy="12" r="2" />
+    <circle cx="18" cy="18" r="2" />
+  </Icon>
+);
+
 export const NewIcon = () => (
   <Icon>
     <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
