@@ -36,6 +36,7 @@ import { attachFineTuneHosts, FineTune, sameHosts, type FineTuneHosts } from "./
 import { snapSelectionToGrid } from "./gridOps";
 import { DEFAULT_GRID, type GridSettings } from "../../shared/grid";
 import { InventoryDialog } from "./InventoryDialog";
+import { HelpDialog } from "./HelpDialog";
 import { ImportDialog } from "./ImportDialog";
 import { QuickConnectSettingsDialog } from "./QuickConnectSettings";
 import { DEFAULT_QUICK_CONNECT } from "../../shared/quickBindings";
@@ -226,6 +227,7 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -772,6 +774,35 @@ export function App() {
     return () => mo.disconnect();
   }, [openSaveStencil, quickSaveStencil]);
 
+  // The two helps open each other: Excalidraw's (`?`, the corner button, the menu: tools and editing
+  // keys) and ours (features and mydraw's shortcuts). Ours has a button for theirs; theirs gets one
+  // for ours, added to its header when it opens.
+  const openExcalidrawHelp = useCallback(() => {
+    setHelpOpen(false);
+    apis.current.get(activeRef.current)?.updateScene({ appState: { openDialog: { name: "help" } } as never, captureUpdate: CaptureUpdateAction.NEVER });
+  }, []);
+  useEffect(() => {
+    const addLink = (root: Element) => {
+      const header = root.matches(".HelpDialog__header") ? root : root.querySelector(".HelpDialog__header");
+      if (!header || header.querySelector(".md-help-link")) return;
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "HelpDialog__btn md-help-link";
+      b.textContent = "mydraw features and shortcuts";
+      b.addEventListener("click", () => {
+        apis.current.get(activeRef.current)?.updateScene({ appState: { openDialog: null } as never, captureUpdate: CaptureUpdateAction.NEVER });
+        setHelpOpen(true);
+      });
+      header.prepend(b);
+    };
+    const mo = new MutationObserver((records) => {
+      for (const r of records) for (const n of r.addedNodes) if (n instanceof Element) addLink(n);
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+    document.querySelectorAll(".HelpDialog").forEach(addLink);
+    return () => mo.disconnect();
+  }, []);
+
   const togglePanel = useCallback(() => {
     setPanelOpen((v) => {
       localStorage.setItem("mydraw.panelOpen", v ? "0" : "1");
@@ -1071,6 +1102,9 @@ export function App() {
           return;
         case "importText":
           if (apis.current.get(activeRef.current)) setImportOpen(true);
+          return;
+        case "help":
+          setHelpOpen(true);
           return;
         case "inventory":
           if (apis.current.get(activeRef.current)) setInventoryOpen(true);
@@ -1608,7 +1642,7 @@ export function App() {
           getApi={getActiveApi}
           library={libraryIndex}
           quick={settings?.quickConnect ?? DEFAULT_QUICK_CONNECT}
-          blocked={shortcutsOpen || exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
+          blocked={shortcutsOpen || helpOpen || inventoryOpen || importOpen || historyOpen || exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
           onToast={showToast}
         />
       )}
@@ -1621,6 +1655,16 @@ export function App() {
           quick={settings?.quickConnect ?? DEFAULT_QUICK_CONNECT}
           onSave={(quickConnect) => void bridge.updateSettings({ quickConnect })}
           onClose={() => setShortcutsOpen(false)}
+        />
+      )}
+      {helpOpen && (
+        <HelpDialog
+          onOpenExcalidraw={openExcalidrawHelp}
+          onClose={() => {
+            setHelpOpen(false);
+            // Excalidraw handles shortcuts only while focus is inside it: give it back.
+            document.querySelector<HTMLElement>(`[data-md-tab="${activeRef.current}"] .excalidraw`)?.focus();
+          }}
         />
       )}
       {importOpen && activeApi && <ImportDialog onClose={() => setImportOpen(false)} onDone={showToast} />}

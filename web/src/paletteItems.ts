@@ -1,8 +1,10 @@
 // Builds the list of things the command palette can run, from the current app state.
+import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { TEMPLATES } from "../../shared/templates";
 import type { LibraryIndex, LibraryItem } from "../../shared/library";
 import type { MenuCommand, Settings } from "../../shared/types";
+import { sc } from "../../shared/shortcuts";
 import type { PaletteItem } from "./CommandPalette";
 import { FORMAT_LABEL } from "./ExportDialog";
 import { EXPORT_FORMATS, listFrames, type ExportFormat } from "./exportImage";
@@ -39,20 +41,20 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
     add(category, title, () => c.command(command), extra);
 
   // ----- file / app -----
-  cmd("File", "New drawing", { type: "new" }, { hint: "⌘N" });
-  cmd("File", "Open…", { type: "open" }, { hint: "⌘O" });
-  cmd("File", "Save", { type: "save" }, { hint: "⌘S" });
-  cmd("File", "Save as…", { type: "saveAs" }, { hint: "⇧⌘S" });
-  cmd("File", "Close tab", { type: "closeTab" }, { hint: "⌘W" });
+  cmd("File", "New drawing", { type: "new" }, { hint: sc("newDrawing") });
+  cmd("File", "Open…", { type: "open" }, { hint: sc("openFile") });
+  cmd("File", "Save", { type: "save" }, { hint: sc("save") });
+  cmd("File", "Save as…", { type: "saveAs" }, { hint: sc("saveAs") });
+  cmd("File", "Close tab", { type: "closeTab" }, { hint: sc("closeTab") });
   cmd("File", "Next tab", { type: "nextTab" });
   cmd("File", "Previous tab", { type: "prevTab" });
   for (const t of c.tabs) {
     if (t.id !== c.activeId) add("Tabs", `Switch to “${t.title}”`, () => c.setActive(t.id), { keywords: "tab go open" });
   }
 
-  cmd("View", "Show / hide pages panel", { type: "togglePages" }, { hint: "⌥⌘P", keywords: "frames navigator slides" });
-  cmd("View", "Show / hide diagram lint", { type: "toggleLint" }, { hint: "⌥⌘L", keywords: "check problems review overlap unconnected arrows palette colors fix" });
-  cmd("View", "Show / hide grid", { type: "toggleGrid" }, { hint: "⌘'", keywords: "layout align lines dots guide snap background" });
+  cmd("View", "Show / hide pages panel", { type: "togglePages" }, { hint: sc("pages"), keywords: "frames navigator slides" });
+  cmd("View", "Show / hide diagram lint", { type: "toggleLint" }, { hint: sc("lint"), keywords: "check problems review overlap unconnected arrows palette colors fix" });
+  cmd("View", "Show / hide grid", { type: "toggleGrid" }, { hint: sc("grid"), keywords: "layout align lines dots guide snap background" });
   cmd("View", "Grid settings (size, color, strength)…", { type: "gridSettings" }, { keywords: "layout align lines dots spacing color opacity light dark major minor" });
   add("View", "Rearrange panel sections (on / off)", c.toggleArrangePanel, { keywords: "properties sidebar sections drag reorder move layout" });
   add("View", "Reset panel section order", () => {
@@ -69,24 +71,29 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
   cmd("Edit", "Snap selection to grid", { type: "snapToGrid" }, { keywords: "align layout line up round position" });
   add("Edit", "Link selection to a drawing…", c.linkSelection, { keywords: "hyperlink drill down open diagram" });
   add("Edit", "Remove links from selection", c.clearLinks, { keywords: "hyperlink unlink" });
-  cmd("View", "Start presentation (frames as slides)", { type: "present" }, { hint: "⌥⌘↵", keywords: "slides fullscreen present show pages" });
-  cmd("File", "Version history…", { type: "versionHistory" }, { hint: "⌥⌘V", keywords: "snapshots restore previous older undo save" });
+  cmd("View", "Start presentation (frames as slides)", { type: "present" }, { hint: sc("present"), keywords: "slides fullscreen present show pages" });
+  cmd("File", "Version history…", { type: "versionHistory" }, { hint: sc("versionHistory"), keywords: "snapshots restore previous older undo save" });
   cmd("Edit", "Quick connect shortcuts…", { type: "quickConnectSettings" }, { keywords: "keyboard modifiers option command shift click handle plus arrow link rebind settings preferences" });
-  cmd("File", "Import diagram from text (CSV / YAML / Mermaid)…", { type: "importText" }, { hint: "⌥⌘U", keywords: "paste hosts list diagram as code build generate" });
-  cmd("Edit", "Inventory table…", { type: "inventory" }, { hint: "⌥⌘T", keywords: "nodes hosts ip hostname properties grid spreadsheet" });
-  cmd("Edit", "Find and replace…", { type: "findReplace" }, { hint: "⌥⌘F", keywords: "search text rename" });
+  cmd("File", "Import diagram from text (CSV / YAML / Mermaid)…", { type: "importText" }, { hint: sc("importText"), keywords: "paste hosts list diagram as code build generate" });
+  cmd("Edit", "Inventory table…", { type: "inventory" }, { hint: sc("inventory"), keywords: "nodes hosts ip hostname properties grid spreadsheet" });
+  cmd("Edit", "Find and replace…", { type: "findReplace" }, { hint: sc("findReplace"), keywords: "search text rename" });
+  cmd("Help", "mydraw features and shortcuts…", { type: "help" }, { keywords: "help guide manual shortcuts keys docs what can it do" });
+  add("Help", "Excalidraw keyboard shortcuts (drawing tools and editing)…", () => c.api?.updateScene({ appState: { openDialog: { name: "help" } } as never, captureUpdate: CaptureUpdateAction.NEVER }), {
+    hint: "?",
+    keywords: "help keys tools hotkeys excalidraw",
+  });
 
   // ----- export -----
-  cmd("Export", "Export…", { type: "export" }, { hint: "⇧⌘E" });
+  cmd("Export", "Export…", { type: "export" }, { hint: sc("export") });
   for (const f of EXPORT_FORMATS) add("Export", `Export as ${FORMAT_LABEL[f]}…`, () => c.exportAs(f), { keywords: `save ${f}` });
   cmd("Export", "Copy as PNG", { type: "copyAs", format: "png" }, { keywords: "clipboard" });
   cmd("Export", "Copy as SVG", { type: "copyAs", format: "svg" }, { keywords: "clipboard" });
   cmd("Export", "Copy as Mermaid", { type: "copyAs", format: "mermaid" }, { keywords: "clipboard" });
 
   // ----- stencils panel -----
-  cmd("Stencils", "Show / hide stencils panel", { type: "toggleStencils" }, { hint: "⇧⌘Y" });
+  cmd("Stencils", "Show / hide stencils panel", { type: "toggleStencils" }, { hint: sc("stencils") });
   cmd("Stencils", "Save selection as stencil…", { type: "saveStencil" });
-  cmd("Stencils", "Quick save selection as stencil", { type: "quickSaveStencil" }, { hint: "⌥⌘S" });
+  cmd("Stencils", "Quick save selection as stencil", { type: "quickSaveStencil" }, { hint: sc("quickSaveStencil") });
 
   // ----- preferences -----
   const s = c.settings;

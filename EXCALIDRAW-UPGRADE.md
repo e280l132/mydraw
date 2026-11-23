@@ -72,6 +72,7 @@ as in Excalidraw (background `#121212`/`#111111`), and switching back to light m
 
 | What mydraw relies on | Used by | Covered |
 |---|---|---|
+| Excalidraw's help is `appState.openDialog = {name: "help"}` (set by `?`, the corner `.help-icon` button and the menu's Help item); its dialog is `.HelpDialog` with a `.HelpDialog__header` of `.HelpDialog__btn` links | `web/src/App.tsx` (`openExcalidrawHelp`, the observer that adds the "mydraw features and shortcuts" button to the header), `web/src/HelpDialog.tsx` | smoke ("?" opens it, both buttons switch dialogs) |
 | `[data-testid="button-undo"]` / `button-redo` exist in each tab's UI | `web/src/agent/executor.ts` (MCP undo/redo) | smoke |
 | `li[data-testid="addToLibrary"]`, `.sidebar-trigger`, `.default-sidebar-trigger` (hidden by CSS) | `web/src/styles.css` | by hand: no Library button, no "Add to library" |
 | `li[data-testid="duplicateSelection"]` in the context menu (our stencil items are inserted before it); closing the menu with a body `pointerdown` | `web/src/App.tsx` (context menu augment) | smoke |

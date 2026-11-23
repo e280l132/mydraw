@@ -90,6 +90,8 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 | ⇧⌘Y | Stencils panel |
 | ⌘F, Alt+S, ? | Excalidraw's own find, object snapping, help |
 
+In the app, the main menu has two helps: **mydraw features and shortcuts…** (also in the command palette) and Excalidraw's own Help (`?`, or the corner button: drawing-tool and editing keys). Each dialog has a button that opens the other.
+
 On a quick-connect handle: click, Option-click, ⌘-click, Shift-click (see above). On Windows and Linux, Ctrl replaces ⌘.
 
 ## Command line

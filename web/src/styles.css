@@ -2481,6 +2481,62 @@ body.md-panel-dragging * {
 
 /* ---------- quick connect shortcuts dialog ---------- */
 
+.md-help {
+  width: min(720px, 94vw);
+}
+
+.md-help .md-help-link {
+  margin: 4px 0 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--button-gray-2, #ccc);
+  background: var(--button-gray-1, #f1f1f4);
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.md-help-hint {
+  margin: 10px 0 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  opacity: 0.75;
+}
+
+.md-help-section h3 {
+  margin: 16px 0 4px;
+  font-size: 13px;
+}
+
+.md-help-section ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.md-help-section li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.md-help-section kbd {
+  flex: 0 0 auto;
+  min-width: 96px;
+  font: inherit;
+  font-size: 11.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--default-bg-color, #eee);
+  border: 1px solid var(--button-gray-2, #ccc);
+  text-align: center;
+  white-space: nowrap;
+}
+
 .md-qcs {
   width: min(640px, 94vw);
 }

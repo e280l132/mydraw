@@ -1090,7 +1090,16 @@ await waitFor(async () => (await t((x) => x.appStateValue("objectsSnapModeEnable
 await page.keyboard.press("Alt+KeyS");
 await page.keyboard.press("?");
 await page.waitForSelector(".HelpDialog", { timeout: 5000 });
+// Both helps are reachable from each other: Excalidraw's has a button for ours, ours one for theirs.
+await page.waitForSelector(".HelpDialog .md-help-link", { timeout: 5000 });
+await page.click(".HelpDialog .md-help-link");
+await page.waitForSelector(".md-help h2", { timeout: 5000 });
+await waitFor(async () => (await page.locator(".HelpDialog").count()) === 0, "Excalidraw's help closes when ours opens");
+await page.click(".md-help .md-help-link");
+await page.waitForSelector(".HelpDialog", { timeout: 5000 });
+await waitFor(async () => (await page.locator(".md-help").count()) === 0, "our help closes when Excalidraw's opens");
 await page.keyboard.press("Escape");
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
 // ⌘K opens the palette with nothing selected, but not with a selection (Excalidraw edits the link then).
 await t((x) => x.selectType("rectangle"));
 await page.keyboard.press(`${MOD}+k`);
@@ -1387,6 +1396,20 @@ await sleep(200);
 assert.equal(await t((x) => x.elementCount()), qcCount, "plain click does nothing when unbound");
 await page.evaluate(() => window.mydraw.updateSettings({ quickConnect: {} })); // back to the defaults
 await waitFor(async () => (await getSettings()).quickConnect.bindings.connectedCopy.keys[0] === "Alt", "defaults restored");
+
+// Help: mydraw's own features and shortcuts dialog opens and closes with Esc.
+await t((x) => x.command({ type: "help" }));
+await page.waitForSelector(".md-help h2");
+assert.match(await page.textContent(".md-help h2"), /features and shortcuts/, "help dialog title");
+const helpTitles = await page.$$eval(".md-help-section", (els) => els.map((e) => e.getAttribute("data-help")));
+for (const title of ["Files and tabs", "Export", "Stencils and icons", "Colors and styles", "Diagrams from text", "Properties, inventory and links", "Pages and presentation", "Checks and layout", "Appearance", "Command line and Claude Code"]) {
+  assert.ok(helpTitles.includes(title), `help has the "${title}" section`);
+}
+assert.equal(helpTitles.length, 12, "help section count");
+assert.match(await page.textContent(".md-help"), /Preferences → Quick connect shortcuts/, "help names the real menu path");
+await page.keyboard.press("Escape");
+await waitFor(async () => (await page.locator(".md-help").count()) === 0, "Esc closes help");
+await waitFor(() => page.evaluate(() => !!document.activeElement?.closest(".excalidraw")), "focus returns to the drawing after help closes");
 
 // The shortcuts dialog records held keys (sides kept) and saves them.
 await t((x) => x.command({ type: "quickConnectSettings" }));

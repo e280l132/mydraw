@@ -119,6 +119,7 @@ export type MenuCommand =
   | { type: "togglePages" }
   | { type: "toggleLint" }
   | { type: "inventory" }
+  | { type: "help" }
   | { type: "importText" }
   | { type: "quickConnectSettings" }
   | { type: "toggleGrid" }

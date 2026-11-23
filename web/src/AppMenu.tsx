@@ -1,11 +1,13 @@
 import { MainMenu } from "@excalidraw/excalidraw";
 import type { MenuCommand, Settings } from "../../shared/types";
+import { sc } from "../../shared/shortcuts";
 import {
   CheckOffIcon,
   CheckOnIcon,
   ClearIcon,
   CloseTabIcon,
   ExportIcon,
+  HelpIcon,
   NewIcon,
   OpenIcon,
   RecentIcon,
@@ -56,19 +58,19 @@ export function AppMenu({ settings, onCommand, onSettings }: Props) {
   const recent = settings?.recentFiles.slice(0, MAX_RECENT_IN_MENU) ?? [];
   return (
     <MainMenu>
-      <MainMenu.Item icon={<NewIcon />} onSelect={() => onCommand({ type: "new" })} shortcut="⌘N">
+      <MainMenu.Item icon={<NewIcon />} onSelect={() => onCommand({ type: "new" })} shortcut={sc("newDrawing")}>
         New drawing
       </MainMenu.Item>
-      <MainMenu.Item icon={<OpenIcon />} onSelect={() => onCommand({ type: "open" })} shortcut="⌘O">
+      <MainMenu.Item icon={<OpenIcon />} onSelect={() => onCommand({ type: "open" })} shortcut={sc("openFile")}>
         Open…
       </MainMenu.Item>
-      <MainMenu.Item icon={<SaveIcon />} onSelect={() => onCommand({ type: "save" })} shortcut="⌘S">
+      <MainMenu.Item icon={<SaveIcon />} onSelect={() => onCommand({ type: "save" })} shortcut={sc("save")}>
         Save
       </MainMenu.Item>
-      <MainMenu.Item icon={<SaveAsIcon />} onSelect={() => onCommand({ type: "saveAs" })} shortcut="⇧⌘S">
+      <MainMenu.Item icon={<SaveAsIcon />} onSelect={() => onCommand({ type: "saveAs" })} shortcut={sc("saveAs")}>
         Save as…
       </MainMenu.Item>
-      <MainMenu.Item icon={<ExportIcon />} onSelect={() => onCommand({ type: "export" })} shortcut="⇧⌘E">
+      <MainMenu.Item icon={<ExportIcon />} onSelect={() => onCommand({ type: "export" })} shortcut={sc("export")}>
         Export…
       </MainMenu.Item>
       <MainMenu.Group title="Copy as">
@@ -76,7 +78,7 @@ export function AppMenu({ settings, onCommand, onSettings }: Props) {
         <MainMenu.Item onSelect={() => onCommand({ type: "copyAs", format: "svg" })}>SVG</MainMenu.Item>
         <MainMenu.Item onSelect={() => onCommand({ type: "copyAs", format: "mermaid" })}>Mermaid</MainMenu.Item>
       </MainMenu.Group>
-      <MainMenu.Item icon={<CloseTabIcon />} onSelect={() => onCommand({ type: "closeTab" })} shortcut="⌘W">
+      <MainMenu.Item icon={<CloseTabIcon />} onSelect={() => onCommand({ type: "closeTab" })} shortcut={sc("closeTab")}>
         Close tab
       </MainMenu.Item>
 
@@ -99,39 +101,39 @@ export function AppMenu({ settings, onCommand, onSettings }: Props) {
       )}
 
       <MainMenu.Group title="Commands">
-        <MainMenu.Item onSelect={() => onCommand({ type: "commandPalette" })} shortcut="⌘K">
+        <MainMenu.Item onSelect={() => onCommand({ type: "commandPalette" })} shortcut={sc("palette")}>
           Command palette…
         </MainMenu.Item>
-        <MainMenu.Item onSelect={() => onCommand({ type: "togglePages" })} shortcut="⌥⌘P">
+        <MainMenu.Item onSelect={() => onCommand({ type: "togglePages" })} shortcut={sc("pages")}>
           Show / hide pages panel
         </MainMenu.Item>
-        <MainMenu.Item onSelect={() => onCommand({ type: "toggleLint" })} shortcut="⌥⌘L">
+        <MainMenu.Item onSelect={() => onCommand({ type: "toggleLint" })} shortcut={sc("lint")}>
           Show / hide diagram lint
         </MainMenu.Item>
-        <MainMenu.Item onSelect={() => onCommand({ type: "toggleGrid" })} shortcut="⌘'">
+        <MainMenu.Item onSelect={() => onCommand({ type: "toggleGrid" })} shortcut={sc("grid")}>
           Show / hide grid
         </MainMenu.Item>
         <MainMenu.Item onSelect={() => onCommand({ type: "gridSettings" })}>Grid settings…</MainMenu.Item>
         <MainMenu.Item onSelect={() => onCommand({ type: "snapToGrid" })}>Snap selection to grid</MainMenu.Item>
-        <MainMenu.Item onSelect={() => onCommand({ type: "present" })} shortcut="⌥⌘↵">
+        <MainMenu.Item onSelect={() => onCommand({ type: "present" })} shortcut={sc("present")}>
           Start presentation
         </MainMenu.Item>
-        <MainMenu.Item onSelect={() => onCommand({ type: "versionHistory" })} shortcut="⌥⌘V">
+        <MainMenu.Item onSelect={() => onCommand({ type: "versionHistory" })} shortcut={sc("versionHistory")}>
           Version history…
         </MainMenu.Item>
-        <MainMenu.Item onSelect={() => onCommand({ type: "importText" })} shortcut="⌥⌘U">
+        <MainMenu.Item onSelect={() => onCommand({ type: "importText" })} shortcut={sc("importText")}>
           Import diagram from text…
         </MainMenu.Item>
-        <MainMenu.Item onSelect={() => onCommand({ type: "inventory" })} shortcut="⌥⌘T">
+        <MainMenu.Item onSelect={() => onCommand({ type: "inventory" })} shortcut={sc("inventory")}>
           Inventory table…
         </MainMenu.Item>
-        <MainMenu.Item onSelect={() => onCommand({ type: "findReplace" })} shortcut="⌥⌘F">
+        <MainMenu.Item onSelect={() => onCommand({ type: "findReplace" })} shortcut={sc("findReplace")}>
           Find and replace…
         </MainMenu.Item>
       </MainMenu.Group>
 
       <MainMenu.Group title="Stencils">
-        <MainMenu.Item onSelect={() => onCommand({ type: "toggleStencils" })} shortcut="⇧⌘Y">
+        <MainMenu.Item onSelect={() => onCommand({ type: "toggleStencils" })} shortcut={sc("stencils")}>
           Show / hide stencils panel
         </MainMenu.Item>
         <MainMenu.Item onSelect={() => onCommand({ type: "saveStencil" })}>Save selection as stencil…</MainMenu.Item>
@@ -178,6 +180,9 @@ export function AppMenu({ settings, onCommand, onSettings }: Props) {
       <MainMenu.DefaultItems.ClearCanvas />
       <MainMenu.DefaultItems.ChangeCanvasBackground />
       <MainMenu.Separator />
+      <MainMenu.Item icon={<HelpIcon />} onSelect={() => onCommand({ type: "help" })}>
+        mydraw features and shortcuts…
+      </MainMenu.Item>
       <MainMenu.DefaultItems.Help />
     </MainMenu>
   );

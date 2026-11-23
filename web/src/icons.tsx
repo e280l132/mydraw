@@ -87,3 +87,10 @@ export const CheckOffIcon = () => (
     <rect x="4" y="4" width="16" height="16" rx="4" />
   </Icon>
 );
+
+export const HelpIcon = () => (
+  <Icon>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1.9-1.1 1.8M12 17h.01" />
+  </Icon>
+);
