@@ -63,6 +63,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 
 **Checks and layout**
 - **Diagram lint** (⌥⌘L): overlaps, unconnected arrows, unlabeled nodes, missing IPs, off-palette colors. Safe one-click fixes; "Fix all" is one undo step.
+- **Layout grid** (⌘', or Grid settings… in the menu): lines or dots, spacing 4–100 px, a stronger line every N cells, any color, adjustable strength. Drawn behind the shapes. **Snap to grid** while moving, drawing and resizing (hold ⌘ to move freely); "Snap selection to grid" lines up existing shapes in one undo step. The grid is an app preference: it is never saved into drawings or exports.
 - **Route arrows around shapes** (command palette): re-routes the selected arrows (or all of them) around shapes.
 - **Find and replace** (⌥⌘F): match case, whole word, selection or whole drawing, one undo step.
 - **Command palette** (⇧⌘P; ⌘K when nothing is selected): fuzzy search over every command, stencil, theme, preset, template, frame, element and file action.
@@ -75,6 +76,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 | Keys | Action |
 |---|---|
 | ⇧⌘P, or ⌘K with nothing selected | Command palette |
+| ⌘' | Show / hide the layout grid |
 | ⌥⌘F | Find and replace |
 | ⌥⌘T | Inventory table |
 | ⌥⌘L | Diagram lint |
@@ -125,6 +127,8 @@ scripts/      dev, build and smoke-test scripts
 bin/          the mydraw command (headless CLI, app/src/cli.ts)
 tests/        vitest unit tests
 ```
+
+Excalidraw is pinned to an exact version and some features rely on its internals: read [EXCALIDRAW-UPGRADE.md](EXCALIDRAW-UPGRADE.md) before upgrading it.
 
 App data (settings, recovery, version history) lives in `~/Library/Application Support/mydraw/`; the stencil library in `~/Documents/mydraw/Library/`.
 

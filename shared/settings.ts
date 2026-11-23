@@ -1,3 +1,4 @@
+import { DEFAULT_GRID, normalizeGrid } from "./grid";
 import { cloneQuickConnect, defaultQuickConnect, normalizeQuickConnect } from "./quickBindings";
 import type { DrawingStyle, Settings, ThemeSetting } from "./types";
 
@@ -11,6 +12,7 @@ export const DEFAULT_SETTINGS: Settings = {
   libraryPath: null,
   autoExport: {},
   quickConnect: defaultQuickConnect(),
+  grid: { ...DEFAULT_GRID },
 };
 
 const THEMES: ThemeSetting[] = ["system", "light", "dark"];
@@ -18,7 +20,7 @@ const STYLES: DrawingStyle[] = ["clean", "sketch"];
 
 /** Merge untrusted JSON (settings file or a renderer patch) onto a base, keeping only valid values. */
 export function mergeSettings(base: Settings, raw: unknown): Settings {
-  const out: Settings = { ...base, recentFiles: [...base.recentFiles], autoExport: { ...base.autoExport }, quickConnect: cloneQuickConnect(base.quickConnect) };
+  const out: Settings = { ...base, recentFiles: [...base.recentFiles], autoExport: { ...base.autoExport }, quickConnect: cloneQuickConnect(base.quickConnect), grid: { ...base.grid } };
   if (!raw || typeof raw !== "object") return out;
   const r = raw as Record<string, unknown>;
   if (THEMES.includes(r.theme as ThemeSetting)) out.theme = r.theme as ThemeSetting;
@@ -37,6 +39,7 @@ export function mergeSettings(base: Settings, raw: unknown): Settings {
     }
   }
   if (r.quickConnect !== undefined) out.quickConnect = normalizeQuickConnect(r.quickConnect);
+  if (r.grid !== undefined) out.grid = normalizeGrid(r.grid, base.grid);
   return out;
 }
 

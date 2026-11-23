@@ -108,6 +108,11 @@ export function AppMenu({ settings, onCommand, onSettings }: Props) {
         <MainMenu.Item onSelect={() => onCommand({ type: "toggleLint" })} shortcut="⌥⌘L">
           Show / hide diagram lint
         </MainMenu.Item>
+        <MainMenu.Item onSelect={() => onCommand({ type: "toggleGrid" })} shortcut="⌘'">
+          Show / hide grid
+        </MainMenu.Item>
+        <MainMenu.Item onSelect={() => onCommand({ type: "gridSettings" })}>Grid settings…</MainMenu.Item>
+        <MainMenu.Item onSelect={() => onCommand({ type: "snapToGrid" })}>Snap selection to grid</MainMenu.Item>
         <MainMenu.Item onSelect={() => onCommand({ type: "present" })} shortcut="⌥⌘↵">
           Start presentation
         </MainMenu.Item>

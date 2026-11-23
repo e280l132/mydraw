@@ -1,5 +1,6 @@
 import type { AgentCommand, AgentReply } from "./agent";
 import type { LibraryIndex } from "./library";
+import type { GridSettings } from "./grid";
 import type { QuickConnectSettings } from "./quickBindings";
 
 // Types shared by the Electron main process, the preload bridge and the renderer.
@@ -21,6 +22,8 @@ export interface Settings {
   autoExport: Record<string, "png" | "svg">;
   /** Quick connect: which modifier + click does what, and the link-mode keys (see shared/quickBindings.ts). */
   quickConnect: QuickConnectSettings;
+  /** Layout grid overlay (see shared/grid.ts). Global, not per drawing. */
+  grid: GridSettings;
 }
 
 /** What an import built (see shared/importers.ts). */
@@ -115,6 +118,9 @@ export type MenuCommand =
   | { type: "inventory" }
   | { type: "importText" }
   | { type: "quickConnectSettings" }
+  | { type: "toggleGrid" }
+  | { type: "gridSettings" }
+  | { type: "snapToGrid" }
   | { type: "versionHistory" }
   | { type: "present" };
 

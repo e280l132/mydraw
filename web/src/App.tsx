@@ -29,6 +29,11 @@ import { ExportDialog, loadExportOptions } from "./ExportDialog";
 import { CommandPalette } from "./CommandPalette";
 import { FindReplace } from "./FindReplace";
 import { PagesPanel } from "./PagesPanel";
+import { GridOverlay, type GridViewRef } from "./GridOverlay";
+import { gridStatusByTab, useLayoutGrid, type GridHealth } from "./useLayoutGrid";
+import { GridPanel } from "./GridPanel";
+import { snapSelectionToGrid } from "./gridOps";
+import { DEFAULT_GRID, type GridSettings } from "../../shared/grid";
 import { InventoryDialog } from "./InventoryDialog";
 import { ImportDialog } from "./ImportDialog";
 import { QuickConnectSettingsDialog } from "./QuickConnectSettings";
@@ -132,6 +137,7 @@ interface DrawingViewProps {
   hidden: boolean;
   theme: "light" | "dark";
   settings: Settings | null;
+  grid: GridSettings;
   onApi(id: string, api: ExcalidrawImperativeAPI): void;
   onChange(id: string, elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles): void;
   onCommand(cmd: MenuCommand): void;
@@ -139,13 +145,17 @@ interface DrawingViewProps {
   onResolveConflict(id: string, reload: boolean): void;
   onLibraryChange(id: string, items: LibraryItems): void;
   onOpenLink(id: string, link: string): void;
+  onGridHealth(id: string, h: GridHealth): void;
 }
+
+const GRID_OFF = { ...DEFAULT_GRID, enabled: false };
 
 const DrawingView = memo(function DrawingView({
   tab,
   hidden,
   theme,
   settings,
+  grid,
   onApi,
   onChange,
   onCommand,
@@ -153,14 +163,30 @@ const DrawingView = memo(function DrawingView({
   onResolveConflict,
   onLibraryChange,
   onOpenLink,
+  onGridHealth,
 }: DrawingViewProps) {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const layoutGrid = useLayoutGrid({
+    tabId: tab.id,
+    grid,
+    hidden,
+    theme,
+    apiRef,
+    rootRef,
+    onExternalToggle: () => onCommand({ type: "toggleGrid" }),
+    onHealth: (h) => onGridHealth(tab.id, h),
+  });
+  // Scroll/zoom for the fallback grid overlay; written on every change, painted without a React render.
+  const gridView: GridViewRef = useRef({ scrollX: 0, scrollY: 0, zoom: 1 });
+  const gridRedraw = useRef<() => void>(() => {});
+  const registerGridRedraw = useCallback((fn: () => void) => void (gridRedraw.current = fn), []);
   useEffect(() => {
     if (!hidden) apiRef.current?.refresh();
   }, [hidden]);
 
   return (
-    <div className="md-drawing" data-md-tab={tab.id} style={{ display: hidden ? "none" : undefined }}>
+    <div ref={rootRef} className="md-drawing" data-md-tab={tab.id} style={{ display: hidden ? "none" : undefined }}>
       {tab.conflict && (
         <div className="md-banner">
           <span>“{tab.title}” changed on disk while you had unsaved edits.</span>
@@ -175,7 +201,15 @@ const DrawingView = memo(function DrawingView({
             onApi(tab.id, api);
           }}
           initialData={tab.initialData}
-          onChange={(elements, appState, files) => onChange(tab.id, elements, appState, files)}
+          onChange={(elements, appState, files) => {
+            layoutGrid.onSceneChange(appState);
+            const v = gridView.current;
+            if (v.scrollX !== appState.scrollX || v.scrollY !== appState.scrollY || v.zoom !== appState.zoom.value) {
+              gridView.current = { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom.value };
+              gridRedraw.current();
+            }
+            onChange(tab.id, elements, appState, files);
+          }}
           onLibraryChange={(items) => onLibraryChange(tab.id, items)}
           onLinkOpen={(element, event) => {
             // Drill-down links open through the main process (web address -> browser, .excalidraw -> tab).
@@ -190,6 +224,7 @@ const DrawingView = memo(function DrawingView({
         >
           <AppMenu settings={settings} onCommand={onCommand} onSettings={onSettings} />
         </Excalidraw>
+        <GridOverlay grid={layoutGrid.overlay ? grid : GRID_OFF} viewRef={gridView} registerRedraw={registerGridRedraw} />
       </div>
     </div>
   );
@@ -227,6 +262,13 @@ export function App() {
       localStorage.setItem("mydraw.lintOpen", v ? "0" : "1");
       return !v;
     });
+  }, []);
+  const [gridHealth, setGridHealth] = useState<Record<string, GridHealth>>({});
+  const onGridHealth = useCallback((id: string, h: GridHealth) => setGridHealth((m) => ({ ...m, [id]: h })), []);
+  const [gridPanelOpen, setGridPanelOpen] = useState(() => localStorage.getItem("mydraw.gridPanel") === "1");
+  const setGridPanel = useCallback((open: boolean) => {
+    localStorage.setItem("mydraw.gridPanel", open ? "1" : "0");
+    setGridPanelOpen(open);
   }, []);
   const paletteOpenRef = useRef(false);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -901,6 +943,21 @@ export function App() {
           return;
         case "togglePages":
           return togglePages();
+        case "toggleGrid": {
+          const g = settingsRef.current?.grid ?? DEFAULT_GRID;
+          void bridge.updateSettings({ grid: { ...g, enabled: !g.enabled } });
+          return;
+        }
+        case "gridSettings":
+          setGridPanel(true);
+          return;
+        case "snapToGrid": {
+          const api = apis.current.get(activeRef.current);
+          if (!api) return;
+          const n = snapSelectionToGrid(api, (settingsRef.current?.grid ?? DEFAULT_GRID).size);
+          showToast(n ? `Snapped ${n} item${n === 1 ? "" : "s"} to the grid` : "Nothing to snap: select shapes first, or they are already on the grid");
+          return;
+        }
         case "toggleLint":
           return toggleLint();
         case "present":
@@ -955,7 +1012,7 @@ export function App() {
           return openSaveStencil();
       }
     },
-    [closeTab, newTab, openFiles, openSaveStencil, save, setActive, showToast, toggleLint, togglePages, togglePanel],
+    [closeTab, newTab, openFiles, openSaveStencil, save, setActive, showToast, toggleLint, togglePages, togglePanel, setGridPanel],
   );
 
   // Main process saves settings and broadcasts them back (settings:changed), which updates state.
@@ -1096,6 +1153,13 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
       const key = e.key.toLowerCase();
+      if (!e.altKey && !e.shiftKey && e.code === "Quote") {
+        // ⌘': our grid (Excalidraw's own ⌘' grid is never wanted: it can't be styled).
+        e.preventDefault();
+        e.stopPropagation();
+        void onCommand({ type: "toggleGrid" });
+        return;
+      }
       if (e.altKey && !e.shiftKey && e.code === "KeyP") {
         // ⌥⌘P: page navigator.
         e.preventDefault();
@@ -1216,6 +1280,10 @@ export function App() {
           conflict: !!conflict,
         })),
       }),
+      /** Raw Excalidraw API of the active tab (experiments in tests). */
+      api: () => api(),
+      /** Layout grid hook status of the active tab (see web/src/useLayoutGrid.ts). */
+      gridStatus: () => gridStatusByTab.get(activeRef.current)?.() ?? null,
       elementCount: () => api()?.getSceneElements().length ?? -1,
       currentItemRoughness: () => api()?.getAppState().currentItemRoughness,
       addSample: (label = "Router") => {
@@ -1374,6 +1442,7 @@ export function App() {
             hidden={t.id !== activeId}
             theme={theme}
             settings={settings}
+            grid={settings?.grid ?? DEFAULT_GRID}
             onApi={onApi}
             onChange={onChange}
             onCommand={onCommandSync}
@@ -1381,10 +1450,21 @@ export function App() {
             onResolveConflict={onResolveConflict}
             onLibraryChange={onLibraryChange}
             onOpenLink={onOpenLink}
+            onGridHealth={onGridHealth}
           />
         ))}
         {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} onToast={showToast} custom={customColor} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} /><PropertiesSection api={apis.current.get(activeId)} tick={selTick} /></>, styleHost)}
       </div>
+      {gridPanelOpen && settings && (
+        <GridPanel
+          grid={settings.grid}
+          health={gridHealth[activeId]}
+          onChange={(patch) => void bridge.updateSettings({ grid: { ...settings.grid, ...patch } })}
+          onSnap={() => void onCommandSync({ type: "snapToGrid" })}
+          onReset={() => void bridge.updateSettings({ grid: { ...DEFAULT_GRID, enabled: settings.grid.enabled } })}
+          onClose={() => setGridPanel(false)}
+        />
+      )}
       {lintOpen && <LintPanel api={activeApi} onClose={toggleLint} />}
       {panelOpen && (
         <StencilPanel

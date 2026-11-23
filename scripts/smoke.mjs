@@ -1927,6 +1927,90 @@ await call("save", { path: importedSave });
 assert.equal(JSON.parse(fs.readFileSync(importedSave, "utf8")).type, "excalidraw");
 assert.ok(fs.readFileSync(drawioFile, "utf8").startsWith("<"), "the .drawio file itself is untouched");
 
+step("Layout grid: painted inside Excalidraw's canvas behind shapes, Excalidraw's own grid hidden, live snapping, ⌘', clean files, fallback");
+// If this step fails after an Excalidraw upgrade, read EXCALIDRAW-UPGRADE.md.
+await page.evaluate(() => window.mydraw.updateSettings({ theme: "light" }));
+await call("new_drawing", { title: "Grid" });
+await call("add_elements", { elements: [{ type: "rectangle", id: "gbox", x: 333, y: 357, width: 160, height: 80, backgroundColor: "#ffd8a8", fillStyle: "solid" }] });
+const gridOn = { enabled: true, snap: true, size: 25, majorEvery: 4, style: "lines", color: "#ff0000", opacity: 1 };
+await page.evaluate((g) => window.mydraw.updateSettings({ grid: g }), gridOn);
+const gridStatus = () => t((x) => x.gridStatus());
+await waitFor(async () => (await gridStatus())?.mode === "in-canvas", "grid hook reports in-canvas");
+assert.equal((await gridStatus()).snapOk, true, "Excalidraw's grid lines were recognised and hidden (snapping usable)");
+assert.ok((await gridStatus()).gridModeRendersSuppressed > 0, "Excalidraw grid strokes were suppressed");
+// Read pixels of the active tab's static canvas around a scene point (±1 device px).
+const staticPixels = (sx, sy) =>
+  page.evaluate(([sx, sy]) => {
+    const api = window.__mydrawTest.api();
+    const st = api.getAppState();
+    const dpr = window.devicePixelRatio || 1;
+    const c = document.querySelector('.md-drawing:not([style*="display: none"]) canvas.excalidraw__canvas.static');
+    const px = Math.round((sx + st.scrollX) * st.zoom.value * dpr);
+    const py = Math.round((sy + st.scrollY) * st.zoom.value * dpr);
+    const d = c.getContext("2d").getImageData(px - 1, py - 1, 3, 3).data;
+    const out = [];
+    for (let i = 0; i < d.length; i += 4) out.push([d[i], d[i + 1], d[i + 2]]);
+    return out;
+  }, [sx, sy]);
+const isRed = ([r, g, b]) => r > 200 && g < 90 && b < 90;
+const isGray = ([r, g, b]) => Math.abs(r - g) < 6 && Math.abs(g - b) < 6 && r > 180 && r < 240;
+// A grid line away from the shape: red (ours), never Excalidraw's grey.
+assert.ok((await staticPixels(600, 625)).some(isRed), "our grid line is painted in the canvas");
+assert.ok(!(await staticPixels(600, 612)).some(isGray), "Excalidraw's own grey grid is hidden");
+// The same line inside the filled shape: covered by the fill, i.e. the grid is BEHIND the shape.
+assert.ok(!(await staticPixels(400, 400)).some(isRed), "the grid is behind filled shapes");
+// Live snapping: drag the box by an odd amount; it lands on the 25px grid.
+const gStart = await t((x) => x.toScreen(353, 377));
+await page.mouse.move(gStart.x, gStart.y);
+await page.mouse.down();
+for (let i = 1; i <= 8; i++) await page.mouse.move(gStart.x + i * 13.3, gStart.y + i * 7.9, { steps: 2 });
+await page.mouse.up();
+const gBox = await t((x) => x.api().getSceneElements().find((e) => e.id === "gbox"));
+assert.ok(gBox.x !== 333 && gBox.x % 25 === 0 && gBox.y % 25 === 0, `snapped while dragging (${gBox.x}, ${gBox.y})`);
+// ⌘' toggles our grid (and Excalidraw's own ⌘' never runs).
+await page.keyboard.press(`${MOD}+Quote`);
+await waitFor(async () => !(await page.evaluate(() => window.mydraw.getSettings())).grid.enabled, "⌘' hides the grid");
+await waitFor(async () => (await t((x) => x.appStateValue("gridModeEnabled"))) === false, "grid mode (snapping) off with the grid hidden");
+await page.keyboard.press(`${MOD}+Quote`);
+await waitFor(async () => (await page.evaluate(() => window.mydraw.getSettings())).grid.enabled, "⌘' shows it again");
+await waitFor(async () => (await t((x) => x.appStateValue("gridModeEnabled"))) === true, "snapping back on");
+// Saved files don't carry the app's grid state.
+const gridFile = path.join(work, "grid.excalidraw");
+await call("save", { path: gridFile });
+const gridSaved = JSON.parse(fs.readFileSync(gridFile, "utf8")).appState;
+assert.equal(gridSaved.gridModeEnabled, false, "grid mode is not saved into the drawing");
+assert.equal(gridSaved.gridSize, 20, "Excalidraw's default grid size is saved, not ours");
+// Excalidraw's own "Toggle grid" (context menu) toggles ours instead.
+await t((x) => x.api().updateScene({ appState: { gridModeEnabled: false } }));
+await waitFor(async () => !(await page.evaluate(() => window.mydraw.getSettings())).grid.enabled, "Excalidraw's toggle hides our grid");
+await page.evaluate((g) => window.mydraw.updateSettings({ grid: g }), gridOn);
+await waitFor(async () => (await t((x) => x.appStateValue("gridModeEnabled"))) === true, "grid back on");
+// Dark mode: the canvas is CSS-inverted, so the painted colour is pre-compensated (not raw red).
+await page.evaluate(() => window.mydraw.updateSettings({ theme: "dark" }));
+await waitFor(async () => !(await staticPixels(600, 625)).some(isRed) && (await gridStatus()).paints > 0, "dark mode paints the compensated colour");
+await page.screenshot({ path: path.join(shots, "grid-dark.png") });
+await page.evaluate(() => window.mydraw.updateSettings({ theme: "light" }));
+// Fallback: if the hook stops seeing renders (Excalidraw changed), the overlay draws and snapping is off.
+await page.evaluate(() => (window.__mydrawNoGridHook = true));
+await page.evaluate(() => window.mydraw.updateSettings({ grid: { opacity: 0.9 } }));
+await waitFor(async () => (await gridStatus())?.mode === "overlay", "falls back to the overlay grid", 5000);
+assert.equal((await gridStatus()).snapOk, false, "no live snapping in the fallback");
+await waitFor(async () => (await t((x) => x.appStateValue("gridModeEnabled"))) === false, "grid mode off in the fallback");
+const overlayRed = await page.evaluate(() => {
+  const c = document.querySelector('.md-drawing:not([style*="display: none"]) .md-grid-canvas');
+  const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 90 && d[i + 3] > 100) n++;
+  return n;
+});
+assert.ok(overlayRed > 1000, "the overlay grid is drawn");
+await t((x) => x.command({ type: "gridSettings" }));
+await page.waitForSelector(".md-gridpanel-warn");
+await page.screenshot({ path: path.join(shots, "grid-fallback.png") });
+await page.evaluate(() => (window.__mydrawNoGridHook = false));
+await page.evaluate(() => window.mydraw.updateSettings({ grid: { enabled: false } }));
+await page.click('.md-gridpanel-x');
+
 await client.close();
 
 app.process().kill("SIGKILL");
