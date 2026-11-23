@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { AGENT_EXPORT_FORMATS, CONTROL_FILE, type ControlInfo, type RpcResponse } from "../../shared/agent";
+import { buildId } from "../../shared/buildId";
 
 const VERSION = "0.5.0";
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -142,6 +143,41 @@ async function rpc(method: string, params: Record<string, unknown> = {}): Promis
   }
 }
 
+// ---------- stale code ----------
+
+// The app (and this server) read their code once, at startup. After a rebuild they keep running the
+// OLD code, which looks like fixes not working or tools missing. Say so, once per kind of problem.
+const ownFile = fileURLToPath(import.meta.url);
+const ownStamp = stampOf(ownFile);
+
+function stampOf(file: string): string {
+  try {
+    const s = fs.statSync(file);
+    return `${s.size}:${s.mtimeMs}`;
+  } catch {
+    return "";
+  }
+}
+
+/** Reasons to restart the app or reconnect this server, from comparing what runs with what is on disk. */
+export function staleNotes(info: ControlInfo | null): string[] {
+  const notes: string[] = [];
+  if (ownStamp && stampOf(ownFile) !== ownStamp) {
+    notes.push("This MCP server was rebuilt after it started: reconnect it (/mcp in Claude Code) to get the new tools and descriptions.");
+  }
+  if (info?.build && info.appPath === repoRoot) {
+    const onDisk = buildId(repoRoot);
+    if (onDisk && onDisk !== info.build) {
+      notes.push(
+        "The running mydraw app started before the latest build, so it does not have the newest fixes. Save any unsaved drawings and restart the app (quit it, then make any tool call: it relaunches).",
+      );
+    }
+  }
+  return notes;
+}
+
+const shownNotes = new Set<string>();
+
 // ---------- tools ----------
 
 const server = new McpServer(
@@ -179,8 +215,12 @@ function tool(
   server.registerTool(name, { description, inputSchema: shape, annotations }, (async (args: Args) => {
     try {
       const out = await run(args);
-      if (out && typeof out === "object" && "content" in (out as object)) return out;
-      return ok(out);
+      const result = out && typeof out === "object" && "content" in (out as object) ? (out as ReturnType<typeof ok>) : ok(out);
+      // A warning about stale code: once per kind of problem, and always by list_drawings.
+      const fresh = staleNotes(cached).filter((n) => name === "list_drawings" || !shownNotes.has(n));
+      for (const n of fresh) shownNotes.add(n);
+      if (fresh.length) result.content.push({ type: "text" as const, text: `WARNING: ${fresh.join(" ")}` });
+      return result;
     } catch (e) {
       return { isError: true, content: [{ type: "text" as const, text: e instanceof Error ? e.message : String(e) }] };
     }

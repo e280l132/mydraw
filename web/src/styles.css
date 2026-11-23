@@ -2957,6 +2957,18 @@ body.md-panel-dragging * {
   opacity: 0.4;
   cursor: default;
 }
+/* The Font size row has four buttons of its own, so with ours it would wrap onto a second line:
+   keep it on one line and let the five buttons share the row. */
+.excalidraw .panelColumn .buttonList:has(input[type="radio"][name="font-size"]) {
+  flex-wrap: nowrap;
+  column-gap: 6px;
+}
+.excalidraw .panelColumn .buttonList:has(input[type="radio"][name="font-size"]) > label,
+.excalidraw .panelColumn .buttonList:has(input[type="radio"][name="font-size"]) .md-ft-btn {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+}
 .md-ft-pop {
   position: fixed;
   z-index: 9000;

@@ -2,6 +2,7 @@
 // the latest scene, and each scene-changing command is applied as a single updateScene call, so it
 // is one undo step and never overwrites edits the user made in the meantime (elements are merged
 // by id).
+import { detachedLabels, type GuardEl } from "../../../shared/labelGuard";
 import { customFonts, fontIdByName, fontStatus } from "../fontRegistry";
 import { CaptureUpdateAction, convertToExcalidrawElements, newElementWith, restoreElements } from "@excalidraw/excalidraw";
 import { normalizeSpec, tint, uniquifySpec, type DiagramSpec } from "../../../shared/diagram";
@@ -114,8 +115,21 @@ function commit(api: ExcalidrawImperativeAPI, changed: readonly El[], added: rea
   const at = beforeId ? current.findIndex((e) => e.id === beforeId) : -1;
   // Excalidraw orders by fractional index; dropping the index of moved/new elements makes it
   // re-derive them from the array order.
-  const elements = at >= 0 ? [...current.slice(0, at), ...added.map((e) => ({ ...e, index: null }) as El), ...current.slice(at)] : [...current, ...added];
-  api.updateScene({ elements, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+  const placed = at >= 0 ? [...current.slice(0, at), ...added.map((e) => ({ ...e, index: null }) as El), ...current.slice(at)] : [...current, ...added];
+  api.updateScene({ elements: keepLabelsOnArrows(placed, [...changed, ...added]), captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+}
+
+/**
+ * Safety net: an arrow label that ends up far from its arrow (whatever put it there) is put back at
+ * the arrow's label point (shared/labelGuard.ts). Only the arrows this change touched are checked.
+ */
+function keepLabelsOnArrows(elements: El[], touched: readonly El[]): El[] {
+  const arrowIds = new Set(touched.filter((e) => e.type === "arrow").map((e) => e.id));
+  if (!arrowIds.size) return elements;
+  const fixes = detachedLabels(elements as unknown as GuardEl[], arrowIds);
+  if (!fixes.size) return elements;
+  console.warn(`[mydraw] put ${fixes.size} detached arrow label(s) back on their arrows`);
+  return elements.map((e) => (fixes.has(e.id) ? newElementWith(e, fixes.get(e.id)! as never) : e));
 }
 
 /** Elements whose box crosses the border of a zone or frame (rather than sitting inside or outside it). */

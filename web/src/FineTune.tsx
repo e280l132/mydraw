@@ -1,11 +1,13 @@
-// Fine-tune buttons at the end of Excalidraw's Stroke width, Sloppiness and Edges rows: each opens a
-// popover with a slider (and a number box) for values beyond Excalidraw's three presets.
+// Fine-tune buttons at the end of Excalidraw's Stroke width, Sloppiness, Edges and Font size rows: each
+// opens a popover with a slider (and a number box) for values beyond Excalidraw's presets.
 // Logic and ranges: shared/fineTune.ts. The buttons are portaled into hosts that App's panel
 // observer appends to those rows (`attachFineTuneHosts`); Excalidraw owns the rows, so a host is
 // re-appended whenever Excalidraw re-renders them.
 //
 // A slider drag previews with CaptureUpdateAction.NEVER, then restores the starting elements (NEVER)
 // and commits once (IMMEDIATELY), so one drag = one undo step (same pattern as IconRecolorSession).
+// Font size is different: it also changes labels' shapes and arrows, so its session snapshots the whole
+// scene and restores every element a preview touched (web/src/fontSizeOps.ts).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CaptureUpdateAction, newElementWith } from "@excalidraw/excalidraw";
@@ -26,6 +28,7 @@ import {
   type TunableElement,
 } from "../../shared/fineTune";
 import type { El } from "./agent/sceneOps";
+import { fontSizeChanges, fontSizeTargets } from "./fontSizeOps";
 import { commitElements } from "./uiActions";
 
 export type FineTuneHosts = Partial<Record<FineTuneKind, HTMLElement>>;
@@ -55,6 +58,7 @@ export const sameHosts = (a: FineTuneHosts, b: FineTuneHosts) => KINDS.every((k)
 
 /** Selected elements a slider applies to. */
 function targets(api: ExcalidrawImperativeAPI, kind: FineTuneKind): El[] {
+  if (kind === "fontSize") return fontSizeTargets(api);
   const sel = api.getAppState().selectedElementIds;
   return api.getSceneElements().filter((e) => sel[e.id] && !e.locked && canTune(kind, e as unknown as TunableElement));
 }
@@ -64,11 +68,13 @@ const appStateFor = (kind: FineTuneKind, value: number): Partial<AppState> =>
     ? { currentItemStrokeWidth: value }
     : kind === "roughness"
       ? { currentItemRoughness: value }
-      : { currentItemRoundness: value > 0 ? "round" : "sharp" };
+      : kind === "fontSize"
+        ? { currentItemFontSize: value }
+        : { currentItemRoundness: value > 0 ? "round" : "sharp" };
 
 /**
- * With nothing to tune selected (e.g. the pen tool is active), stroke width and sloppiness set the
- * value for the next element drawn (`currentItem*`). Corner radius can't: `currentItemRoundness`
+ * With nothing to tune selected (e.g. the pen tool is active), stroke width, sloppiness and font size
+ * set the value for the next element drawn (`currentItem*`). Corner radius can't: `currentItemRoundness`
  * is only round/sharp.
  */
 const defaultsOnly = (kind: FineTuneKind, els: readonly El[]) => !els.length && kind !== "radius";
@@ -76,15 +82,50 @@ const defaultsOnly = (kind: FineTuneKind, els: readonly El[]) => !els.length && 
 /** The `currentItem*` value a slider changes when nothing is selected. */
 function defaultValue(api: ExcalidrawImperativeAPI, kind: FineTuneKind): number {
   const s = api.getAppState();
-  return kind === "roughness" ? s.currentItemRoughness : s.currentItemStrokeWidth;
+  return kind === "roughness" ? s.currentItemRoughness : kind === "fontSize" ? s.currentItemFontSize : s.currentItemStrokeWidth;
 }
 
 /** Preview / commit / cancel of one slider drag. */
 class TuneSession {
   private base: Map<string, El> | null = null;
+  /** Font size drags: the scene before the drag, the text it targets, and every id a preview changed. */
+  private font: { byId: Map<string, El>; scene: El[]; texts: El[]; touched: Set<string> } | null = null;
   constructor(private api: ExcalidrawImperativeAPI) {}
 
+  private state = () => this.api.getAppState() as unknown as AppState;
+
+  private previewFont(value: number): void {
+    if (!this.font) {
+      const scene = this.api.getSceneElementsIncludingDeleted() as unknown as El[];
+      this.font = { byId: new Map(scene.map((e) => [e.id, e])), scene, texts: fontSizeTargets(this.api), touched: new Set() };
+    }
+    const font = this.font;
+    // Always from the scene at the start of the drag, so steps never compound.
+    const changed = new Map(fontSizeChanges(font.scene, font.texts, value, this.state()).changed.map((e) => [e.id, e]));
+    for (const id of changed.keys()) font.touched.add(id);
+    this.api.updateScene({
+      elements: this.api.getSceneElementsIncludingDeleted().map((e) => changed.get(e.id) ?? (font.touched.has(e.id) ? font.byId.get(e.id) ?? e : e)),
+      captureUpdate: CaptureUpdateAction.NEVER,
+    });
+  }
+
+  private commitFont(value: number): void {
+    const ids = (this.font?.texts ?? fontSizeTargets(this.api)).map((e) => e.id);
+    this.restore();
+    if (!ids.length) {
+      // Only the default for new text changes: not an undo step.
+      this.api.updateScene({ appState: appStateFor("fontSize", value) as AppState, captureUpdate: CaptureUpdateAction.NEVER });
+      return;
+    }
+    const scene = this.api.getSceneElementsIncludingDeleted() as unknown as El[];
+    const live = new Map(scene.map((e) => [e.id, e]));
+    const texts = ids.flatMap((id) => (live.has(id) ? [live.get(id)!] : []));
+    const r = fontSizeChanges(scene, texts, value, this.state());
+    commitElements(this.api, r.changed, r.added, appStateFor("fontSize", value));
+  }
+
   preview(kind: FineTuneKind, value: number): void {
+    if (kind === "fontSize") return this.previewFont(value);
     if (!this.base) this.base = new Map(targets(this.api, kind).map((e) => [e.id, e]));
     const base = this.base;
     const patch = patchFor(kind, value);
@@ -95,6 +136,7 @@ class TuneSession {
   }
 
   commit(kind: FineTuneKind, value: number): void {
+    if (kind === "fontSize") return this.commitFont(value);
     const ids = this.base ? [...this.base.keys()] : targets(this.api, kind).map((e) => e.id);
     this.restore();
     if (!ids.length) {
@@ -110,6 +152,14 @@ class TuneSession {
 
   /** Put the elements back as they were before the drag (not recorded in undo). */
   restore(): void {
+    const font = this.font;
+    this.font = null;
+    if (font) {
+      this.api.updateScene({
+        elements: this.api.getSceneElementsIncludingDeleted().map((e) => (font.touched.has(e.id) ? font.byId.get(e.id) ?? e : e)),
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    }
     const base = this.base;
     this.base = null;
     if (!base) return;
@@ -120,7 +170,7 @@ class TuneSession {
   }
 
   get active(): boolean {
-    return !!this.base;
+    return !!this.base || !!this.font;
   }
 }
 
@@ -352,6 +402,7 @@ function FineTunePopover({ api, kind, els, anchor, onClose }: PopoverProps) {
       )}
       {defaults && <p className="md-ft-note">Nothing selected: sets the {spec.title.toLowerCase()} for what you draw next.</p>}
       {kind === "roughness" && <p className="md-ft-note">Very small shapes are drawn with at most 2.5.</p>}
+      {kind === "fontSize" && !defaults && <p className="md-ft-note">Text in shapes and on arrows follows; a shape grows to fit its text.</p>}
     </div>,
     document.body,
   );

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  anchorAfterResize,
   canTune,
   cleanValue,
   DEFAULT_RADIUS,
@@ -75,3 +76,42 @@ describe("fine-tune sliders", () => {
     expect(patchFor("radius", 18)).toEqual({ roundness: { type: 3, value: 18 } });
   });
 });
+
+describe("font size slider", () => {
+  const text = (o: Partial<TunableElement> = {}): TunableElement => ({ type: "text", width: 100, height: 25, strokeWidth: 1, roughness: 0, roundness: null, fontSize: 20, ...o });
+
+  it("covers 4-300 px in whole pixels and keeps small sizes precise", () => {
+    const { min, max, step } = FINE_TUNE.fontSize;
+    expect([min, max, step]).toEqual([4, 300, 1]);
+    expect(sliderToValue(0, min, max, step)).toBe(4);
+    expect(sliderToValue(SLIDER_STEPS, min, max, step)).toBe(300);
+    for (const v of [4, 12, 16, 20, 28, 36, 72, 144, 300]) expect(sliderToValue(valueToSlider(v, min, max), min, max, step)).toBe(v);
+    expect(cleanValue(17.4, min, max, step)).toBe(17);
+    expect(cleanValue(1000, min, max, step)).toBe(300);
+    expect(cleanValue(0, min, max, step)).toBe(4);
+  });
+
+  it("tunes text only; Excalidraw's S/M/L/XL are the presets", () => {
+    expect(canTune("fontSize", text())).toBe(true);
+    expect(canTune("fontSize", el())).toBe(false);
+    // an icon caption is text too
+    expect(canTune("fontSize", text({ customData: {} }))).toBe(true);
+    expect(isCustom("fontSize", [text({ fontSize: 28 })])).toBe(false);
+    expect(isCustom("fontSize", [text({ fontSize: 48 })])).toBe(true);
+    expect(selectionValue("fontSize", [text({ fontSize: 24 }), text({ fontSize: 24 })])).toEqual({ value: 24, mixed: false });
+    expect(selectionValue("fontSize", [text({ fontSize: 24 }), text({ fontSize: 36 })])?.mixed).toBe(true);
+    expect(patchFor("fontSize", 48)).toEqual({ fontSize: 48 });
+  });
+
+  it("anchors free text like Excalidraw's own size buttons", () => {
+    const prev = { x: 100, y: 100, width: 100, height: 25, textAlign: "left" };
+    const next = { width: 200, height: 50 };
+    expect(anchorAfterResize(prev, next)).toEqual({ x: 100, y: 87.5 });
+    expect(anchorAfterResize({ ...prev, textAlign: "center" }, next)).toEqual({ x: 50, y: 87.5 });
+    expect(anchorAfterResize({ ...prev, textAlign: "right" }, next)).toEqual({ x: 0, y: 87.5 });
+    // bound text and fixed-width text stay where they are
+    expect(anchorAfterResize(prev, { ...next, containerId: "box" })).toEqual({ x: 100, y: 100 });
+    expect(anchorAfterResize(prev, { ...next, autoResize: false })).toEqual({ x: 100, y: 100 });
+  });
+});
+

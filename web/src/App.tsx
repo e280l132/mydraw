@@ -469,7 +469,8 @@ export function App() {
           setSelTick((n) => n + 1);
         }
         const tk = elements
-          .filter((e) => appState.selectedElementIds[e.id])
+          // a selected shape's label too: the font size slider reads its size
+          .filter((e) => appState.selectedElementIds[e.id] || (e.type === "text" && e.containerId && appState.selectedElementIds[e.containerId]))
           .map((e) => `${e.id}:${e.version}`)
           .join(",");
         if (tk !== tuneKey.current) {

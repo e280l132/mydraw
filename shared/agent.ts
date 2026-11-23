@@ -7,6 +7,9 @@ export interface ControlInfo {
   key: string;
   pid: number;
   version: string;
+  /** Build of the code this instance started with, and where it runs from (shared/buildId.ts). */
+  build?: string | null;
+  appPath?: string;
 }
 
 export const CONTROL_FILE = "control.json";

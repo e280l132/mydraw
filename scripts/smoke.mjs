@@ -2630,6 +2630,184 @@ for (const f of smokeFace.files) assert.ok(!fs.existsSync(path.join(userData, "f
 await page.keyboard.press("Escape");
 await page.waitForSelector(".md-fonts", { state: "detached" });
 
+step("Font size slider: free text and labels, any size, shapes grow, one undo step, default for the next text");
+const textEl = (id) =>
+  page.evaluate((id) => {
+    const els = window.__mydrawTest.api().getSceneElements();
+    const e = els.find((x) => x.type === "text" && (x.id === id || x.containerId === id));
+    return e && { fontSize: e.fontSize, x: e.x, y: e.y, width: e.width, height: e.height, text: e.text, originalText: e.originalText };
+  }, id);
+const selectOnly = (id) => page.evaluate((id) => window.__mydrawTest.api().updateScene({ appState: { selectedElementIds: { [id]: true } } }), id);
+const refocusCanvas = () => page.evaluate(() => document.querySelector(".md-drawing:not([style*='none']) .excalidraw-container")?.focus());
+await selectOnly("fz1");
+const free0 = await textEl("fz1");
+// The sliders button sits on the same line as S / M / L / XL (never wraps onto a second line).
+await page.waitForSelector(`${COL} .md-ft-btn[data-ft-kind="fontSize"]`);
+const fsRow = await page.evaluate(() => {
+  const btn = document.querySelector('.md-drawing:not([style*="none"]) .md-ft-btn[data-ft-kind="fontSize"]');
+  const list = btn.closest(".buttonList");
+  const items = [...list.querySelectorAll("label, .md-ft-btn")].map((e) => e.getBoundingClientRect());
+  return { count: items.length, tops: [...new Set(items.map((r) => Math.round(r.top)))], inside: items.every((r) => r.right <= list.getBoundingClientRect().right + 1) };
+});
+assert.equal(fsRow.count, 5, "four size buttons plus the sliders button");
+assert.equal(fsRow.tops.length, 1, `font size row stays on one line (tops ${fsRow.tops})`);
+assert.ok(fsRow.inside, "and fits inside the panel");
+await ftOpen("fontSize");
+await page.fill(".md-ft-pop .md-ft-num", "48");
+await page.press(".md-ft-pop .md-ft-num", "Enter");
+await waitFor(async () => (await textEl("fz1")).fontSize === 48, "free text 48 px from the number box");
+const free1 = await textEl("fz1");
+assert.ok(free1.width > free0.width && free1.height > free0.height, "the text box grew with its size");
+assert.equal(free1.x, free0.x, "left-aligned text keeps its left edge");
+assert.ok(Math.abs(free1.y - (free0.y + (free0.height - free1.height) / 2)) < 0.01, "text grows around its middle, like Excalidraw's own buttons");
+await waitFor(async () => (await page.locator(`${COL} .md-ft-btn[data-ft-kind="fontSize"].active`).count()) === 1, "48 is not a preset: the button is lit");
+await page.keyboard.press("Escape");
+// A shape selected: its label follows and the shape grows to fit.
+await selectOnly("fz2");
+const box0 = await page.evaluate(() => window.__mydrawTest.api().getSceneElements().find((x) => x.id === "fz2"));
+const label0 = await textEl("fz2");
+await ftOpen("fontSize");
+await page.fill(".md-ft-pop .md-ft-num", "64");
+await page.press(".md-ft-pop .md-ft-num", "Enter");
+await waitFor(async () => (await textEl("fz2")).fontSize === 64, "label 64 px");
+const box1 = await page.evaluate(() => window.__mydrawTest.api().getSceneElements().find((x) => x.id === "fz2"));
+// The label wraps inside the shape's width (as with Excalidraw's own buttons), so the height grows.
+assert.ok(box1.height > box0.height && box1.width >= box0.width, `the shape grew to fit its label ${JSON.stringify([box0.width, box0.height, box1.width, box1.height])}`);
+await page.keyboard.press("Escape");
+await refocusCanvas();
+await page.keyboard.press("Meta+Z");
+await waitFor(async () => (await textEl("fz2")).fontSize === label0.fontSize, "one undo restores the label size");
+assert.equal((await page.evaluate(() => window.__mydrawTest.api().getSceneElements().find((x) => x.id === "fz2"))).width, box0.width, "and the shape size");
+// Keyboard on the slider: a drag is a single undo step; Esc during it would revert.
+await selectOnly("fz1");
+await ftOpen("fontSize");
+await page.focus(".md-ft-pop .md-ft-range");
+await page.keyboard.press("End");
+await waitFor(async () => (await textEl("fz1")).fontSize === 300, "slider reaches 300 px");
+await page.keyboard.press("Escape");
+await refocusCanvas();
+await page.keyboard.press("Meta+Z");
+await waitFor(async () => (await textEl("fz1")).fontSize === 48, "slider change is one undo step");
+// Nothing selected, text tool: sets the size of the next text, existing text untouched.
+await page.evaluate(() => window.__mydrawTest.api().updateScene({ appState: { selectedElementIds: {} } }));
+await t((x) => x.api().setActiveTool({ type: "text" }));
+await ftOpen("fontSize");
+await page.fill(".md-ft-pop .md-ft-num", "33");
+await page.press(".md-ft-pop .md-ft-num", "Enter");
+await waitFor(async () => (await t((x) => x.api().getAppState().currentItemFontSize)) === 33, "default size 33 for new text");
+assert.equal((await textEl("fz1")).fontSize, 48, "existing text untouched");
+await page.keyboard.press("Escape");
+await t((x) => x.api().setActiveTool({ type: "selection" }));
+await t((x) => x.api().updateScene({ appState: { currentItemFontSize: 20 } }));
+// A label is re-fitted from what was typed, never from its current wrapping (old line breaks must not stick).
+await call("add_elements", {
+  elements: [
+    { type: "ellipse", id: "wrapE", x: 300, y: 900, width: 110, height: 70, label: "Customers (Web)" },
+    { type: "rectangle", id: "wrapR", x: 300, y: 1000, width: 600, height: 80, label: "Alpha Beta Gamma" },
+  ],
+});
+assert.match((await textEl("wrapE")).text, /\n/, "the narrow ellipse wraps its label");
+await call("update_elements", { updates: [{ id: "wrapE", width: 480, height: 120 }] });
+const wrapE = await textEl("wrapE");
+assert.equal(wrapE.originalText, "Customers (Web)", "what was typed is kept");
+assert.doesNotMatch(wrapE.text, /\n/, "widening the shape un-wraps the label (resize)");
+assert.doesNotMatch((await textEl("wrapR")).text, /\n/, "one line at 20 px");
+await selectOnly("wrapR");
+await ftOpen("fontSize");
+await page.fill(".md-ft-pop .md-ft-num", "72");
+await page.press(".md-ft-pop .md-ft-num", "Enter");
+await waitFor(async () => (await textEl("wrapR")).fontSize === 72, "label 72 px");
+assert.match((await textEl("wrapR")).text, /\n/, "a big label wraps inside its shape");
+await page.keyboard.press("Escape");
+await selectOnly("wrapR");
+await ftOpen("fontSize");
+await page.fill(".md-ft-pop .md-ft-num", "20");
+await page.press(".md-ft-pop .md-ft-num", "Enter");
+await waitFor(async () => (await textEl("wrapR")).fontSize === 20, "label back to 20 px");
+const wrapR = await textEl("wrapR");
+assert.equal(wrapR.originalText, "Alpha Beta Gamma", "what was typed is kept");
+assert.doesNotMatch(wrapR.text, /\n/, "shrinking the font un-wraps the label (font size)");
+await page.keyboard.press("Escape");
+await page.evaluate(() => window.__mydrawTest.api().updateScene({ appState: { selectedElementIds: {} } }));
+
+step("Arrow labels stay on their arrows (nested zones, zone-to-zone arrows); a detached label is put back; stale builds are reported");
+await call("new_drawing", { title: "Label check" });
+await call("build_diagram", {
+  direction: "right",
+  zones: [
+    { id: "lzA", label: "Zone A" },
+    { id: "lzC", label: "Cluster" },
+    { id: "lzP", label: "Part 1", parent: "lzC" },
+    { id: "lzQ", label: "Part 2", parent: "lzC" },
+    { id: "lzD", label: "Data" },
+  ],
+  nodes: [
+    { id: "ln1", zone: "lzA" },
+    { id: "ln2", zone: "lzA" },
+    { id: "ln3", zone: "lzP" },
+    { id: "ln4", zone: "lzQ" },
+    { id: "ln5", zone: "lzD" },
+    { id: "lnOut", label: "Out", shape: "ellipse" },
+  ],
+  edges: [
+    { from: "ln1", to: "ln2", label: "in zone" },
+    { from: "ln2", to: "lzC", label: "node to zone" },
+    { from: "lzA", to: "lzD", label: "zone to zone" },
+    { from: "lzP", to: "lzD", label: "nested out" },
+    { from: "lzC", to: "lzA", label: "back" },
+    { from: "ln3", to: "ln4", label: "across" },
+    { from: "lnOut", to: "ln1", label: "outside in" },
+    { from: "ln5", to: "lnOut", label: "long way" },
+  ],
+});
+const labelOffsets = () =>
+  page.evaluate(() => {
+    const els = window.__mydrawTest.api().getSceneElements();
+    return els
+      .filter((a) => a.type === "arrow")
+      .map((a) => {
+        const t = els.find((e) => e.type === "text" && e.containerId === a.id);
+        if (!t) return null;
+        const pts = a.points.map(([x, y]) => ({ x: a.x + x, y: a.y + y }));
+        const n = pts.length;
+        const mid = n % 2 ? pts[(n - 1) / 2] : { x: (pts[n / 2 - 1].x + pts[n / 2].x) / 2, y: (pts[n / 2 - 1].y + pts[n / 2].y) / 2 };
+        return { id: a.id, label: t.text, off: Math.hypot(t.x + t.width / 2 - mid.x, t.y + t.height / 2 - mid.y) };
+      })
+      .filter(Boolean);
+  });
+let offsets = await labelOffsets();
+assert.equal(offsets.length, 8, "every labelled arrow has its label");
+for (const o of offsets) assert.ok(o.off < 6, `label "${o.label}" sits on its arrow (off by ${Math.round(o.off)} px)`);
+// Simulate the defect (a label far from its arrow); the next agent change to that arrow puts it back.
+const victim = offsets[2];
+await page.evaluate((id) => {
+  const api = window.__mydrawTest.api();
+  const label = api.getSceneElements().find((e) => e.type === "text" && e.containerId === id);
+  api.updateScene({ elements: api.getSceneElementsIncludingDeleted().map((e) => (e.id === label.id ? { ...e, x: -5000, y: -5000, version: e.version + 1 } : e)) });
+}, victim.id);
+assert.ok((await labelOffsets()).find((o) => o.id === victim.id).off > 1000, "label displaced for the test");
+await call("update_elements", { updates: [{ id: victim.id, strokeColor: "#c2255c" }] });
+offsets = await labelOffsets();
+assert.ok(offsets.find((o) => o.id === victim.id).off < 6, "the safety net put the detached label back on its arrow");
+// The app records the build it started with; the MCP server warns when disk has a newer one.
+const { buildId } = await import("../shared/buildId.ts");
+const ctl = JSON.parse(fs.readFileSync(controlFile, "utf8"));
+assert.equal(ctl.appPath, root, "control.json says where the app runs from");
+assert.equal(ctl.build, buildId(root), "control.json carries the build the app started with");
+const warns = async () => (await callRaw("list_drawings")).content.filter((c) => /^WARNING/.test(c.text)).map((c) => c.text);
+assert.deepEqual(await warns(), [], "no warning while the app matches the build on disk");
+const preload = path.join(root, "app/dist/preload.cjs");
+const preloadOrig = fs.readFileSync(preload);
+try {
+  fs.appendFileSync(preload, "\n// smoke: simulate a newer build\n");
+  const stale = await warns();
+  assert.equal(stale.length, 1, "a rebuilt checkout makes list_drawings warn");
+  assert.match(stale[0], /restart the app/, "and says to restart the app");
+} finally {
+  fs.writeFileSync(preload, preloadOrig);
+}
+assert.deepEqual(await warns(), [], "the warning goes away when the build matches again");
+
 await client.close();
 
 app.process().kill("SIGKILL");

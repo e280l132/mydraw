@@ -1,11 +1,11 @@
-// Fine-tune sliders for stroke width, sloppiness (roughness) and edge radius: values beyond
-// Excalidraw's three preset buttons. Pure, unit-tested (tests/fineTune.test.ts).
+// Fine-tune sliders for stroke width, sloppiness (roughness), edge radius and font size: values
+// beyond Excalidraw's preset buttons. Pure, unit-tested (tests/fineTune.test.ts).
 //
 // Excalidraw renders any number for `strokeWidth` and `roughness`. A custom corner radius is
 // `roundness: {type: 3 (ADAPTIVE_RADIUS), value}`, honoured only for rectangle/image/embeddable/
 // iframe (`isUsingAdaptiveRadius`), and capped by the renderer at 25% of the shorter side.
 
-export type FineTuneKind = "strokeWidth" | "roughness" | "radius";
+export type FineTuneKind = "strokeWidth" | "roughness" | "radius" | "fontSize";
 
 export interface FineTuneSpec {
   kind: FineTuneKind;
@@ -29,6 +29,8 @@ export const FINE_TUNE: Record<FineTuneKind, FineTuneSpec> = {
   roughness: { kind: "roughness", title: "Sloppiness", unit: "", min: 0, max: 10, step: 0.25, presets: [0, 1, 2] },
   // `max` is per selection (radiusMax); this one bounds what the number box accepts.
   radius: { kind: "radius", title: "Corner radius", unit: "px", min: 0, max: 1000, step: 1, presets: [0, DEFAULT_RADIUS] },
+  // Excalidraw's S / M / L / XL buttons.
+  fontSize: { kind: "fontSize", title: "Font size", unit: "px", min: 4, max: 300, step: 1, presets: [16, 20, 28, 36] },
 };
 
 /** Radio group name of the Excalidraw panel section each slider belongs to. */
@@ -36,6 +38,7 @@ export const FINE_TUNE_GROUP: Record<FineTuneKind, string> = {
   strokeWidth: "stroke-width",
   roughness: "sloppiness",
   radius: "edges",
+  fontSize: "font-size",
 };
 
 /** Slider positions run 0..SLIDER_STEPS; the value grows with the square so small values stay precise. */
@@ -71,6 +74,13 @@ export interface TunableElement {
   roughness: number;
   roundness: { type: number; value?: number } | null;
   customData?: Record<string, unknown>;
+  // Text elements only:
+  fontSize?: number;
+  textAlign?: string;
+  containerId?: string | null;
+  autoResize?: boolean;
+  x?: number;
+  y?: number;
 }
 
 const STROKE_TYPES = new Set(["rectangle", "ellipse", "diamond", "arrow", "line", "freedraw", "embeddable", "iframe"]);
@@ -79,6 +89,8 @@ const RADIUS_TYPES = new Set(["rectangle", "image", "embeddable", "iframe"]);
 
 /** Whether slider `kind` changes element `el`. Icon-node containers (borderless) are left alone. */
 export function canTune(kind: FineTuneKind, el: TunableElement): boolean {
+  // Font size: text elements (a shape's label is its bound text; the caller finds it).
+  if (kind === "fontSize") return el.type === "text";
   if (el.customData?.mydrawNode === "icon") return false;
   if (kind === "strokeWidth") return STROKE_TYPES.has(el.type);
   if (kind === "roughness") return ROUGH_TYPES.has(el.type);
@@ -109,6 +121,7 @@ export function radiusMax(els: readonly TunableElement[]): number {
 export function readValue(kind: FineTuneKind, el: TunableElement): number {
   if (kind === "strokeWidth") return el.strokeWidth;
   if (kind === "roughness") return el.roughness;
+  if (kind === "fontSize") return el.fontSize ?? FINE_TUNE.fontSize.presets[1];
   const r = el.roundness;
   if (!r) return 0;
   return r.type === ROUNDNESS_ADAPTIVE ? (r.value ?? DEFAULT_RADIUS) : Math.round(radiusCap(el));
@@ -133,5 +146,26 @@ export function isCustom(kind: FineTuneKind, els: readonly TunableElement[]): bo
 export function patchFor(kind: FineTuneKind, value: number): Partial<TunableElement> {
   if (kind === "strokeWidth") return { strokeWidth: value };
   if (kind === "roughness") return { roughness: value };
+  if (kind === "fontSize") return { fontSize: value };
   return { roundness: value > 0 ? { type: ROUNDNESS_ADAPTIVE, value } : null };
+}
+
+/**
+ * Where free text sits after its font size (and so its box) changed: Excalidraw's own rule
+ * (`offsetElementAfterFontResize`). Left-aligned text keeps its left edge, centred text its middle,
+ * right-aligned text its right edge; vertically the box grows or shrinks around its middle. Bound
+ * text and text with a fixed width stay where they are.
+ */
+export function anchorAfterResize(
+  prev: Pick<TunableElement, "x" | "y" | "width" | "height" | "textAlign">,
+  next: Pick<TunableElement, "width" | "height" | "containerId" | "autoResize">,
+): { x: number; y: number } {
+  const x = prev.x ?? 0;
+  const y = prev.y ?? 0;
+  if (next.containerId || next.autoResize === false) return { x, y };
+  const dx = prev.width - next.width;
+  return {
+    x: prev.textAlign === "left" || prev.textAlign === undefined ? x : x + dx / (prev.textAlign === "center" ? 2 : 1),
+    y: y + (prev.height - next.height) / 2,
+  };
 }

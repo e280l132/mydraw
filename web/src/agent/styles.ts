@@ -2,7 +2,7 @@
 // re-center and arrows stay attached; the executor commits the result as one undo step.
 import type { AppState } from "@excalidraw/excalidraw/types";
 import { inkColors, stylePatch, themeStyle, type StyleSpec, type Theme } from "../../../shared/styles";
-import { applyUpdates, boundTextOf, isIconNode, type El, type ElMap } from "./sceneOps";
+import { applyUpdates, boundTextOf, isIconNode, typedText, type El, type ElMap } from "./sceneOps";
 
 type Loose = Record<string, unknown>;
 
@@ -90,8 +90,7 @@ export function styleElements(
   // Pass 2: re-fit labels whose font changed.
   if (labelFor.size) {
     const relabels = [...labelFor].map((id) => {
-      const text = boundTextOf(merged.get(id)!, merged) as (El & { text: string }) | undefined;
-      return { id, label: text?.text ?? "" };
+      return { id, label: typedText(boundTextOf(merged.get(id)!, merged) as El | undefined) };
     }).filter((u) => u.label);
     if (relabels.length) {
       const r2 = applyUpdates(relabels, [...merged.values()], st);

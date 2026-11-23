@@ -12,6 +12,8 @@ export interface SceneEl {
   height?: number;
   isDeleted?: boolean;
   text?: string;
+  /** The text as typed; `text` has the line breaks of its current wrapping. */
+  originalText?: string;
   containerId?: string | null;
   boundElements?: readonly { id: string; type: string }[] | null;
   startBinding?: { elementId: string } | null;
@@ -97,7 +99,7 @@ export function extractGraph(elements: readonly SceneEl[]): SceneGraph {
   const labelOf = (el: SceneEl): string => {
     const ref = el.boundElements?.find((b) => b.type === "text");
     const t = ref ? map.get(ref.id) : undefined;
-    return (t?.text ?? "").trim();
+    return (t?.originalText ?? t?.text ?? "").trim();
   };
 
   const zones: GraphZone[] = [];
@@ -110,7 +112,7 @@ export function extractGraph(elements: readonly SceneEl[]): SceneGraph {
     const parent = el.customData?.mydrawZoneId as string | undefined;
     zones.push({
       id: el.id,
-      label: (title?.text ?? "").trim() || el.id,
+      label: (title?.originalText ?? title?.text ?? "").trim() || el.id,
       parent: parent && zoneIds.has(parent) ? parent : null,
       fill: visible(el.backgroundColor),
       stroke: el.strokeColor,

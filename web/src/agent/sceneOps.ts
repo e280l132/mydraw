@@ -6,6 +6,7 @@ import { convertToExcalidrawElements, getCommonBounds, newElementWith } from "@e
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState } from "@excalidraw/excalidraw/types";
 import { boxFromBounds, connectorEndpoints, outlinePoint, type Box, type OutlineShape, type Point } from "../../../shared/geometry";
+import { labelPoint } from "../../../shared/labelGuard";
 import { linkProblem } from "../../../shared/links";
 import { requireColor } from "../../../shared/palettes";
 import { curvedPoints, ELBOW_GAP, elbowRoute, fixedPointFor, isOrthogonal, type Routing, type Side } from "../../../shared/routing";
@@ -41,6 +42,17 @@ export function boundsOf(els: readonly El[]): Box {
 
 function outlineShape(el: El): OutlineShape {
   return el.type === "ellipse" ? "ellipse" : el.type === "diamond" ? "diamond" : "rectangle";
+}
+
+/**
+ * The text as typed. A label inside a shape is stored wrapped: `text` has a line break wherever the
+ * current width forced one, `originalText` is what was typed. Re-fitting a label (new size, new font,
+ * new shape width) must start from `originalText`, or the old wrapping becomes permanent line breaks.
+ */
+export function typedText(t: object | undefined): string {
+  if (!t) return "";
+  const x = t as { text?: unknown; originalText?: unknown };
+  return String(x.originalText ?? x.text ?? "");
 }
 
 export function boundTextOf(el: El, map: ElMap): El | undefined {
@@ -126,7 +138,7 @@ export function describe(el: El, map: ElMap): Loose {
   const o: Loose = { id: el.id, type: el.type, x: r1(el.x), y: r1(el.y), width: r1(el.width), height: r1(el.height) };
   if (el.angle) o.angle = Math.round(el.angle * 1000) / 1000;
   const label = boundTextOf(el, map);
-  if (label) o.label = (label as El & { text: string }).text;
+  if (label) o.label = typedText(label as El & Loose);
   if (el.type === "text") {
     o.text = e.text;
     o.fontSize = e.fontSize;
@@ -614,7 +626,8 @@ export function remeasureText(el: El, patch: Loose): El {
       type: "text",
       x: el.x,
       y: el.y,
-      text: String(t.text ?? ""),
+      // The new text if one is given, else what was typed (not its current wrapping).
+      text: "text" in patch ? String(patch.text ?? "") : typedText(el as El & Loose),
       fontSize: t.fontSize as number,
       fontFamily: t.fontFamily as never,
       textAlign: t.textAlign as never,
@@ -763,17 +776,8 @@ export function connectorElements(sk: Loose, a: El, b: El, routing: Routing, rou
   });
 }
 
-/**
- * Where Excalidraw puts an arrow's label: the middle point of an odd number of points, else the
- * middle of the middle segment.
- */
-export function labelPoint(route: readonly Point[]): Point {
-  const n = route.length;
-  if (n % 2 === 1) return route[(n - 1) / 2];
-  const a = route[n / 2 - 1];
-  const b = route[n / 2];
-  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-}
+// Where Excalidraw puts an arrow's label (shared with the label guard, shared/labelGuard.ts).
+export { labelPoint };
 
 // ---------- updates ----------
 
@@ -913,7 +917,7 @@ export function applyUpdates(updates: unknown[], scene: readonly El[], st: AppSt
     }
     if (u.label !== undefined && !isZone(el)) applyLabel(el, u.label === null ? null : String(u.label));
     else if (geometryChanged.has(id) && !isLinear(el) && boundTextOf(el, map)) {
-      applyLabel(el, (boundTextOf(el, map) as El & { text: string }).text);
+      applyLabel(el, typedText(boundTextOf(el, map) as El & Loose));
     }
   }
 

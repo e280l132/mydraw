@@ -49,7 +49,7 @@ export function helpSections(): Section[] {
       rows: [
         { text: "Colors tab: two palettes and an any-color picker; Stroke, Fill and Icon targets. Custom colors you pick are kept in the drawing file, so they travel with it" },
         { text: "Presets and Themes tabs: built-in and your own, saved globally; apply to the selection or the whole drawing" },
-        { text: "Slider buttons next to stroke width, sloppiness and edges set values beyond the presets (with nothing selected they set the next shape you draw)" },
+        { text: "Slider buttons next to stroke width, sloppiness, edges and font size set values beyond the presets (with nothing selected they set the next shape or text you draw)" },
       ],
     },
     {

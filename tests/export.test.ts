@@ -57,6 +57,11 @@ describe("extractGraph", () => {
     expect(g.nodes.find((n) => n.id === "db")).toMatchObject({ shape: "ellipse", fill: "#ffc9c9" });
     expect(g.nodes.find((n) => n.id === "fw")).toMatchObject({ type: "icon", kind: "Firewall", label: "Edge firewall" });
   });
+  it("reads a label as typed, not as wrapped to the shape's width", () => {
+    const wrapped: SceneEl = { ...text("w-t", "w", "Customer\ns\n(Web)"), originalText: "Customers\n(Web)" };
+    const g2 = extractGraph([{ id: "w", type: "rectangle", x: 0, y: 0, boundElements: [{ id: "w-t", type: "text" }] }, wrapped]);
+    expect(g2.nodes[0].label).toBe("Customers\n(Web)");
+  });
   it("nests zones", () => {
     expect(g.zones.map((z) => [z.label, z.parent])).toEqual([["Prod", null], ["DMZ", "z1"]]);
     expect(zonePath(g, "z2")).toBe("Prod / DMZ");

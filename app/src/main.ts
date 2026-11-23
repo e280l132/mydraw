@@ -23,6 +23,7 @@ import { setupAgent } from "./agent";
 import { removeControlFile, startControlServer, writeControlFile } from "./control";
 import { LIBRARY_SCHEME, setupLibrary } from "./library-ipc";
 import { FONT_SCHEME, setupFonts } from "./fonts";
+import { buildId } from "../../shared/buildId";
 import { buildMenu } from "./menu";
 import { getSettings, onSettingsChanged, rememberRecent, updateSettings } from "./settings-store";
 import { getStyleLibrary, saveStyleLibrary } from "./styles-store";
@@ -467,7 +468,15 @@ async function startAgentControl(store: ReturnType<typeof setupLibrary>): Promis
   try {
     const server = await startControlServer(handler);
     const file = path.join(app.getPath("userData"), CONTROL_FILE);
-    writeControlFile(file, { port: server.port, key: server.key, pid: process.pid, version: app.getVersion() });
+    writeControlFile(file, {
+      port: server.port,
+      key: server.key,
+      pid: process.pid,
+      version: app.getVersion(),
+      // So the MCP server can tell when this instance is older than the build on disk.
+      build: buildId(app.getAppPath()),
+      appPath: app.getAppPath(),
+    });
     app.on("will-quit", () => removeControlFile(file, server.key));
   } catch (err) {
     console.error("[mydraw] agent control server failed to start:", err);
