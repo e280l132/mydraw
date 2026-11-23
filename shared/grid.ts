@@ -1,7 +1,7 @@
 // Layout grid: the settings (global, persisted in settings.json), the pure geometry that turns a
 // view (scroll + zoom) into the lines/dots to draw, and the colour maths for Excalidraw's dark-mode
 // canvas filter. The renderer paints the grid INTO Excalidraw's static canvas, behind the shapes
-// (web/src/gridHook.ts), and falls back to an overlay canvas (web/src/GridOverlay.tsx) when that
+// (web/src/canvasHook.ts), and falls back to an overlay canvas (web/src/GridOverlay.tsx) when that
 // hook stops working after an Excalidraw upgrade. Unit-tested in tests/grid.test.ts.
 // See EXCALIDRAW-UPGRADE.md before changing anything that touches Excalidraw internals.
 import { normalizeHex } from "./colorMath";
@@ -125,7 +125,7 @@ export function snapOffset(box: { x: number; y: number }, size: number): { dx: n
 
 /**
  * The Excalidraw app state that gives live snapping: Excalidraw snaps to `gridSize` whenever
- * `gridModeEnabled` is on (and draws its own grid, which web/src/gridHook.ts hides).
+ * `gridModeEnabled` is on (and draws its own grid, which web/src/canvasHook.ts hides).
  * Excalidraw clamps gridSize/gridStep to 1..100 when it restores a scene.
  */
 export function excalidrawGridState(g: GridSettings, snapUsable: boolean): { gridModeEnabled: boolean; gridSize: number } {

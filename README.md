@@ -71,7 +71,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 - **Command palette** (⇧⌘P; ⌘K when nothing is selected): fuzzy search over every command, stencil, theme, preset, template, frame, element and file action.
 
 **Appearance**
-- App theme (System, Light, Dark), drawing style (Clean or Sketch).
+- App theme (System, Light, Dark), drawing style (Clean or Sketch). Icons and images keep their exact colours in dark mode, on screen and in dark exports.
 
 ## Keyboard shortcuts
 

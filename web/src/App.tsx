@@ -26,8 +26,9 @@ import { CommandPalette } from "./CommandPalette";
 import { FindReplace } from "./FindReplace";
 import { PagesPanel } from "./PagesPanel";
 import { GridOverlay, type GridViewRef } from "./GridOverlay";
-import { gridStatusByTab, useLayoutGrid, type GridHealth } from "./useLayoutGrid";
+import { canvasStatusByTab, useCanvasHook, type CanvasHealth } from "./useCanvasHook";
 import { GridPanel } from "./GridPanel";
+import { darkImageStats } from "./darkImages";
 import { tagArrangeSection } from "./arrange";
 import { snapSelectionToGrid } from "./gridOps";
 import { DEFAULT_GRID, type GridSettings } from "../../shared/grid";
@@ -131,7 +132,7 @@ interface DrawingViewProps {
   onSettings(patch: Partial<Settings>): void;
   onResolveConflict(id: string, reload: boolean): void;
   onOpenLink(id: string, link: string): void;
-  onGridHealth(id: string, h: GridHealth): void;
+  onGridHealth(id: string, h: CanvasHealth): void;
 }
 
 const GRID_OFF = { ...DEFAULT_GRID, enabled: false };
@@ -152,7 +153,7 @@ const DrawingView = memo(function DrawingView({
 }: DrawingViewProps) {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const layoutGrid = useLayoutGrid({
+  const layoutGrid = useCanvasHook({
     tabId: tab.id,
     grid,
     hidden,
@@ -247,8 +248,8 @@ export function App() {
       return !v;
     });
   }, []);
-  const [gridHealth, setGridHealth] = useState<Record<string, GridHealth>>({});
-  const onGridHealth = useCallback((id: string, h: GridHealth) => setGridHealth((m) => ({ ...m, [id]: h })), []);
+  const [gridHealth, setGridHealth] = useState<Record<string, CanvasHealth>>({});
+  const onGridHealth = useCallback((id: string, h: CanvasHealth) => setGridHealth((m) => ({ ...m, [id]: h })), []);
   const [gridPanelOpen, setGridPanelOpen] = useState(() => localStorage.getItem("mydraw.gridPanel") === "1");
   const setGridPanel = useCallback((open: boolean) => {
     localStorage.setItem("mydraw.gridPanel", open ? "1" : "0");
@@ -1306,8 +1307,10 @@ export function App() {
       }),
       /** Raw Excalidraw API of the active tab (experiments in tests). */
       api: () => api(),
-      /** Layout grid hook status of the active tab (see web/src/useLayoutGrid.ts). */
-      gridStatus: () => gridStatusByTab.get(activeRef.current)?.() ?? null,
+      /** Static-canvas hook status of the active tab: grid, snapping, dark theme (web/src/useCanvasHook.ts). */
+      canvasStatus: () => canvasStatusByTab.get(activeRef.current)?.() ?? null,
+      /** Counters of the exact-colour image patches (web/src/darkImages.ts). */
+      darkImageStats: () => darkImageStats(),
       elementCount: () => api()?.getSceneElements().length ?? -1,
       currentItemRoughness: () => api()?.getAppState().currentItemRoughness,
       addSample: (label = "Router") => {

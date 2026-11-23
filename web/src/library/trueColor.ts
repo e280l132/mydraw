@@ -4,8 +4,9 @@
 // pre-inverts them (so photos look normal), but it skips that for files whose mimeType is exactly
 // "image/svg+xml", treating SVGs as line drawings that should flip with the theme. Stencil icons
 // have real brand/device colors, so we tag their files with a parameterised SVG MIME type. The file
-// is still an SVG (the data URL says image/svg+xml), but Excalidraw now applies its photo
-// correction: icons look the same in light and dark mode, including dark-mode exports.
+// is still an SVG (the data URL says image/svg+xml), but Excalidraw now treats it as an image:
+// dark exports draw it unfiltered (exact colours), and on screen web/src/darkImages.ts +
+// canvasHook.ts draw it unfiltered too (Excalidraw's own on-screen correction is approximate).
 import type { BinaryFileData, BinaryFiles, DataURL } from "@excalidraw/excalidraw/types";
 import { ensureSvgSize, svgFromDataURL, svgToDataURL } from "../../../shared/recolor";
 

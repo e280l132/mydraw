@@ -42,6 +42,6 @@ export function apiSceneHash(api: ExcalidrawImperativeAPI): string {
 
 export function serializeScene(api: ExcalidrawImperativeAPI): string {
   // The layout grid is an app preference, not part of the drawing: Excalidraw's grid mode is only
-  // switched on for live snapping (web/src/useLayoutGrid.ts), so files get Excalidraw's defaults.
+  // switched on for live snapping (web/src/useCanvasHook.ts), so files get Excalidraw's defaults.
   return serializeAsJSON(api.getSceneElements(), { ...api.getAppState(), ...FILE_GRID_STATE }, api.getFiles(), "local");
 }

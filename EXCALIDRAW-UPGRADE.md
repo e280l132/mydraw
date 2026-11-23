@@ -22,33 +22,51 @@ Tip: the readable build is `node_modules/@excalidraw/excalidraw/dist/dev/` (`ind
 `chunk-*.js`, `index.css`); grep it for the names below. Source locations given here are from
 Excalidraw's own repo (`packages/excalidraw/...`).
 
-## Layout grid (highest risk: hooks the renderer)
+## Static canvas hook: layout grid and dark-mode colours (highest risk: hooks the renderer)
 
-Code: `web/src/gridHook.ts` (all assumptions listed in its header), `web/src/useLayoutGrid.ts`,
-`shared/grid.ts`. mydraw paints its grid *inside* Excalidraw's static canvas, behind the shapes, and
-uses Excalidraw's grid mode only for live snapping while hiding Excalidraw's own grid lines.
+Code: `web/src/canvasHook.ts` (all assumptions listed in its header), `web/src/useCanvasHook.ts`,
+`web/src/darkImages.ts`, `shared/grid.ts`. mydraw wraps the 2D context of Excalidraw's static canvas
+(background + shapes) to:
+- paint the layout grid between the background and the shapes, and use Excalidraw's grid mode only
+  for live snapping while hiding Excalidraw's own grid lines;
+- apply the **dark theme inside the canvas**, per draw call, the way Excalidraw's own dark exports do,
+  instead of Excalidraw's CSS filter on the whole canvas. Images are then drawn unfiltered, so icons
+  keep their exact colours (Excalidraw's live pre-correction is approximate: `#cc092f` showed as
+  `#993f69`). Two global canvas patches in `darkImages.ts` handle the images: Excalidraw's
+  pre-correction on detached element canvases is skipped and remembered, and such canvases are drawn
+  unfiltered onto a themed render, or with Excalidraw's correction anywhere else (identical to before).
 
 | Assumption | Where in Excalidraw | If it breaks |
 |---|---|---|
 | The static canvas is one long-lived `<canvas class="excalidraw__canvas static">` | `components/canvases/StaticCanvas.tsx` | Hook can't attach → automatic fallback (overlay, no live snap) **(smoke)** |
-| Every render starts with `fillRect(0, 0, width, height)` of the background, in CSS px at `scale(devicePixelRatio)`, before the grid and the shapes | `bootstrapCanvas` in `renderer/helpers.ts`, `_renderStaticScene` in `renderer/staticScene.ts` | Hook never fires → automatic fallback **(smoke)** |
+| Every render starts with `fillRect(0, 0, width, height)` of the background, in CSS px at `scale(devicePixelRatio)`, inside a `save()`/`restore()` pair, before the grid and the shapes; nothing on the live canvas resets `context.filter` afterwards | `bootstrapCanvas` in `renderer/helpers.ts`, `_renderStaticScene` in `renderer/staticScene.ts` | Hook never fires → automatic fallback **(smoke)**; filter reset mid-render → `themeLost`, in-canvas dark theme switched off **(smoke)** |
 | Excalidraw's grid lines are separate `beginPath/moveTo/lineTo/stroke` calls in exactly `#dddddd` / `#e5e5e5` | `strokeGrid` + `GridLineColor` in `renderer/staticScene.ts` | Grey grid lines not recognised → live snapping switched off automatically so they never show **(smoke)** |
 | Grid drawing and snapping are both switched by `gridModeEnabled` (prop or app state); snapping uses `gridSize`; holding ⌘/Ctrl while dragging skips snapping | `isGridModeEnabled`, `getEffectiveGridSize` in `components/App.tsx` | Live snapping stops working **(smoke: drag test)** |
 | `gridStep` is one of the props that re-render the static canvas (used to force a repaint after a colour/opacity change) | `getRelevantAppStateProps` in `StaticCanvas.tsx` | Grid colour/strength changes show only after the next scroll |
 | `gridSize`/`gridStep` are clamped to 1..100 on restore | `getNormalizedGridSize/Step` | Spacing over 100 lost on reload (mydraw caps at 100) |
 | Render throttling is off unless `window.EXCALIDRAW_THROTTLE_RENDER === true`, so `getAppState()` during a render is the rendered state | `isRenderThrottlingEnabled` | Grid lags the shapes by a frame while scrolling |
-| Dark theme = `filter: invert(93%) hue-rotate(180deg)` on canvases | `THEME_FILTER`, CSS `--theme-filter` | Grid colour wrong in dark mode (update `EXCALIDRAW_DARK_INVERT` / `HUE_180` in `shared/grid.ts`) |
 | ⌘' is Excalidraw's grid shortcut; the canvas context menu has "Toggle grid" (flips `gridModeEnabled`) | `actionToggleGridMode` | mydraw's capture listener blocks ⌘'; a `gridModeEnabled` flip we didn't make is treated as "toggle our grid" |
+| Dark theme = `filter: invert(93%) hue-rotate(180deg)` on canvases (`THEME_FILTER`, CSS `.excalidraw.theme--dark canvas { filter: var(--theme-filter) }`); an inline `style.filter` on the canvas overrides it | `constants.ts`, `index.css` | Wrong dark colours: update `THEME_FILTER` in `web/src/darkImages.ts` and `EXCALIDRAW_DARK_INVERT` / `HUE_180` in `shared/grid.ts` **(smoke: background and shape colours)** |
+| Images are pre-corrected for the dark theme by setting exactly `invert(100%) hue-rotate(180deg) saturate(1.25)` (`IMAGE_INVERT_FILTER`) on a **detached** per-element canvas, which is then drawn onto the static canvas with `drawImage`; not for files whose mimeType is exactly `image/svg+xml` | `generateElementCanvas` / `shouldResetImageFilter` in `renderer/renderElement.ts` | String changed → images look as before (Excalidraw's approximate correction), no breakage; draw path changed → check icon colours by hand **(smoke: exact icon colour)** |
+| Excalidraw's own dark exports apply `THEME_FILTER` in the canvas and draw images with `filter = "none"` (exact colours) | `renderElement` (`isExporting` branch) | Dark exports would lose exact icon colours **(smoke: dark PNG export)** |
 
-How the fallback works: after each grid change `useLayoutGrid` forces a static re-render and checks
-the hook's counters (`GridHook.settle()`). No render seen twice in a row → overlay mode
-(`web/src/GridOverlay.tsx`, drawn over the shapes, no live snapping, a warning in the grid panel
-and a `console.warn`). Grid-mode renders without any hidden Excalidraw grid stroke → `snapOk: false`.
-The smoke test forces the fallback with `window.__mydrawNoGridHook = true`.
+How the fallback works: after each grid or theme change (dark mode or grid on) `useCanvasHook`
+forces a static re-render and checks the hook's counters (`CanvasHook.settle()`):
+- no render seen twice in a row → `mode: "overlay"`: overlay grid (`web/src/GridOverlay.tsx`, drawn
+  over the shapes), no live snapping, Excalidraw's own CSS dark filter (approximate image colours), a
+  warning in the grid panel and a `console.warn`;
+- grid-mode renders without any hidden Excalidraw grid stroke → `snapOk: false`;
+- an element drawn without the theme filter during an in-canvas themed render → `themeOk: false`:
+  Excalidraw's own CSS dark filter again.
+The smoke test forces the fallback with `window.__mydrawNoGridHook = true`; `__mydrawTest.canvasStatus()`
+and `__mydrawTest.darkImageStats()` show the counters.
 
 To check by hand: turn on the grid with a bright colour at 100%, put a filled shape on it (lines
 must not cross the fill), drag the shape (it jumps in grid steps, ⌘-drag moves freely), switch to
 dark mode (same colour as in light mode), and confirm no light-grey dashed lines appear anywhere.
+For dark mode: place a saturated logo (e.g. Dashboard Icons › Cloud › Broadcom, `#cc092f`) and a
+filled shape, switch to dark: the logo must keep its exact colour, the shape and background must look
+as in Excalidraw (background `#121212`/`#111111`), and switching back to light must restore everything.
 
 ## Everything else that depends on internals
 
@@ -65,7 +83,7 @@ dark mode (same colour as in light mode), and confirm no light-grey dashed lines
 | `CaptureUpdateAction`: `IMMEDIATELY` = own undo step; `NEVER` = not in history; `EVENTUALLY` merges into the *previous* committed change | executor, zone follow, icon recolor | smoke |
 | Selection changes are recorded in undo history; `customData` changes are not | properties, executor | smoke |
 | `updateScene` before `addFiles` when swapping an image's `fileId` (images load only for files added while referenced) | `web/src/library/iconColor.ts` | smoke (recolor) |
-| Dark mode pre-corrects raster images but not files whose mimeType is exactly `image/svg+xml` (hence `image/svg+xml;mydraw=truecolor`) | `web/src/library/trueColor.ts` | by hand: icons keep colours in dark mode |
+| Dark mode pre-corrects images except files whose mimeType is exactly `image/svg+xml` (hence `image/svg+xml;mydraw=truecolor`, so icons count as images; see the static canvas hook above for how they become exact) | `web/src/library/trueColor.ts` | smoke (exact icon colour) |
 | SVG files need numeric width/height or raster export crops them | `ensureSvgSize` | smoke (exports) |
 | Elbow arrows: Excalidraw re-routes them on drag only with `fixedPoint` bindings; `fixedSegments` survive drags; `restoreElements` drops such bindings | `web/src/agent/sceneOps.ts`, `shared/avoidRoute.ts` | smoke |
 | `convertToExcalidrawElements`: binds only within its own batch, shifts multi-point arrows, needs `children: []` on frames, `regenerateIds: false` keeps ids | `sceneOps.ts`, `drawioImport.ts` | smoke + unit |

@@ -1,5 +1,5 @@
 // FALLBACK layout grid: a canvas above the drawing (pointer-events: none), used only when the
-// in-canvas hook (gridHook.ts) does not work, e.g. after an Excalidraw upgrade changed its renderer.
+// in-canvas hook (canvasHook.ts) does not work, e.g. after an Excalidraw upgrade changed its renderer.
 // It draws over the shapes. The canvas sits outside Excalidraw's dark-mode CSS filter, so the
 // chosen colour is shown as is.
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";

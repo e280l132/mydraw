@@ -1,11 +1,11 @@
 // Floating, non-modal grid controls: changes show on the canvas straight away.
-import type { GridHealth } from "./useLayoutGrid";
+import type { CanvasHealth } from "./useCanvasHook";
 import { GRID_COLORS, GRID_LIMITS, GRID_SIZE_PRESETS, type GridSettings } from "../../shared/grid";
 
 interface Props {
   grid: GridSettings;
   /** Hook health of the active drawing (undefined until checked). */
-  health?: GridHealth;
+  health?: CanvasHealth;
   onChange(patch: Partial<GridSettings>): void;
   onSnap(): void;
   onReset(): void;

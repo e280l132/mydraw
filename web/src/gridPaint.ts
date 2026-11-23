@@ -1,5 +1,5 @@
 // Paints the layout grid onto a 2D context whose transform is CSS pixels (scale = devicePixelRatio).
-// Shared by the in-canvas hook (web/src/gridHook.ts) and the fallback overlay (GridOverlay.tsx).
+// Shared by the in-canvas hook (web/src/canvasHook.ts) and the fallback overlay (GridOverlay.tsx).
 import { planGrid, type GridSettings } from "../../shared/grid";
 
 export interface PaintView {
@@ -11,13 +11,15 @@ export interface PaintView {
   height: number;
 }
 
-export function paintGrid(ctx: CanvasRenderingContext2D, view: PaintView, grid: GridSettings, color: string, dpr: number): void {
+/** `unfiltered`: switch the context filter off while painting (the canvas is themed in-canvas). */
+export function paintGrid(ctx: CanvasRenderingContext2D, view: PaintView, grid: GridSettings, color: string, dpr: number, unfiltered = false): void {
   const { width: w, height: h } = view;
   if (w <= 0 || h <= 0) return;
   const plan = planGrid(view, grid);
   const minor = grid.opacity;
   const major = Math.min(1, grid.opacity * 2.2);
   ctx.save();
+  if (unfiltered) ctx.filter = "none";
   ctx.setLineDash([]);
   ctx.strokeStyle = color;
   ctx.fillStyle = color;

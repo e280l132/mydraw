@@ -1971,12 +1971,35 @@ assert.ok(fs.readFileSync(drawioFile, "utf8").startsWith("<"), "the .drawio file
 
 step("Layout grid: painted inside Excalidraw's canvas behind shapes, Excalidraw's own grid hidden, live snapping, ⌘', clean files, fallback");
 // If this step fails after an Excalidraw upgrade, read EXCALIDRAW-UPGRADE.md.
+// Pixel on screen (after CSS filters), via a screenshot.
+/** Screen pixel at a scene point (after CSS filters); with r > 0, all pixels of the (2r+1)² square around it. */
+const screenPixel = async (sx, sy, r = 0) => {
+  const png = await page.screenshot();
+  return page.evaluate(
+    async ([b64, sx, sy, r]) => {
+      const bm = await createImageBitmap(await (await fetch("data:image/png;base64," + b64)).blob());
+      const c = new OffscreenCanvas(bm.width, bm.height);
+      const g = c.getContext("2d");
+      g.drawImage(bm, 0, 0);
+      const st = window.__mydrawTest.api().getAppState();
+      const k = bm.width / window.innerWidth;
+      const px = Math.round(((sx + st.scrollX) * st.zoom.value + st.offsetLeft) * k);
+      const py = Math.round(((sy + st.scrollY) * st.zoom.value + st.offsetTop) * k);
+      const d = g.getImageData(px - r, py - r, 2 * r + 1, 2 * r + 1).data;
+      const out = [];
+      for (let i = 0; i < d.length; i += 4) out.push([d[i], d[i + 1], d[i + 2]]);
+      return r ? out : out[0];
+    },
+    [png.toString("base64"), sx, sy, r],
+  );
+};
+const near = (a, hex, tol = 4) => [1, 3, 5].every((i, k) => Math.abs(a[k] - parseInt(hex.slice(i, i + 2), 16)) <= tol);
 await page.evaluate(() => window.mydraw.updateSettings({ theme: "light" }));
 await call("new_drawing", { title: "Grid" });
 await call("add_elements", { elements: [{ type: "rectangle", id: "gbox", x: 333, y: 357, width: 160, height: 80, backgroundColor: "#ffd8a8", fillStyle: "solid" }] });
 const gridOn = { enabled: true, snap: true, size: 25, majorEvery: 4, style: "lines", color: "#ff0000", opacity: 1 };
 await page.evaluate((g) => window.mydraw.updateSettings({ grid: g }), gridOn);
-const gridStatus = () => t((x) => x.gridStatus());
+const gridStatus = () => t((x) => x.canvasStatus());
 await waitFor(async () => (await gridStatus())?.mode === "in-canvas", "grid hook reports in-canvas");
 assert.equal((await gridStatus()).snapOk, true, "Excalidraw's grid lines were recognised and hidden (snapping usable)");
 assert.ok((await gridStatus()).gridModeRendersSuppressed > 0, "Excalidraw grid strokes were suppressed");
@@ -2039,9 +2062,14 @@ await t((x) => x.api().updateScene({ appState: { gridModeEnabled: false } }));
 await waitFor(async () => !(await page.evaluate(() => window.mydraw.getSettings())).grid.enabled, "Excalidraw's toggle hides our grid");
 await page.evaluate((g) => window.mydraw.updateSettings({ grid: g }), gridOn);
 await waitFor(async () => (await t((x) => x.appStateValue("gridModeEnabled"))) === true, "grid back on");
-// Dark mode: the canvas is CSS-inverted, so the painted colour is pre-compensated (not raw red).
+// Dark mode: the theme is applied inside the canvas and the grid painted unfiltered, so the grid
+// shows exactly the chosen colour on screen (vertical line at x=600).
+const themedBefore = (await gridStatus()).themedRenders;
 await page.evaluate(() => window.mydraw.updateSettings({ theme: "dark" }));
-await waitFor(async () => !(await staticPixels(600, 625)).some(isRed) && (await gridStatus()).paints > 0, "dark mode paints the compensated colour");
+await waitFor(async () => (await gridStatus()).themedRenders > themedBefore, "dark render done in-canvas");
+await sleep(300);
+const darkGridPx = await screenPixel(600, 612, 2);
+assert.ok(darkGridPx.some((p) => near(p, "#ff0000", 6)), `dark mode: grid shows the chosen colour exactly (got ${JSON.stringify(darkGridPx.slice(0, 5))}, status ${JSON.stringify(await gridStatus())}, css ${await page.evaluate(() => document.querySelector('.md-drawing:not([style*="display: none"]) canvas.excalidraw__canvas.static').style.filter)})`);
 await page.screenshot({ path: path.join(shots, "grid-dark.png") });
 await page.evaluate(() => window.mydraw.updateSettings({ theme: "light" }));
 // Fallback: if the hook stops seeing renders (Excalidraw changed), the overlay draws and snapping is off.
@@ -2096,6 +2124,67 @@ await arrangeRun("distribute horizontally");
 await waitFor(async () => JSON.stringify((await arrangeBoxes()).map((b) => b[0])) === "[300,640,980]", "equal gaps after distribute");
 await arrangeRun("align top");
 await waitFor(async () => (await arrangeBoxes()).every((b) => b[1] === 317), "aligned to the top edge");
+
+step("Dark mode: icons keep their exact colours on screen (in-canvas theme), shapes look as before, fallback = Excalidraw's own filter");
+// If this step fails after an Excalidraw upgrade, read EXCALIDRAW-UPGRADE.md.
+const brandSvg = path.join(work, "BrandRed.svg");
+fs.writeFileSync(brandSvg, '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="#cc092f"/></svg>');
+await call("add_stencil_file", { path: brandSvg, collection: "Smoke Colours" });
+await call("new_drawing", { title: "Dark icons" });
+const brandItem = (await waitFor(async () => (await call("search_stencils", { query: "BrandRed" })).items[0], "BrandRed stencil indexed"));
+const brandNode = await call("place_stencil", { id: brandItem.id, x: 400, y: 400, label: false });
+await call("add_elements", { elements: [{ type: "rectangle", id: "dkred", x: 600, y: 360, width: 120, height: 80, backgroundColor: "#e03131", fillStyle: "solid" }] });
+await call("select", { ids: [] });
+const brandIcon = await t((x, id) => x.api().getSceneElements().find((e) => e.id === id), brandNode.icon);
+const iconX = brandIcon.x + brandIcon.width / 2;
+const iconY = brandIcon.y + brandIcon.height / 2;
+assert.ok(near(await screenPixel(iconX, iconY), "#cc092f"), "light mode: exact icon colour");
+await page.evaluate(() => window.mydraw.updateSettings({ theme: "dark" }));
+await waitFor(async () => (await t((x) => x.canvasStatus()))?.themedRenders > 0, "dark render done in-canvas");
+await sleep(300);
+const darkIconPx = await screenPixel(iconX, iconY);
+assert.ok(near(darkIconPx, "#cc092f"), `dark mode: exact icon colour (got ${darkIconPx})`);
+assert.ok(near(await screenPixel(300, 600), "#121212", 3), "dark background as before");
+// A filled shape looks exactly as Excalidraw's CSS filter would show it.
+const cssRed = await page.evaluate(() => {
+  const c = new OffscreenCanvas(2, 2);
+  const g = c.getContext("2d");
+  g.filter = "invert(93%) hue-rotate(180deg)";
+  g.fillStyle = "#e03131";
+  g.fillRect(0, 0, 2, 2);
+  const d = g.getImageData(0, 0, 1, 1).data;
+  return "#" + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, "0")).join("");
+});
+assert.ok(near(await screenPixel(660, 400), cssRed, 3), `shapes unchanged in dark mode (${cssRed})`);
+assert.equal((await t((x) => x.canvasStatus())).themeLost, 0, "the in-canvas theme held for every element");
+// Dark exports (Excalidraw's own export path) keep exact image colours too.
+const darkExport = path.join(work, "dark-icons.png");
+await t((x, p) => x.exportTo(p, { format: "png", darkMode: true, background: true, scale: 1, padding: 10 }), darkExport);
+const exportHasBrand = await page.evaluate(async (b64) => {
+  const bm = await createImageBitmap(await (await fetch("data:image/png;base64," + b64)).blob());
+  const c = new OffscreenCanvas(bm.width, bm.height);
+  const g = c.getContext("2d");
+  g.drawImage(bm, 0, 0);
+  const d = g.getImageData(0, 0, bm.width, bm.height).data;
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - 0xcc) <= 4 && Math.abs(d[i + 1] - 0x09) <= 4 && Math.abs(d[i + 2] - 0x2f) <= 4) n++;
+  return n;
+}, fs.readFileSync(darkExport).toString("base64"));
+assert.ok(exportHasBrand > 500, "dark PNG export has the exact icon colour");
+// Back to light: everything back to normal.
+await page.evaluate(() => window.mydraw.updateSettings({ theme: "light" }));
+await sleep(500);
+assert.ok(near(await screenPixel(iconX, iconY), "#cc092f"), "light again: exact icon colour");
+assert.ok(near(await screenPixel(660, 400), "#e03131"), "light again: shape colour");
+// Fallback: hook gone -> Excalidraw's own CSS filter and its approximate image correction (not inverted).
+await page.evaluate(() => (window.__mydrawNoGridHook = true));
+await page.evaluate(() => window.mydraw.updateSettings({ theme: "dark" }));
+await waitFor(async () => (await t((x) => x.canvasStatus()))?.mode === "overlay", "canvas hook falls back", 5000);
+await sleep(300);
+const fbPx = await screenPixel(iconX, iconY);
+assert.ok(near(fbPx, "#993f69", 8), `fallback: Excalidraw's own dark image correction (got ${fbPx})`);
+await page.evaluate(() => (window.__mydrawNoGridHook = false));
+await page.evaluate(() => window.mydraw.updateSettings({ theme: "light" }));
 
 await client.close();
 

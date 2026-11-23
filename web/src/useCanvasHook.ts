@@ -1,27 +1,32 @@
-// Per-tab controller for the layout grid:
-//  - paints the grid inside Excalidraw's static canvas, behind the shapes (gridHook.ts);
-//  - drives Excalidraw's grid mode for live snapping (its own grid lines are hidden by the hook);
-//  - health-checks the hook after each grid change and falls back to the overlay canvas
-//    (GridOverlay.tsx) without live snapping when an Excalidraw upgrade broke it.
+// Per-tab controller for the static-canvas hook (canvasHook.ts):
+//  - layout grid painted inside Excalidraw's static canvas, behind the shapes;
+//  - Excalidraw's grid mode driven for live snapping (its own grid lines hidden by the hook);
+//  - dark mode themed inside the canvas so images keep their exact colours (darkImages.ts);
+//  - health check after each grid/theme change, with fallbacks when an Excalidraw upgrade broke
+//    the hook: overlay grid (GridOverlay.tsx) without live snapping, and Excalidraw's own CSS dark
+//    filter (approximate image colours).
 // See EXCALIDRAW-UPGRADE.md.
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { excalidrawGridState, type GridSettings } from "../../shared/grid";
-import { GridHook, type GridHookStatus } from "./gridHook";
+import { CanvasHook, type CanvasHookStatus } from "./canvasHook";
 
-export type GridMode = "checking" | "in-canvas" | "overlay";
+export type CanvasMode = "checking" | "in-canvas" | "overlay";
 
-export interface GridHealth {
-  mode: GridMode;
+export interface CanvasHealth {
+  /** in-canvas: the hook sees renders. overlay: it doesn't (grid falls back to the overlay canvas). */
+  mode: CanvasMode;
   /** Live snapping works (Excalidraw grid mode can be used and its grid lines are hidden). */
   snapOk: boolean;
+  /** The dark theme can be applied inside the canvas (exact image colours). */
+  themeOk: boolean;
 }
 
-/** Status per tab, for the smoke test (`__mydrawTest.gridStatus`). */
-export const gridStatusByTab = new Map<string, () => GridHookStatus & GridHealth>();
+/** Status per tab, for the smoke test (`__mydrawTest.canvasStatus`). */
+export const canvasStatusByTab = new Map<string, () => CanvasHookStatus & CanvasHealth>();
 
-/** How long to wait for Excalidraw to re-render after a grid change before judging the hook. */
+/** How long to wait for Excalidraw to re-render after a change before judging the hook. */
 const CHECK_DELAY_MS = 150;
 
 interface Options {
@@ -33,13 +38,13 @@ interface Options {
   rootRef: { current: HTMLElement | null };
   /** Excalidraw's own "Toggle grid" (context menu etc.) was used: toggle ours instead. */
   onExternalToggle(): void;
-  onHealth(h: GridHealth): void;
+  onHealth(h: CanvasHealth): void;
 }
 
-export function useLayoutGrid({ tabId, grid, hidden, theme, apiRef, rootRef, onExternalToggle, onHealth }: Options) {
+export function useCanvasHook({ tabId, grid, hidden, theme, apiRef, rootRef, onExternalToggle, onHealth }: Options) {
   const gridRef = useRef(grid);
   gridRef.current = grid;
-  const [health, setHealth] = useState<GridHealth>({ mode: "checking", snapOk: true });
+  const [health, setHealth] = useState<CanvasHealth>({ mode: "checking", snapOk: true, themeOk: true });
   const healthRef = useRef(health);
   healthRef.current = health;
   const onHealthRef = useRef(onHealth);
@@ -54,39 +59,48 @@ export function useLayoutGrid({ tabId, grid, hidden, theme, apiRef, rootRef, onE
   const [retry, setRetry] = useState(0);
 
   const hook = useMemo(
-    () => new GridHook(() => apiRef.current, () => gridRef.current, () => healthRef.current.mode !== "overlay"),
+    () =>
+      new CanvasHook({
+        getApi: () => apiRef.current,
+        getGrid: () => gridRef.current,
+        paintGrid: () => healthRef.current.mode !== "overlay",
+        themeInCanvas: () => healthRef.current.mode !== "overlay" && healthRef.current.themeOk,
+      }),
     [apiRef],
   );
   useEffect(() => () => hook.detach(), [hook]);
 
   useEffect(() => {
-    gridStatusByTab.set(tabId, () => ({ ...hook.status(), ...healthRef.current }));
-    return () => void gridStatusByTab.delete(tabId);
+    canvasStatusByTab.set(tabId, () => ({ ...hook.status(), ...healthRef.current }));
+    return () => void canvasStatusByTab.delete(tabId);
   }, [tabId, hook]);
 
-  const setHealthBoth = useCallback((h: GridHealth) => {
+  const setHealthBoth = useCallback((h: CanvasHealth) => {
     healthRef.current = h;
     setHealth(h);
     onHealthRef.current(h);
   }, []);
 
   /** Give Excalidraw the grid state we want (no undo entry). `force` also makes the static canvas re-render. */
-  const apply = useCallback((force: boolean) => {
-    const api = apiRef.current;
-    if (!api) return;
-    const want = excalidrawGridState(gridRef.current, healthRef.current.snapOk && healthRef.current.mode !== "overlay");
-    const st = api.getAppState();
-    const same = st.gridModeEnabled === want.gridModeEnabled && st.gridSize === want.gridSize;
-    applied.current = want;
-    if (same && !force) return;
-    // gridStep only changes how Excalidraw's (hidden) grid draws, and it is one of the props that
-    // re-render the static canvas, so flipping it forces a repaint of our grid.
-    stepFlip.current = !stepFlip.current;
-    api.updateScene({
-      appState: { ...want, ...(force ? { gridStep: stepFlip.current ? 2 : 3 } : {}) } as Pick<AppState, "gridModeEnabled" | "gridSize">,
-      captureUpdate: CaptureUpdateAction.NEVER,
-    });
-  }, [apiRef]);
+  const apply = useCallback(
+    (force: boolean) => {
+      const api = apiRef.current;
+      if (!api) return;
+      const want = excalidrawGridState(gridRef.current, healthRef.current.snapOk && healthRef.current.mode !== "overlay");
+      const st = api.getAppState();
+      const same = st.gridModeEnabled === want.gridModeEnabled && st.gridSize === want.gridSize;
+      applied.current = want;
+      if (same && !force) return;
+      // gridStep only changes how Excalidraw's (hidden) grid draws, and it is one of the props that
+      // re-render the static canvas, so flipping it forces a repaint.
+      stepFlip.current = !stepFlip.current;
+      api.updateScene({
+        appState: { ...want, ...(force ? { gridStep: stepFlip.current ? 2 : 3 } : {}) } as Pick<AppState, "gridModeEnabled" | "gridSize">,
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    },
+    [apiRef],
+  );
 
   /** Called from Excalidraw's onChange. */
   const onSceneChange = useCallback(
@@ -111,8 +125,8 @@ export function useLayoutGrid({ tabId, grid, hidden, theme, apiRef, rootRef, onE
     const api = apiRef.current;
     if (!api) return;
     hook.attach(rootRef.current);
-    if (!grid.enabled) {
-      apply(true); // repaint without the grid, grid mode off
+    if (!grid.enabled && theme !== "dark") {
+      apply(true); // repaint without the grid, grid mode off; nothing to check
       return;
     }
     const before = hook.settle();
@@ -121,12 +135,12 @@ export function useLayoutGrid({ tabId, grid, hidden, theme, apiRef, rootRef, onE
       hook.attach(rootRef.current);
       const after = hook.settle();
       const prev = healthRef.current;
-      let next: GridHealth = prev;
+      let next: CanvasHealth = prev;
       if (after.renders === before.renders) {
         // The forced render never reached our hook: Excalidraw's renderer changed (assumption 1).
         if (++misses.current < 2) return setRetry((n) => n + 1);
-        next = { mode: "overlay", snapOk: false };
-        console.warn("mydraw: grid hook did not see a render; using the overlay grid without live snapping. See EXCALIDRAW-UPGRADE.md.");
+        next = { mode: "overlay", snapOk: false, themeOk: false };
+        console.warn("mydraw: canvas hook did not see a render; overlay grid, no live snapping, Excalidraw's own dark filter. See EXCALIDRAW-UPGRADE.md.");
       } else {
         misses.current = 0;
         const gridModeOn = after.gridModeRenders > before.gridModeRenders;
@@ -135,11 +149,15 @@ export function useLayoutGrid({ tabId, grid, hidden, theme, apiRef, rootRef, onE
         if (!snapOk && prev.snapOk) {
           console.warn("mydraw: could not hide Excalidraw's own grid lines; live snapping is off. See EXCALIDRAW-UPGRADE.md.");
         }
-        next = { mode: "in-canvas", snapOk };
+        const themeOk = after.themeLost > before.themeLost ? false : prev.themeOk;
+        if (!themeOk && prev.themeOk) {
+          console.warn("mydraw: the in-canvas dark theme was lost while drawing; using Excalidraw's own dark filter. See EXCALIDRAW-UPGRADE.md.");
+        }
+        next = { mode: "in-canvas", snapOk, themeOk };
       }
-      if (next.mode !== prev.mode || next.snapOk !== prev.snapOk) {
+      if (next.mode !== prev.mode || next.snapOk !== prev.snapOk || next.themeOk !== prev.themeOk) {
         setHealthBoth(next);
-        apply(true); // grid mode off if snapping was dropped; repaint (or stop painting) in the canvas
+        apply(true); // grid mode off if snapping was dropped; repaint with the new mode
       } else if (prev.mode === "checking") {
         setHealthBoth(next);
       }
