@@ -59,8 +59,6 @@ export interface StencilFile {
 }
 
 export const MY_STENCILS = "My Stencils";
-export const EXCALIDRAW_LIBRARY_COLLECTION = "Excalidraw Library";
-export const EXCALIDRAW_LIBRARY_FILE = `${EXCALIDRAW_LIBRARY_COLLECTION}/library.excalidrawlib`;
 export const MAX_RECENT_STENCILS = 30;
 
 export function itemKindForFile(file: string): LibraryItemKind | null {

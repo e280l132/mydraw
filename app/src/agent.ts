@@ -158,7 +158,7 @@ export function setupAgent(deps: AgentDeps): (method: string, params: Record<str
       case "delete_stencil":
         findStencil(str(params.id, "id"));
         await deps.store.remove(str(params.id, "id"));
-        return { deleted: params.id, note: "moved to the Trash" };
+        return { deleted: params.id };
       case "save_as_stencil": {
         const content = (await renderer("stencil_content", params)) as { elements: unknown[]; files: Record<string, unknown> };
         if (!content.elements.length) throw new Error("nothing to save: select elements or pass ids");

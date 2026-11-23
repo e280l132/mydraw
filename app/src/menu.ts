@@ -67,6 +67,7 @@ export function buildMenu(settings: Settings, h: MenuHandlers): void {
         { role: "selectAll", registerAccelerator: false },
         { type: "separator" },
         { label: "Save Selection as Stencil…", click: cmd({ type: "saveStencil" }) },
+        { label: "Quick Save as Stencil", accelerator: "Alt+CmdOrCtrl+S", click: cmd({ type: "quickSaveStencil" }) },
       ],
     },
     {

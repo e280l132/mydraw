@@ -317,15 +317,58 @@ await t((x, id) => x.insertStencil(id), stencilItem.id);
 await waitFor(async () => (await t((x) => x.elementCount())) === beforeStencil * 2, "saved stencil inserted (all elements)");
 await page.screenshot({ path: path.join(shots, "stencils-inserted.png") });
 
-step("Excalidraw Library panel is saved to the library folder and shared by tabs");
-await t((x) => x.addToExcalidrawLibrary());
-const xlibPath = path.join(libraryDir, "Excalidraw Library", "library.excalidrawlib");
-await waitFor(() => fs.existsSync(xlibPath) && JSON.parse(fs.readFileSync(xlibPath, "utf8")).libraryItems?.length === 1, "library file written");
+step("quick save stencil; Excalidraw's own Library UI is hidden");
+await t((x) => x.command({ type: "quickSaveStencil" }));
+await waitFor(async () => (await t((x) => x.library())).items.filter((i) => i.collection === "My Stencils" && i.kind === "stencil").length >= 2, "quick-saved stencil indexed");
+assert.equal(
+  await page.evaluate(() => {
+    const el = document.querySelector(".default-sidebar-trigger");
+    return !el || getComputedStyle(el).display === "none";
+  }),
+  true,
+  "Excalidraw Library button is hidden",
+);
+assert.ok(!fs.existsSync(path.join(libraryDir, "Excalidraw Library", "library.excalidrawlib")), "no Excalidraw Library file is created");
+const stencilCount = async () => (await t((x) => x.library())).items.filter((i) => i.collection === "My Stencils" && i.kind === "stencil").length;
+const beforeCtx = await stencilCount();
+const ctxAt = await t((x) => x.screenCenter("image", 0));
+await page.mouse.click(ctxAt.x, ctxAt.y, { button: "right" });
+await waitFor(async () => (await page.locator(".context-menu .md-ctx-quick").count()) === 1, "context menu offers Quick save as stencil");
+assert.equal(await page.locator(".context-menu .md-ctx-save").count(), 1, "...and Save as stencil…");
+assert.equal(await page.locator('.context-menu li[data-testid="addToLibrary"]:visible').count(), 0, "...but not Add to library");
+await page.locator(".context-menu .md-ctx-quick").click();
+await waitFor(async () => (await stencilCount()) === beforeCtx + 1, "context-menu quick save adds a stencil");
+await waitFor(async () => (await page.locator(".context-menu").count()) === 0, "context menu closes after the click");
+
+step("icon packs: button by the title, nothing pre-ticked, search, sort, remove");
+const fakePack = path.join(libraryDir, "Network");
+fs.mkdirSync(path.join(fakePack, "Devices"), { recursive: true });
+fs.writeFileSync(path.join(fakePack, "collection.json"), JSON.stringify({ managedBy: "mydraw-packs", pack: "network", items: {} }));
+fs.writeFileSync(path.join(fakePack, "Devices", "Router.svg"), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" width="16" height="16"><rect width="8" height="8"/></svg>');
+assert.equal(await page.locator(".md-panel-labels input").isVisible(), true, "name-under-icons checkbox is on the panel");
+assert.equal(await page.locator(".md-panel-head .md-packs-btn").isVisible(), true, "Icon packs button beside the title");
+assert.equal(await page.locator(".md-panel-head", { hasText: "Browse" }).count(), 0, "no Browse libraries button");
+await page.click(".md-panel-head .md-packs-btn");
+await waitFor(async () => (await page.locator('.md-pack[data-pack="network"] .md-badge').count()) === 1, "installed pack is badged");
+assert.equal(await page.locator(".md-pack input:checked").count(), 0, "no pack is ticked by default");
+await page.fill(".md-packs-search", "proxmox");
+await waitFor(async () => (await page.locator(".md-pack").count()) === 1, "search narrows to one pack");
+assert.equal(await page.locator('.md-pack[data-pack="dashboard"]').count(), 1, "...the Dashboard Icons pack");
+await page.fill(".md-packs-search", "");
+await page.selectOption(".md-packs-sort", "size-desc");
+await waitFor(async () => (await page.locator(".md-pack").first().getAttribute("data-pack")) === "dashboard", "largest pack first");
+await page.selectOption(".md-packs-sort", "installed");
+await waitFor(async () => (await page.locator(".md-pack").first().getAttribute("data-pack")) === "network", "installed pack first");
+await page.click('.md-pack[data-pack="network"] .md-pack-remove');
+await page.click(".md-pack-confirm .danger");
+await waitFor(() => !fs.existsSync(fakePack), "removing a pack deletes its folder");
+await waitFor(async () => (await page.locator('.md-pack[data-pack="network"] .md-badge').count()) === 0, "pack no longer shows installed");
+await page.keyboard.press("Escape");
+await waitFor(async () => (await page.locator(".md-packs-search").count()) === 0, "dialog closes");
 
 step("new tab + crash recovery of unsaved drawing");
 await t((x) => x.newTab());
 await waitFor(async () => (await t((x) => x.elementCount())) === 0, "new tab mounted");
-assert.equal(await t((x) => x.excalidrawLibraryCount()), 1, "new tab sees the shared Excalidraw library");
 await t((x) => x.addSample("Unsaved NAS"));
 state = await t((x) => x.state());
 assert.equal(state.tabs.length, 2);
@@ -349,7 +392,6 @@ assert.ok(recoveredTab.title.startsWith("Untitled"));
 // rectangle + its bound label text
 assert.equal(await t((x) => x.elementCount()), 2);
 await page.screenshot({ path: path.join(shots, "recovered.png") });
-assert.equal(await t((x) => x.excalidrawLibraryCount()), 1, "Excalidraw library survives restart");
 assert.ok((await t((x) => x.library())).items.some((i) => i.name === "Core pair"), "saved stencil survives restart");
 
 step("MCP: control file is private; requests without the key are refused");
@@ -1959,6 +2001,18 @@ assert.ok((await staticPixels(600, 625)).some(isRed), "our grid line is painted 
 assert.ok(!(await staticPixels(600, 612)).some(isGray), "Excalidraw's own grey grid is hidden");
 // The same line inside the filled shape: covered by the fill, i.e. the grid is BEHIND the shape.
 assert.ok(!(await staticPixels(400, 400)).some(isRed), "the grid is behind filled shapes");
+// With a shape selected (style panel open), the main menu must open ON TOP of the panel.
+await page.mouse.click(...Object.values(await t((x) => x.toScreen(340, 400))));
+await page.waitForSelector(".md-style");
+await page.click('.md-drawing:not([style*="display: none"]) .dropdown-menu-button');
+const menuOnTop = await page.evaluate(() => {
+  const m = document.querySelector(".md-drawing:not([style*='display: none']) .dropdown-menu");
+  const r = m.getBoundingClientRect();
+  return !!document.elementFromPoint(r.left + 60, r.top + 150)?.closest(".dropdown-menu");
+});
+assert.ok(menuOnTop, "the main menu opens above the style panel");
+await page.keyboard.press("Escape");
+await waitFor(async () => !(await page.$(".md-drawing:not([style*='display: none']) .dropdown-menu")), "menu closed");
 // Live snapping: drag the box by an odd amount; it lands on the 25px grid.
 const gStart = await t((x) => x.toScreen(353, 377));
 await page.mouse.move(gStart.x, gStart.y);
@@ -2010,6 +2064,38 @@ await page.screenshot({ path: path.join(shots, "grid-fallback.png") });
 await page.evaluate(() => (window.__mydrawNoGridHook = false));
 await page.evaluate(() => window.mydraw.updateSettings({ grid: { enabled: false } }));
 await page.click('.md-gridpanel-x');
+
+step("Align & distribute: Excalidraw's section sits just above Edges; palette Arrange commands work");
+await call("new_drawing", { title: "Arrange" });
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "ar1", x: 300, y: 317, width: 120, height: 60 },
+    { type: "rectangle", id: "ar2", x: 520, y: 334, width: 120, height: 60 },
+    { type: "rectangle", id: "ar3", x: 980, y: 351, width: 120, height: 60 },
+  ],
+});
+await call("select", { ids: ["ar1", "ar2", "ar3"] });
+await page.waitForSelector('.md-drawing:not([style*="display: none"]) .md-arrange');
+const arrangePlace = await page.evaluate(() => {
+  const root = document.querySelector('.md-drawing:not([style*="display: none"])');
+  const align = root.querySelector(".md-arrange").getBoundingClientRect();
+  const edges = root.querySelector('fieldset input[name="edges"]').closest("fieldset").getBoundingClientRect();
+  const sloppiness = [...root.querySelectorAll(".panelColumn > fieldset")].find((f) => f.querySelector('input[name="sloppiness"]'))?.getBoundingClientRect();
+  return { aboveEdges: align.bottom <= edges.top + 1 && edges.top - align.bottom < 40, belowSloppiness: !sloppiness || sloppiness.bottom <= align.top + 1 };
+});
+assert.ok(arrangePlace.aboveEdges && arrangePlace.belowSloppiness, `Align sits just above Edges (${JSON.stringify(arrangePlace)})`);
+const arrangeRun = async (query) => {
+  await page.keyboard.press(`${MOD}+Shift+KeyP`);
+  await waitFor(() => t((x) => x.paletteOpen()), "palette open");
+  await page.keyboard.type(query);
+  await page.keyboard.press("Enter");
+  await waitFor(async () => !(await t((x) => x.paletteOpen())), "palette closed");
+};
+const arrangeBoxes = () => t((x) => x.api().getSceneElements().filter((e) => e.id.startsWith("ar")).sort((a, b) => a.x - b.x).map((e) => [Math.round(e.x), Math.round(e.y)]));
+await arrangeRun("distribute horizontally");
+await waitFor(async () => JSON.stringify((await arrangeBoxes()).map((b) => b[0])) === "[300,640,980]", "equal gaps after distribute");
+await arrangeRun("align top");
+await waitFor(async () => (await arrangeBoxes()).every((b) => b[1] === 317), "aligned to the top edge");
 
 await client.close();
 

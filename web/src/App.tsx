@@ -4,10 +4,7 @@ import {
   isElementLink,
   convertToExcalidrawElements,
   getCommonBounds,
-  getLibraryItemsHash,
-  loadLibraryFromBlob,
   restoreAppState,
-  serializeLibraryAsJSON,
   viewportCoordsToSceneCoords,
 } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
@@ -16,9 +13,8 @@ import type {
   BinaryFiles,
   ExcalidrawImperativeAPI,
   ExcalidrawInitialDataState,
-  LibraryItems,
 } from "@excalidraw/excalidraw/types";
-import type { LibraryIndex, LibraryItem } from "../../shared/library";
+import { MY_STENCILS, type LibraryIndex, type LibraryItem } from "../../shared/library";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { safeFileName, titleFromPath } from "../../shared/names";
@@ -32,6 +28,7 @@ import { PagesPanel } from "./PagesPanel";
 import { GridOverlay, type GridViewRef } from "./GridOverlay";
 import { gridStatusByTab, useLayoutGrid, type GridHealth } from "./useLayoutGrid";
 import { GridPanel } from "./GridPanel";
+import { tagArrangeSection } from "./arrange";
 import { snapSelectionToGrid } from "./gridOps";
 import { DEFAULT_GRID, type GridSettings } from "../../shared/grid";
 import { InventoryDialog } from "./InventoryDialog";
@@ -101,18 +98,8 @@ function nextUntitled(): string {
   return untitledCount === 1 ? "Untitled" : `Untitled ${untitledCount}`;
 }
 
-/** Items of Excalidraw's own Library panel, shared by every tab and saved in the library folder. */
-let sharedLibraryItems: LibraryItems = [];
-let sharedLibraryHash = getLibraryItemsHash([]);
-
-async function parseLibrary(content: string): Promise<LibraryItems> {
-  if (!content.trim()) return [];
-  return loadLibraryFromBlob(new Blob([content], { type: "application/json" }), "unpublished");
-}
-
 function initialDataFor(scene: LoadedScene | null, style: DrawingStyle): ExcalidrawInitialDataState {
   return {
-    libraryItems: sharedLibraryItems,
     elements: scene?.elements ?? [],
     appState: { viewBackgroundColor: "#ffffff", ...scene?.appState, ...drawingStyleAppState(style) },
     files: scene?.files ?? {},
@@ -143,7 +130,6 @@ interface DrawingViewProps {
   onCommand(cmd: MenuCommand): void;
   onSettings(patch: Partial<Settings>): void;
   onResolveConflict(id: string, reload: boolean): void;
-  onLibraryChange(id: string, items: LibraryItems): void;
   onOpenLink(id: string, link: string): void;
   onGridHealth(id: string, h: GridHealth): void;
 }
@@ -161,7 +147,6 @@ const DrawingView = memo(function DrawingView({
   onCommand,
   onSettings,
   onResolveConflict,
-  onLibraryChange,
   onOpenLink,
   onGridHealth,
 }: DrawingViewProps) {
@@ -210,7 +195,6 @@ const DrawingView = memo(function DrawingView({
             }
             onChange(tab.id, elements, appState, files);
           }}
-          onLibraryChange={(items) => onLibraryChange(tab.id, items)}
           onLinkOpen={(element, event) => {
             // Drill-down links open through the main process (web address -> browser, .excalidraw -> tab).
             // Links to elements inside the drawing stay with Excalidraw.
@@ -307,7 +291,6 @@ export function App() {
   const libraryRef = useRef<LibraryIndex | null>(null);
   const addLabelsRef = useRef(addLabels);
   addLabelsRef.current = addLabels;
-  const librarySaveTimer = useRef<number | undefined>(undefined);
 
   const commitTabs = useCallback((update: (prev: Tab[]) => Tab[]) => {
     tabsRef.current = update(tabsRef.current);
@@ -475,30 +458,6 @@ export function App() {
     [patchTab, scheduleBackground],
   );
 
-  // ---------- Excalidraw Library panel (shared by all tabs, saved in the library folder) ----------
-
-  const applySharedLibrary = useCallback((items: LibraryItems, exceptTab?: string) => {
-    sharedLibraryItems = items;
-    sharedLibraryHash = getLibraryItemsHash(items);
-    for (const [id, api] of apis.current) {
-      if (id !== exceptTab) void api.updateLibrary({ libraryItems: items, merge: false });
-    }
-  }, []);
-
-  const onLibraryChange = useCallback(
-    (id: string, items: LibraryItems) => {
-      if (getLibraryItemsHash(items) === sharedLibraryHash) return; // echo of a sync, or no change
-      applySharedLibrary(items, id);
-      window.clearTimeout(librarySaveTimer.current);
-      librarySaveTimer.current = window.setTimeout(() => {
-        bridge.excalidrawLibrarySave(serializeLibraryAsJSON(sharedLibraryItems)).catch((e: Error) =>
-          showToast(`Could not save the library: ${e.message}`, true),
-        );
-      }, 400);
-    },
-    [applySharedLibrary, showToast],
-  );
-
   // ---------- stencils ----------
 
   const labelOptions = () => {
@@ -655,6 +614,8 @@ export function App() {
         while (section && section.parentElement !== column) section = section.parentElement;
         if (section && !section.classList.contains("md-style-host")) section.classList.add("md-native-color");
       });
+      // Excalidraw's Align & distribute section goes to the top of the panel (CSS order).
+      tagArrangeSection(column);
       setStyleHost((prev) => (prev === host ? prev : host));
     };
     attach();
@@ -673,6 +634,76 @@ export function App() {
     }
     setSaveSelection(sel);
   }, [showToast]);
+
+  /** Save the selection to My Stencils without asking for a name. */
+  const quickSaveStencil = useCallback(() => {
+    const api = apis.current.get(activeRef.current);
+    if (!api) return;
+    const sel = selectionForStencil(api);
+    if (!sel.elements.length) {
+      showToast("Select the shapes you want to save as a stencil first.", true);
+      return;
+    }
+    bridge
+      .librarySaveStencil({
+        collection: MY_STENCILS,
+        name: sel.suggestedName,
+        tags: [],
+        elements: sel.elements,
+        files: Object.fromEntries(sel.files.map((f) => [f.id, f])),
+      })
+      .then(() => showToast(`Saved “${sel.suggestedName}” to ${MY_STENCILS}`))
+      .catch((e: Error) => showToast(`Could not save the stencil: ${e.message}`, true));
+  }, [showToast]);
+
+  // Excalidraw 0.18 has no API for context-menu items, so add ours to its menu when it opens.
+  useEffect(() => {
+    const make = (cls: string, label: string, hint: string, run: () => void) => {
+      const li = document.createElement("li");
+      li.className = `md-ctx-stencil ${cls}`;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "context-menu-item";
+      const l = document.createElement("div");
+      l.className = "context-menu-item__label";
+      l.textContent = label;
+      const k = document.createElement("kbd");
+      k.className = "context-menu-item__shortcut";
+      k.textContent = hint;
+      btn.append(l, k);
+      li.append(btn);
+      li.addEventListener("click", () => {
+        // Excalidraw closes its menu on a pointerdown outside it, so send it one, then act.
+        document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+        run();
+      });
+      return li;
+    };
+    const augment = (menu: Element) => {
+      if (menu.querySelector(".md-ctx-stencil")) return;
+      const anchor = menu.querySelector('li[data-testid="duplicateSelection"]');
+      const api = apis.current.get(activeRef.current);
+      if (!anchor || !api || !Object.keys(api.getAppState().selectedElementIds).length) return;
+      const hr = document.createElement("hr");
+      hr.className = "context-menu-item-separator md-ctx-stencil";
+      anchor.before(
+        make("md-ctx-save", "Save as stencil…", "", openSaveStencil),
+        make("md-ctx-quick", "Quick save as stencil", "⌥⌘S", quickSaveStencil),
+        hr,
+      );
+    };
+    const mo = new MutationObserver((records) => {
+      for (const r of records) {
+        for (const n of r.addedNodes) {
+          if (!(n instanceof Element)) continue;
+          const menu = n.matches(".context-menu") ? n : n.querySelector(".context-menu");
+          if (menu) augment(menu);
+        }
+      }
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, [openSaveStencil, quickSaveStencil]);
 
   const togglePanel = useCallback(() => {
     setPanelOpen((v) => {
@@ -1010,9 +1041,11 @@ export function App() {
           return togglePanel();
         case "saveStencil":
           return openSaveStencil();
+        case "quickSaveStencil":
+          return quickSaveStencil();
       }
     },
-    [closeTab, newTab, openFiles, openSaveStencil, save, setActive, showToast, toggleLint, togglePages, togglePanel, setGridPanel],
+    [closeTab, newTab, openFiles, openSaveStencil, quickSaveStencil, save, setActive, showToast, toggleLint, togglePages, togglePanel, setGridPanel],
   );
 
   // Main process saves settings and broadcasts them back (settings:changed), which updates state.
@@ -1066,13 +1099,10 @@ export function App() {
       settingsRef.current = settings;
       setSettings(settings);
 
-      // Library first, so every tab starts with the shared Excalidraw Library items.
       try {
-        const [index, xlib] = await Promise.all([bridge.libraryIndex(), bridge.excalidrawLibraryGet()]);
+        const index = await bridge.libraryIndex();
         libraryRef.current = index;
         setLibraryIndex(index);
-        sharedLibraryItems = await parseLibrary(xlib);
-        sharedLibraryHash = getLibraryItemsHash(sharedLibraryItems);
       } catch (e) {
         showToast(`Could not load the stencil library: ${(e as Error).message}`, true);
       }
@@ -1125,12 +1155,6 @@ export function App() {
       bridge.onLibraryChanged((index) => {
         libraryRef.current = index;
         setLibraryIndex(index);
-      }),
-      bridge.onExcalidrawLibraryChanged((content) => {
-        parseLibrary(content).then(
-          (items) => getLibraryItemsHash(items) !== sharedLibraryHash && applySharedLibrary(items),
-          () => showToast("The Excalidraw library file changed on disk but could not be read.", true),
-        );
       }),
       bridge.onSettingsChanged((s) => {
         const prev = settingsRef.current;
@@ -1221,7 +1245,7 @@ export function App() {
       offs.forEach((off) => off());
       window.removeEventListener("keydown", onKey, true);
     };
-  }, [applySharedLibrary, beforeClose, onCommand, openFiles, patchTab, reloadFromContent, scheduleBackground, showToast]);
+  }, [beforeClose, onCommand, openFiles, patchTab, reloadFromContent, scheduleBackground, showToast]);
 
   const active = tabs.find((t) => t.id === activeId);
   useEffect(() => {
@@ -1408,14 +1432,6 @@ export function App() {
           .getSceneElements()
           .filter((e) => e.type === "image")
           .map((e) => e.customData?.mydrawIconColor ?? "original"),
-      excalidrawLibraryCount: async () => (await api().updateLibrary({ libraryItems: [], merge: true })).length,
-      addToExcalidrawLibrary: async () => {
-        const els = api().getSceneElements();
-        await api().updateLibrary({
-          libraryItems: [{ id: newId(), status: "unpublished", created: Date.now(), elements: els, name: "Test item" }],
-          merge: true,
-        });
-      },
     };
   }, [insertItem, newTab, patchTab, save]);
 
@@ -1448,7 +1464,6 @@ export function App() {
             onCommand={onCommandSync}
             onSettings={onSettings}
             onResolveConflict={onResolveConflict}
-            onLibraryChange={onLibraryChange}
             onOpenLink={onOpenLink}
             onGridHealth={onGridHealth}
           />

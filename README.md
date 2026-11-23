@@ -34,8 +34,9 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 
 **Stencils** (⇧⌘Y)
 - One library in `~/Documents/mydraw/Library/`. Search, favorites, recent, collections and groups. Click to insert, or drag onto the canvas.
-- Icon packs (AWS, Azure, Google Cloud, Kubernetes, network devices, 2,300 product logos) download from the Stencils panel menu.
-- Save a selection as a stencil; import SVG, PNG, `.stencil.json` and `.excalidrawlib` files.
+- Icon packs download from the Stencils panel menu: AWS, Azure, Google Cloud, Kubernetes, network devices (Carbon), 2,300 product logos, ~2,700 self-hosted app icons (Dashboard Icons: Proxmox, Portainer, Pi-hole…), and infrastructure picks from Material Design Icons, Tabler and Lucide, Devicon dev logos and Simple Icons brand marks. Use the **Icon packs…** button next to the panel title to search and sort packs, download the ones you tick (none are ticked by default) and remove installed ones.
+- Save a selection as a stencil (⌥⌘S saves it to My Stencils without asking for a name); import SVG, PNG and `.excalidrawlib` files.
+- Stencils is the only library: Excalidraw's own Library button is hidden.
 - Recolor icons (with undo), an eyedropper that copies the real color of any shape or icon, and icons that keep their real colors in dark mode.
 
 **Colors and styles**
@@ -64,6 +65,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 **Checks and layout**
 - **Diagram lint** (⌥⌘L): overlaps, unconnected arrows, unlabeled nodes, missing IPs, off-palette colors. Safe one-click fixes; "Fix all" is one undo step.
 - **Layout grid** (⌘', or Grid settings… in the menu): lines or dots, spacing 4–100 px, a stronger line every N cells, any color, adjustable strength. Drawn behind the shapes. **Snap to grid** while moving, drawing and resizing (hold ⌘ to move freely); "Snap selection to grid" lines up existing shapes in one undo step. The grid is an app preference: it is never saved into drawings or exports.
+- **Align and distribute**: select 2+ shapes or icons and the Align section is in the left panel just above Edges (distribute needs 3+). Also in the command palette ("Arrange") and on Excalidraw's keys: ⇧⌘←/→/↑/↓ align, ⌥H / ⌥V distribute.
 - **Route arrows around shapes** (command palette): re-routes the selected arrows (or all of them) around shapes.
 - **Find and replace** (⌥⌘F): match case, whole word, selection or whole drawing, one undo step.
 - **Command palette** (⇧⌘P; ⌘K when nothing is selected): fuzzy search over every command, stencil, theme, preset, template, frame, element and file action.

@@ -3,7 +3,6 @@ import type { ExcalidrawElement, NonDeleted } from "@excalidraw/excalidraw/eleme
 import type { BinaryFiles } from "@excalidraw/excalidraw/types";
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  EXCALIDRAW_LIBRARY_COLLECTION,
   MY_STENCILS,
   libraryFileUrl,
   searchItems,
@@ -202,7 +201,7 @@ export function StencilPanel(props: Props) {
   const { index, onInsert, onToast } = props;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
-  const [openSections, toggleSection] = useStoredSet("mydraw.stencilSections", [MY_STENCILS, EXCALIDRAW_LIBRARY_COLLECTION]);
+  const [openSections, toggleSection] = useStoredSet("mydraw.stencilSections", [MY_STENCILS]);
   const [menu, setMenu] = useState<{ item: LibraryItem; x: number; y: number } | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
@@ -298,9 +297,7 @@ export function StencilPanel(props: Props) {
                 <div className="md-panel-empty small">
                   {c.name === MY_STENCILS
                     ? "Select shapes and choose “Save selection as stencil”, or drop SVG/PNG files here."
-                    : c.name === EXCALIDRAW_LIBRARY_COLLECTION
-                      ? "Items you add to Excalidraw's Library panel are kept here."
-                      : "Empty"}
+                    : "Empty"}
                 </div>
               ) : (
                 [...groups.entries()].map(([g, items]) =>
@@ -353,6 +350,9 @@ export function StencilPanel(props: Props) {
     >
       <div className="md-panel-head">
         <span className="md-panel-title">Stencils</span>
+        <button className="md-packs-btn" title="Download or remove icon packs" onClick={props.onOpenPacks}>
+          Icon packs…
+        </button>
         <div className="md-panel-actions">
           <button
             className="md-icon-btn"
@@ -374,11 +374,6 @@ export function StencilPanel(props: Props) {
               Import SVG / PNG / .excalidrawlib…
             </button>
             <button onClick={() => (setMoreOpen(false), props.onOpenPacks())}>Download icon packs…</button>
-            <hr />
-            <label className="md-check">
-              <input type="checkbox" checked={props.addLabels} onChange={(e) => props.onAddLabelsChange(e.target.checked)} />
-              Add name label under icons
-            </label>
             <hr />
             <button onClick={() => (setMoreOpen(false), void bridge.libraryOpenFolder())}>Open library folder</button>
             <button
@@ -406,6 +401,10 @@ export function StencilPanel(props: Props) {
           }}
         />
       </div>
+      <label className="md-panel-labels" title="Put the icon's name under it when you insert it">
+        <input type="checkbox" checked={props.addLabels} onChange={(e) => props.onAddLabelsChange(e.target.checked)} />
+        Add name under icons
+      </label>
       {!query.trim() && (
         <div className="md-seg md-seg-compact md-panel-filter">
           {(["all", "favorites", "recent"] as Filter[]).map((f) => (

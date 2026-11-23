@@ -111,6 +111,7 @@ export type MenuCommand =
   | { type: "clearRecent" }
   | { type: "toggleStencils" }
   | { type: "saveStencil" }
+  | { type: "quickSaveStencil" }
   | { type: "commandPalette" }
   | { type: "findReplace" }
   | { type: "togglePages" }
@@ -195,13 +196,11 @@ export interface MydrawBridge {
   libraryChooseFolder(): Promise<string | null>;
   libraryPacks(): Promise<PackStatus[]>;
   libraryInstallPacks(ids: string[]): Promise<Array<{ pack: string; ok: boolean; count?: number; error?: string }>>;
-  /** Contents of the Excalidraw Library panel file (shared by all tabs); "" when empty. */
-  excalidrawLibraryGet(): Promise<string>;
-  excalidrawLibrarySave(content: string): Promise<void>;
+  /** Delete an installed icon pack (only folders the downloader created). */
+  libraryUninstallPack(id: string): Promise<void>;
   /** Absolute path of a dropped File (Finder drag). */
   pathForFile(file: File): string;
   onLibraryChanged(cb: (index: LibraryIndex) => void): () => void;
-  onExcalidrawLibraryChanged(cb: (content: string) => void): () => void;
   onPackProgress(cb: (message: string) => void): () => void;
 
   // ----- agent control (MCP) -----

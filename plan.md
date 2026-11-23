@@ -64,7 +64,7 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
   ```
 - **Two kinds of item, one panel:** single icons (SVG/PNG) and saved shape groups (any selection of shapes, icons, labels, arrows, saved as `.stencil.json` — recolorable when made of native shapes).
 - **Building the library:**
-  - Select shapes → right-click **"Add to library…"** (name, collection, tags). Same for Excalidraw's built-in library panel: `onLibraryChange` writes to this folder, `initialData.libraryItems` loads from it, so that panel is persistent too.
+  - Select shapes → **Save selection as stencil…** (name, collection, tags) or ⌥⌘S for a quick save to My Stencils. (Excalidraw's built-in Library panel was removed on 2026-11-22; Stencils is the only library. `.excalidrawlib` is import-only.)
   - Drag SVG/PNG files (or a folder) onto the panel → copied into the library.
   - Import `.excalidrawlib` (libraries.excalidraw.com) or, later, draw.io stencil XML → becomes a collection.
   - Rename, retag, move between collections, delete, edit a saved group (opens it on its own canvas).

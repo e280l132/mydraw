@@ -178,6 +178,13 @@ body {
   flex-direction: column;
 }
 
+/* Stencils is the only library: hide Excalidraw's own Library button and "Add to library" menu item. */
+.md-canvas .sidebar-trigger,
+.md-canvas .default-sidebar-trigger,
+li[data-testid="addToLibrary"] {
+  display: none !important;
+}
+
 .md-canvas {
   position: relative;
   flex: 1;
@@ -436,6 +443,32 @@ body {
 .md-panel-title {
   font-weight: 600;
   font-size: 14px;
+}
+
+.md-packs-btn {
+  margin-right: auto;
+  margin-left: 10px;
+  padding: 3px 9px;
+  border: 1px solid var(--md-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--md-fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.md-packs-btn:hover {
+  background: var(--md-tab);
+}
+
+.md-panel-labels {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 12px 8px;
+  font-size: 12px;
+  color: var(--md-muted);
+  cursor: pointer;
 }
 
 .md-panel-actions {
@@ -797,6 +830,34 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.md-packs-tools {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.md-packs-search {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  background: var(--md-bg);
+  color: var(--md-fg);
+  font-size: 13px;
+}
+
+.md-packs-sort {
+  padding: 6px 8px;
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  background: var(--md-bg);
+  color: var(--md-fg);
+  font-size: 13px;
 }
 
 .md-pack {
@@ -806,7 +867,35 @@ body {
   padding: 8px 10px;
   border: 1px solid var(--md-border);
   border-radius: 8px;
+}
+
+.md-pack-body {
+  flex: 1;
+  min-width: 0;
   cursor: pointer;
+}
+
+.md-pack-remove,
+.md-pack-confirm {
+  flex: none;
+  align-self: center;
+  display: flex;
+  gap: 6px;
+}
+
+.md-pack-remove {
+  padding: 4px 10px;
+  border: 1px solid var(--md-border);
+  border-radius: 6px;
+  background: transparent;
+  color: #e5484d;
+  cursor: pointer;
+}
+
+.md-pack-confirm .danger {
+  background: #e5484d;
+  border-color: #e5484d;
+  color: #fff;
 }
 
 .md-pack input {
@@ -1235,6 +1324,15 @@ body {
 .md-editor .md-iconcolor-actions {
   width: 100%;
   flex-wrap: wrap;
+}
+
+/* Excalidraw's Align & distribute section (2+ selected) sits just above its Edges section instead
+   of below everything (web/src/arrange.ts). The panel is a flex column. */
+.md-canvas .panelColumn > .md-arrange {
+  order: 1;
+}
+.md-canvas .panelColumn > .md-after-arrange {
+  order: 2;
 }
 
 /* Excalidraw's own Stroke/Background rows are replaced by the Colors tab. */
@@ -2360,13 +2458,11 @@ body {
   width: 100%;
   height: 100%;
   pointer-events: none;
-  /* above Excalidraw's canvases, below its toolbars/panels */
+  /* Fallback overlay only. Excalidraw's layers share our stacking context: static canvas 1,
+     interactive canvas 2, UI layer 4 (--zIndex-*). z-index 1 after them in the DOM puts the grid
+     above the static canvas and below selection handles, toolbars, panels and menus. Don't raise
+     Excalidraw's own elements to fix stacking: that breaks its menus (they are inside .Island). */
   z-index: 1;
-}
-.md-canvas .excalidraw .layer-ui__wrapper,
-.md-canvas .excalidraw .sidebar,
-.md-canvas .excalidraw .Island {
-  z-index: 3;
 }
 
 .md-gridpanel {

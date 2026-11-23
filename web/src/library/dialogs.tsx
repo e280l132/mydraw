@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { EXCALIDRAW_LIBRARY_COLLECTION, MY_STENCILS, type LibraryIndex, type LibraryItem } from "../../../shared/library";
+import { MY_STENCILS, type LibraryIndex, type LibraryItem } from "../../../shared/library";
+import { filterAndSortPacks, type PackSort } from "../../../shared/packList";
 import type { PackStatus } from "../../../shared/types";
 import type { StencilContent } from "./stencilContent";
 
@@ -34,7 +35,12 @@ export function SaveStencilDialog({
   onClose(): void;
   onSaved(message: string): void;
 }) {
-  const own = (index?.collections ?? []).filter((c) => !c.managed && c.name !== EXCALIDRAW_LIBRARY_COLLECTION).map((c) => c.name);
+  // Collections made only of imported .excalidrawlib packs are read-only: shapes can't be saved into them.
+  const packOnly = (name: string) => {
+    const items = (index?.items ?? []).filter((i) => i.collection === name);
+    return items.length > 0 && items.every((i) => i.kind === "xlib");
+  };
+  const own = (index?.collections ?? []).filter((c) => !c.managed && !packOnly(c.name)).map((c) => c.name);
   const collections = own.includes(MY_STENCILS) ? own : [MY_STENCILS, ...own];
   const [name, setName] = useState(selection.suggestedName);
   const [collection, setCollection] = useState(MY_STENCILS);
@@ -153,12 +159,12 @@ export function PacksDialog({ onClose, onDone }: { onClose(): void; onDone(msg: 
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<PackSort>("name");
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
 
   useEffect(() => {
-    void bridge.libraryPacks().then((p) => {
-      setPacks(p);
-      setChosen(new Set(p.filter((x) => !x.installed).map((x) => x.id)));
-    });
+    void bridge.libraryPacks().then(setPacks);
     return bridge.onPackProgress((m) => setLog((l) => [...l, m]));
   }, []);
 
@@ -170,6 +176,7 @@ export function PacksDialog({ onClose, onDone }: { onClose(): void; onDone(msg: 
       return n;
     });
   const totalMB = (packs ?? []).filter((p) => chosen.has(p.id)).reduce((a, p) => a + p.approxMB, 0);
+  const shown = filterAndSortPacks(packs ?? [], query, sort);
 
   async function install() {
     setBusy(true);
@@ -186,6 +193,7 @@ export function PacksDialog({ onClose, onDone }: { onClose(): void; onDone(msg: 
         failed.length > 0,
       );
       setPacks(await bridge.libraryPacks());
+      setChosen(new Set());
       if (!failed.length) onClose();
     } catch (e) {
       onDone((e as Error).message, true);
@@ -194,17 +202,59 @@ export function PacksDialog({ onClose, onDone }: { onClose(): void; onDone(msg: 
     }
   }
 
+  async function remove(p: PackStatus) {
+    setBusy(true);
+    try {
+      await bridge.libraryUninstallPack(p.id);
+      onDone(`Removed ${p.title}`);
+      setPacks(await bridge.libraryPacks());
+      setChosen((s) => {
+        const n = new Set(s);
+        n.delete(p.id);
+        return n;
+      });
+    } catch (e) {
+      onDone((e as Error).message, true);
+    } finally {
+      setConfirmRemove(null);
+      setBusy(false);
+    }
+  }
+
   return (
-    <Modal title="Download icon packs" onClose={busy ? () => {} : onClose} width={560}>
+    <Modal title="Icon packs" onClose={busy ? () => {} : onClose} width={560}>
       <p className="md-form-note">
-        Official icon sets are downloaded from each vendor into your library folder (not bundled with the app). They are
-        for use in your own diagrams; see LICENSES.md in the library folder.
+        Icon sets are downloaded into your library folder (not bundled with the app) for use in your own diagrams; see
+        LICENSES.md in the library folder. Tick the packs to download, or remove an installed one.
       </p>
+      <div className="md-packs-tools">
+        <input
+          type="search"
+          className="md-packs-search"
+          placeholder="Search packs (e.g. proxmox, aws, logos)…"
+          value={query}
+          autoFocus
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <select className="md-packs-sort" value={sort} onChange={(e) => setSort(e.target.value as PackSort)} aria-label="Sort packs">
+          <option value="name">Name</option>
+          <option value="size-asc">Smallest first</option>
+          <option value="size-desc">Largest first</option>
+          <option value="installed">Installed first</option>
+        </select>
+      </div>
       <div className="md-packs">
-        {(packs ?? []).map((p) => (
-          <label key={p.id} className="md-pack">
-            <input type="checkbox" checked={chosen.has(p.id)} disabled={busy} onChange={() => toggle(p.id)} />
-            <div>
+        {shown.map((p) => (
+          <div key={p.id} className="md-pack" data-pack={p.id}>
+            <input
+              type="checkbox"
+              id={`md-pack-${p.id}`}
+              checked={chosen.has(p.id)}
+              disabled={busy}
+              onChange={() => toggle(p.id)}
+              aria-label={p.title}
+            />
+            <label htmlFor={`md-pack-${p.id}`} className="md-pack-body">
               <div className="md-pack-title">
                 {p.title} {p.installed && <span className="md-badge">installed</span>}
               </div>
@@ -212,9 +262,25 @@ export function PacksDialog({ onClose, onDone }: { onClose(): void; onDone(msg: 
               <div className="md-pack-meta">
                 ~{p.approxMB} MB · {p.license}
               </div>
-            </div>
-          </label>
+            </label>
+            {p.installed &&
+              (confirmRemove === p.id ? (
+                <span className="md-pack-confirm">
+                  <button className="danger" disabled={busy} onClick={() => void remove(p)}>
+                    Remove
+                  </button>
+                  <button disabled={busy} onClick={() => setConfirmRemove(null)}>
+                    Keep
+                  </button>
+                </span>
+              ) : (
+                <button className="md-pack-remove" disabled={busy} onClick={() => setConfirmRemove(p.id)} title="Delete this pack from your library folder">
+                  Remove…
+                </button>
+              ))}
+          </div>
         ))}
+        {packs && !shown.length && <div className="md-panel-empty">No packs match “{query}”.</div>}
         {!packs && <div className="md-panel-empty">Loading…</div>}
       </div>
       {log.length > 0 && (
@@ -229,7 +295,7 @@ export function PacksDialog({ onClose, onDone }: { onClose(): void; onDone(msg: 
           Close
         </button>
         <button className="primary" disabled={busy || !chosen.size} onClick={() => void install()}>
-          {busy ? "Downloading…" : `Download ${chosen.size} pack(s) (~${totalMB} MB)`}
+          {busy ? "Working…" : chosen.size ? `Download ${chosen.size} pack(s) (~${totalMB} MB)` : "Download"}
         </button>
       </div>
     </Modal>

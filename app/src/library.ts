@@ -6,8 +6,6 @@ import { shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  EXCALIDRAW_LIBRARY_COLLECTION,
-  EXCALIDRAW_LIBRARY_FILE,
   MY_STENCILS,
   humanize,
   itemKindForFile,
@@ -19,7 +17,7 @@ import {
   type LibraryItem,
   type StencilFile,
 } from "../../shared/library";
-import { hashContent, writeFileAtomic } from "./fs-utils";
+import { writeFileAtomic } from "./fs-utils";
 
 const STATE_FILE = "library.json";
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -42,12 +40,10 @@ export class LibraryStore {
   private index: LibraryIndex | null = null;
   private watcher: fs.FSWatcher | null = null;
   private rescanTimer: NodeJS.Timeout | null = null;
-  private excalidrawLibHash: string | null = null;
 
   constructor(
     private root: string,
     private onChange: (index: LibraryIndex) => void,
-    private onExcalidrawLibraryChange: (content: string) => void,
   ) {}
 
   get rootPath(): string {
@@ -57,7 +53,6 @@ export class LibraryStore {
   start(): void {
     this.ensureRoot();
     this.index = this.scan();
-    this.excalidrawLibHash = this.hashOf(EXCALIDRAW_LIBRARY_FILE);
     this.watch();
   }
 
@@ -72,7 +67,6 @@ export class LibraryStore {
     this.root = root;
     this.start();
     this.onChange(this.getIndex());
-    this.onExcalidrawLibraryChange(this.readExcalidrawLibrary());
   }
 
   getIndex(): LibraryIndex {
@@ -95,7 +89,12 @@ export class LibraryStore {
 
   private ensureRoot(): void {
     fs.mkdirSync(path.join(this.root, MY_STENCILS), { recursive: true });
-    fs.mkdirSync(path.join(this.root, EXCALIDRAW_LIBRARY_COLLECTION), { recursive: true });
+    // The old Excalidraw Library folder is no longer created. Remove it only when it is empty.
+    try {
+      fs.rmdirSync(path.join(this.root, "Excalidraw Library"));
+    } catch {
+      /* missing or not empty: leave it, it lists as a normal collection */
+    }
     const readme = path.join(this.root, "README.txt");
     if (!fs.existsSync(readme)) {
       fs.writeFileSync(
@@ -107,7 +106,6 @@ export class LibraryStore {
           "folder and they appear in mydraw's Stencils panel. Sub-folders become groups.",
           "",
           `"${MY_STENCILS}" holds shapes you save from mydraw (.stencil.json).`,
-          `"${EXCALIDRAW_LIBRARY_COLLECTION}" is the Excalidraw Library panel, shared by all drawings.`,
           "library.json stores favorites and recently used stencils.",
           "",
         ].join("\n"),
@@ -258,19 +256,6 @@ export class LibraryStore {
   rescan(): void {
     this.index = this.scan();
     this.onChange(this.index);
-    const h = this.hashOf(EXCALIDRAW_LIBRARY_FILE);
-    if (h !== this.excalidrawLibHash) {
-      this.excalidrawLibHash = h;
-      this.onExcalidrawLibraryChange(this.readExcalidrawLibrary());
-    }
-  }
-
-  private hashOf(rel: string): string | null {
-    try {
-      return hashContent(fs.readFileSync(this.resolve(rel)));
-    } catch {
-      return null;
-    }
   }
 
   // ---------- favorites / recent ----------
@@ -302,22 +287,6 @@ export class LibraryStore {
     return this.index;
   }
 
-  // ---------- Excalidraw Library panel ----------
-
-  readExcalidrawLibrary(): string {
-    try {
-      return fs.readFileSync(this.resolve(EXCALIDRAW_LIBRARY_FILE), "utf8");
-    } catch {
-      return "";
-    }
-  }
-
-  writeExcalidrawLibrary(content: string): void {
-    JSON.parse(content); // must be valid JSON
-    this.excalidrawLibHash = hashContent(content);
-    writeFileAtomic(this.resolve(EXCALIDRAW_LIBRARY_FILE), content);
-  }
-
   // ---------- editing ----------
 
   private uniquePath(dir: string, base: string, ext: string): string {
@@ -327,7 +296,13 @@ export class LibraryStore {
   }
 
   saveStencil(req: SaveStencilRequest): string {
-    const dir = this.resolve(safeSegment(req.collection || MY_STENCILS));
+    const target = safeSegment(req.collection || MY_STENCILS);
+    const info = this.getIndex().collections.find((c) => c.name === target);
+    const inTarget = this.getIndex().items.filter((i) => i.collection === target);
+    if (info?.managed || (inTarget.length > 0 && inTarget.every((i) => i.kind === "xlib"))) {
+      throw new Error(`"${target}" is a read-only pack; save into "${MY_STENCILS}" or a new collection`);
+    }
+    const dir = this.resolve(target);
     fs.mkdirSync(dir, { recursive: true });
     const name = req.name.trim() || "Stencil";
     const file = this.uniquePath(dir, safeSegment(name), ".stencil.json");
@@ -441,15 +416,13 @@ export class LibraryStore {
     if (!Array.isArray(items)) throw new Error("not an Excalidraw library file");
     edit(items);
     const content = JSON.stringify(data, null, 2);
-    if (this.rel(abs) === EXCALIDRAW_LIBRARY_FILE) this.excalidrawLibHash = null; // let rescan push it to tabs
     writeFileAtomic(abs, content);
   }
 }
 
 function collectionOrder(name: string): number {
   if (name === MY_STENCILS) return 0;
-  if (name === EXCALIDRAW_LIBRARY_COLLECTION) return 1;
-  return 2;
+  return 1;
 }
 
 function readStencilMeta(abs: string): { name: string; tags: string[] } {

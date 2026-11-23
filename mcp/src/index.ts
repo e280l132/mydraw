@@ -523,7 +523,7 @@ tool(
   { path: z.string().describe("Absolute path"), collection: z.string().optional() },
   call("add_stencil_file"),
 );
-tool("delete_stencil", "Delete a stencil from the library (moved to the Trash; drawings that use it keep their copy).", { id: z.string() }, call("delete_stencil"), {
+tool("delete_stencil", "Delete a stencil from the library (files go to the Trash; an entry of an imported .excalidrawlib pack is removed from that file for good). Drawings that use it keep their copy.", { id: z.string() }, call("delete_stencil"), {
   destructiveHint: true,
 });
 

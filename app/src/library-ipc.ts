@@ -4,7 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { PackStatus, SaveStencilPayload, Settings } from "../../shared/types";
 import { LibraryStore } from "./library";
-import { PACKS, installPacks, installedPacks } from "./packs";
+import { PACKS, installPacks, installedPacks, uninstallPack } from "./packs";
 
 export const LIBRARY_SCHEME = "mdlib";
 
@@ -29,7 +29,6 @@ export function setupLibrary(
   const store = new LibraryStore(
     libraryPathFor(settings),
     (index) => send("library:changed", index),
-    (content) => send("xlib:changed", content),
   );
   store.start();
 
@@ -116,6 +115,12 @@ export function setupLibrary(
     return chosen;
   });
 
+  ipcMain.handle("library:uninstall-pack", (_e, id: unknown) => {
+    assertString(id, "id");
+    uninstallPack(store.rootPath, id);
+    store.rescan();
+  });
+
   ipcMain.handle("library:packs", (): PackStatus[] => {
     const installed = new Set(installedPacks(store.rootPath));
     return PACKS.map((p) => ({
@@ -143,12 +148,6 @@ export function setupLibrary(
     } finally {
       installing = false;
     }
-  });
-
-  ipcMain.handle("xlib:get", () => store.readExcalidrawLibrary());
-  ipcMain.handle("xlib:save", (_e, content: unknown) => {
-    assertString(content, "content");
-    store.writeExcalidrawLibrary(content);
   });
 
   return store;

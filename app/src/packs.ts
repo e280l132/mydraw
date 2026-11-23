@@ -7,6 +7,15 @@ import os from "node:os";
 import path from "node:path";
 import type { CollectionMeta } from "../../shared/library";
 import { safeSegment } from "../../shared/library";
+import {
+  MONO_ICON_COLOR,
+  classifyInfraIcon,
+  dashboardGroup,
+  deviconTitle,
+  keepDashboardIcon,
+  keepDevicon,
+  type DashboardMeta,
+} from "../../shared/iconSelect";
 
 export interface PackInfo {
   id: string;
@@ -72,6 +81,60 @@ export const PACKS: PackInfo[] = [
     approxMB: 4,
     license: "CC0-1.0 (Iconify logos by Gil Barbara)",
     licenseUrl: "https://github.com/gilbarbara/logos",
+  },
+  {
+    id: "dashboard",
+    collection: "Dashboard Icons",
+    title: "Dashboard Icons (self-hosted apps)",
+    description: "Proxmox, Portainer, Pi-hole, Plex, Home Assistant, Grafana and ~2,800 more app icons (homarr-labs)",
+    approxMB: 20,
+    license: "Apache-2.0 (homarr-labs/dashboard-icons); logos are trademarks of their owners",
+    licenseUrl: "https://github.com/homarr-labs/dashboard-icons",
+  },
+  {
+    id: "mdi",
+    collection: "Material Design Icons",
+    title: "Material Design Icons (infrastructure)",
+    description: "Servers, storage, network, security, devices and cloud, picked from ~7,000 icons",
+    approxMB: 1,
+    license: "Apache-2.0 (Pictogrammers Material Design Icons)",
+    licenseUrl: "https://github.com/Templarian/MaterialDesign",
+  },
+  {
+    id: "tabler",
+    collection: "Tabler Icons",
+    title: "Tabler Icons (infrastructure)",
+    description: "Clean line icons for servers, network, security and devices",
+    approxMB: 1,
+    license: "MIT (Tabler Icons)",
+    licenseUrl: "https://github.com/tabler/tabler-icons",
+  },
+  {
+    id: "lucide",
+    collection: "Lucide",
+    title: "Lucide (infrastructure)",
+    description: "Light line icons for servers, network, security and devices",
+    approxMB: 1,
+    license: "ISC (Lucide)",
+    licenseUrl: "https://github.com/lucide-icons/lucide",
+  },
+  {
+    id: "devicon",
+    collection: "Devicon",
+    title: "Devicon (dev tools)",
+    description: "Colored logos for languages, databases, operating systems and dev tools",
+    approxMB: 4,
+    license: "MIT (Devicon)",
+    licenseUrl: "https://github.com/devicons/devicon",
+  },
+  {
+    id: "simple",
+    collection: "Simple Icons",
+    title: "Simple Icons (brand marks)",
+    description: "~3,000 single-color brand logos",
+    approxMB: 4,
+    license: "CC0-1.0 (Simple Icons)",
+    licenseUrl: "https://github.com/simple-icons/simple-icons",
   },
 ];
 
@@ -418,7 +481,7 @@ async function buildNetwork(w: PackWriter, tmp: string, log: Progress): Promise<
   log("Downloading network icons…");
   const set = await fetchIconify("carbon", tmp);
   for (const [icon, name, group, tags] of NETWORK_ICONS) {
-    const svg = iconifySvg(set, icon, "#1e1e1e");
+    const svg = iconifySvg(set, icon, MONO_ICON_COLOR);
     if (svg) w.add([group], name, svg, ["network", ...tags]);
   }
 }
@@ -436,6 +499,72 @@ async function buildLogos(w: PackWriter, tmp: string, log: Progress): Promise<vo
   }
 }
 
+/** Generic icon set, keeping only infrastructure-related, non-variant icons. */
+function infraBuilder(set: string, label: string): (w: PackWriter, tmp: string, log: Progress) => Promise<void> {
+  return async (w, tmp, log) => {
+    log(`Downloading ${label} icons…`);
+    const data = await fetchIconify(set, tmp);
+    for (const name of Object.keys(data.icons)) {
+      const category = classifyInfraIcon(name);
+      if (!category) continue;
+      const svg = iconifySvg(data, name, MONO_ICON_COLOR);
+      if (svg) w.add([category], titleCase(name), svg, [category.toLowerCase(), ...name.split("-")]);
+    }
+  };
+}
+
+async function buildDevicon(w: PackWriter, tmp: string, log: Progress): Promise<void> {
+  log("Downloading Devicon icons…");
+  const set = await fetchIconify("devicon", tmp);
+  for (const name of Object.keys(set.icons)) {
+    if (!keepDevicon(name)) continue;
+    const svg = iconifySvg(set, name);
+    const title = titleCase(deviconTitle(name));
+    if (svg) w.add([title[0].match(/[a-z]/i) ? title[0].toUpperCase() : "#"], title, svg, ["devicon", name]);
+  }
+}
+
+async function buildSimple(w: PackWriter, tmp: string, log: Progress): Promise<void> {
+  log("Downloading Simple Icons…");
+  const set = await fetchIconify("simple-icons", tmp);
+  for (const name of Object.keys(set.icons)) {
+    const svg = iconifySvg(set, name, MONO_ICON_COLOR);
+    const title = titleCase(name);
+    if (svg) w.add([title[0].match(/[a-z]/i) ? title[0].toUpperCase() : "#"], title, svg, ["brand", name]);
+  }
+}
+
+async function buildDashboard(w: PackWriter, _tmp: string, log: Progress): Promise<void> {
+  log("Downloading Dashboard Icons…");
+  const repo = "homarr-labs/dashboard-icons";
+  const tree = await fetchJson<{ tree: Array<{ path: string; size?: number }> }>(
+    `https://api.github.com/repos/${repo}/git/trees/main?recursive=1`,
+  );
+  const files = tree.tree.filter((t) => /^svg\/[^/]+\.svg$/.test(t.path) && keepDashboardIcon(t.path.slice(4), t.size ?? 0));
+  let meta: Record<string, DashboardMeta> = {};
+  try {
+    meta = await fetchJson<Record<string, DashboardMeta>>(`https://raw.githubusercontent.com/${repo}/main/metadata.json`);
+  } catch {
+    // groups fall back to "Other"
+  }
+  let done = 0;
+  const queue = [...files];
+  const worker = async () => {
+    for (let t = queue.shift(); t; t = queue.shift()) {
+      try {
+        const slug = t.path.slice(4, -4);
+        const svg = await fetchText(`https://raw.githubusercontent.com/${repo}/main/${t.path}`);
+        const m = meta[slug];
+        w.add([dashboardGroup(m)], titleCase(slug), svg, ["app", slug, ...(m?.aliases ?? []), ...(m?.categories ?? [])]);
+      } catch {
+        // one missing icon must not fail the pack
+      }
+      if (++done % 500 === 0) log(`Dashboard Icons: ${done}/${files.length}…`);
+    }
+  };
+  await Promise.all(Array.from({ length: 12 }, worker));
+}
+
 const BUILDERS: Record<string, (w: PackWriter, tmp: string, log: Progress) => Promise<void>> = {
   aws: buildAws,
   azure: buildAzure,
@@ -443,6 +572,12 @@ const BUILDERS: Record<string, (w: PackWriter, tmp: string, log: Progress) => Pr
   k8s: buildK8s,
   network: buildNetwork,
   logos: buildLogos,
+  dashboard: buildDashboard,
+  mdi: infraBuilder("mdi", "Material Design"),
+  tabler: infraBuilder("tabler", "Tabler"),
+  lucide: infraBuilder("lucide", "Lucide"),
+  devicon: buildDevicon,
+  simple: buildSimple,
 };
 
 /** Is `collection` in `root` managed by the downloader (or absent)? User folders are never overwritten. */
@@ -502,6 +637,24 @@ export async function installPacks(root: string, ids: string[], log: Progress = 
   }
   writeLicenses(root);
   return results;
+}
+
+/** Remove an installed pack. Only folders created by the downloader (matching pack id) are ever deleted. */
+export function uninstallPack(root: string, id: string): void {
+  const pack = PACKS.find((p) => p.id === id);
+  if (!pack) throw new Error("unknown pack");
+  const dir = path.join(root, pack.collection);
+  let meta: CollectionMeta;
+  try {
+    meta = JSON.parse(fs.readFileSync(path.join(dir, "collection.json"), "utf8")) as CollectionMeta;
+  } catch {
+    throw new Error(`"${pack.collection}" is not an installed pack`);
+  }
+  if (meta.managedBy !== "mydraw-packs" || meta.pack !== id) {
+    throw new Error(`"${pack.collection}" was not created by mydraw; remove it in Finder`);
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+  writeLicenses(root);
 }
 
 function writeLicenses(root: string): void {

@@ -9,6 +9,7 @@ import { EXPORT_FORMATS, listFrames, type ExportFormat } from "./exportImage";
 import { allPresets, allThemes } from "./styleStore";
 import { applyPresetTo, applyThemeTo, selectedIds } from "./uiActions";
 import { routeArrowsAround } from "./linkOps";
+import { ARRANGE_ACTIONS, runArrange } from "./arrange";
 
 export interface PaletteContext {
   api: ExcalidrawImperativeAPI | undefined;
@@ -52,6 +53,13 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
   cmd("View", "Show / hide diagram lint", { type: "toggleLint" }, { hint: "⌥⌘L", keywords: "check problems review overlap unconnected arrows palette colors fix" });
   cmd("View", "Show / hide grid", { type: "toggleGrid" }, { hint: "⌘'", keywords: "layout align lines dots guide snap background" });
   cmd("View", "Grid settings (size, color, strength)…", { type: "gridSettings" }, { keywords: "layout align lines dots spacing color opacity light dark major minor" });
+  for (const a of ARRANGE_ACTIONS) {
+    add("Arrange", a.label, () => {
+      if (!runArrange(c.activeId, a.label)) {
+        c.toast(a.label.startsWith("Distribute") ? "Select at least 3 shapes or icons to distribute." : "Select at least 2 shapes or icons to align.", true);
+      }
+    }, { hint: a.keys || undefined, keywords: "align distribute arrange line up space evenly layout" });
+  }
   cmd("Edit", "Snap selection to grid", { type: "snapToGrid" }, { keywords: "align layout line up round position" });
   add("Edit", "Link selection to a drawing…", c.linkSelection, { keywords: "hyperlink drill down open diagram" });
   add("Edit", "Remove links from selection", c.clearLinks, { keywords: "hyperlink unlink" });
@@ -72,6 +80,7 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
   // ----- stencils panel -----
   cmd("Stencils", "Show / hide stencils panel", { type: "toggleStencils" }, { hint: "⇧⌘Y" });
   cmd("Stencils", "Save selection as stencil…", { type: "saveStencil" });
+  cmd("Stencils", "Quick save selection as stencil", { type: "quickSaveStencil" }, { hint: "⌥⌘S" });
 
   // ----- preferences -----
   const s = c.settings;
