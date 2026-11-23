@@ -1,4 +1,6 @@
 import { readMeta, withMeta, type DrawingMeta } from "../../shared/drawingMeta";
+import { FONTS_KEY, remapFontFamilies } from "../../shared/fonts";
+import { embeddedFontsFor, fontsReady, importEmbeddedFonts, prepareFonts } from "./fontRegistry";
 import { FILE_GRID_STATE } from "../../shared/grid";
 import { getMeta } from "./drawingMeta";
 import { hashElementsVersion, loadFromBlob, serializeAsJSON } from "@excalidraw/excalidraw";
@@ -16,10 +18,13 @@ export interface LoadedScene {
 
 /** Parse and normalise `.excalidraw` JSON (also accepts PNG/SVG with an embedded scene later). */
 export async function parseDrawing(content: string): Promise<LoadedScene> {
+  await fontsReady;
   const blob = new Blob([content], { type: "application/json" });
   const data = await loadFromBlob(blob, null, null);
+  // Fonts carried by the drawing are registered before its text is measured or drawn.
+  const remap = importEmbeddedFonts(fontsOf(content));
   return {
-    elements: data.elements,
+    elements: remapFontFamilies(data.elements, remap),
     // Keep only document-level settings from the file; UI state comes from this app.
     appState: {
       viewBackgroundColor: data.appState.viewBackgroundColor,
@@ -31,6 +36,16 @@ export async function parseDrawing(content: string): Promise<LoadedScene> {
     files: trueColorFiles(data.files ?? {}),
     meta: readMeta(content),
   };
+}
+
+/** The drawing's "mydrawFonts" block (null when it has none or can't be parsed). */
+function fontsOf(content: string): unknown {
+  if (!content.includes(`"${FONTS_KEY}"`)) return null;
+  try {
+    return (JSON.parse(content) as Record<string, unknown>)[FONTS_KEY] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -45,9 +60,20 @@ export function apiSceneHash(api: ExcalidrawImperativeAPI): string {
   return sceneHash(api.getSceneElementsIncludingDeleted(), api.getAppState());
 }
 
+/**
+ * The drawing as `.excalidraw` JSON, with its meta and the fonts its text uses. Call
+ * `prepareSerialize` first (async) so the font files are in memory; without it a font that was never
+ * read yet is written by name only.
+ */
 export function serializeScene(api: ExcalidrawImperativeAPI): string {
   // The layout grid is an app preference, not part of the drawing: Excalidraw's grid mode is only
   // switched on for live snapping (web/src/useCanvasHook.ts), so files get Excalidraw's defaults.
-  const json = serializeAsJSON(api.getSceneElements(), { ...api.getAppState(), ...FILE_GRID_STATE }, api.getFiles(), "local");
-  return withMeta(json, getMeta(api));
+  const elements = api.getSceneElements();
+  const json = serializeAsJSON(elements, { ...api.getAppState(), ...FILE_GRID_STATE }, api.getFiles(), "local");
+  return withMeta(json, getMeta(api), embeddedFontsFor(elements));
+}
+
+/** Load the font files `serializeScene` will embed. */
+export function prepareSerialize(api: ExcalidrawImperativeAPI): Promise<void> {
+  return prepareFonts(api.getSceneElements());
 }

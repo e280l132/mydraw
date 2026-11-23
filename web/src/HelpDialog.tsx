@@ -53,6 +53,14 @@ export function helpSections(): Section[] {
       ],
     },
     {
+      title: "Fonts",
+      rows: [
+        { text: "Excalidraw's font list (left panel, with text selected) also has mydraw's fun fonts (Caveat, Kalam, Permanent Marker, Bangers…) and professional ones (Inter, Roboto, Lato, Merriweather, IBM Plex, JetBrains Mono…); each weight is its own entry, like Inter Bold" },
+        { text: "Preferences → Fonts…: preview them, download more from Google Fonts, remove downloads, install fonts that came with a drawing" },
+        { text: "A drawing carries the fonts it uses inside its file, so it looks the same anywhere" },
+      ],
+    },
+    {
       title: "Diagrams from text",
       rows: [
         { keys: sc("importText"), text: "Import from text: CSV host list or from/to list, YAML spec, or Mermaid" },

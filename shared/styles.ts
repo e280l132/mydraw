@@ -1,4 +1,5 @@
 // Themes (whole-diagram looks) and style presets (named element styles). Pure data + helpers.
+import { fontIdFor } from "./fonts";
 import { requireColor } from "./palettes";
 
 /** Excalidraw 0.18 font family ids. */
@@ -12,6 +13,29 @@ export const FONTS: Record<string, number> = {
   "comic-shanns": 8,
   liberation: 9,
 };
+
+/** A family name of mydraw's extra fonts ("Inter", "Caveat Bold"): letters, digits, "_", "-", single spaces. */
+const FAMILY_NAME = /^[A-Za-z_][A-Za-z0-9_-]*( [A-Za-z_][A-Za-z0-9_-]*)*$/;
+
+/**
+ * Font id for a style's `fontFamily`: one of the FONTS slugs, or the family name of one of mydraw's
+ * extra fonts, whose id comes from its name (shared/fonts.ts `fontIdFor`). Undefined when invalid.
+ */
+export function fontIdOf(font: string): number | undefined {
+  const slug = FONTS[font.toLowerCase()];
+  if (slug !== undefined) return slug;
+  return FAMILY_NAME.test(font) && font.length <= 80 ? fontIdFor(font) : undefined;
+}
+
+/** A style's fontFamily as stored: a FONTS slug in lower case, or an extra font's family name as given. */
+function normalizeFont(font: unknown): string | undefined {
+  if (typeof font !== "string") return undefined;
+  const f = font.trim();
+  if (FONTS[f.toLowerCase()] !== undefined) return f.toLowerCase();
+  return fontIdOf(f) === undefined ? undefined : f;
+}
+
+const FONT_HELP = `fontFamily must be one of ${Object.keys(FONTS).join(", ")} or a font name from list_fonts (e.g. "Inter", "Caveat Bold")`;
 
 export type Roundness = "sharp" | "round";
 export type FillStyle = "solid" | "hachure" | "cross-hatch" | "zigzag";
@@ -223,10 +247,9 @@ export function normalizeStyle(raw: unknown): StyleSpec {
     out.roundness = r.roundness;
   }
   if (r.fontFamily !== undefined) {
-    if (typeof r.fontFamily !== "string" || FONTS[r.fontFamily.toLowerCase()] === undefined) {
-      throw new Error(`fontFamily must be one of ${Object.keys(FONTS).join(", ")}`);
-    }
-    out.fontFamily = r.fontFamily.toLowerCase();
+    const f = normalizeFont(r.fontFamily);
+    if (f === undefined) throw new Error(FONT_HELP);
+    out.fontFamily = f;
   }
   return out;
 }
@@ -254,7 +277,7 @@ export function stylePatch(style: StyleSpec, kind: "shape" | "text" | "line"): E
     if (style.roundness !== undefined) p.roundness = style.roundness === "round" ? { type: 3 } : null;
   }
   if (kind === "text") {
-    if (style.fontFamily !== undefined) p.fontFamily = FONTS[style.fontFamily];
+    if (style.fontFamily !== undefined) p.fontFamily = fontIdOf(style.fontFamily);
     if (style.fontSize !== undefined) p.fontSize = style.fontSize;
   }
   return p;
@@ -319,8 +342,8 @@ export function normalizeTheme(raw: unknown): Theme {
   const bg = requireColor(r.background, "background");
   const ink = requireColor(r.ink, "ink");
   if (bg === "transparent" || ink === "transparent") throw new Error("background and ink must be real colors");
-  const font = typeof r.fontFamily === "string" ? r.fontFamily.toLowerCase() : "nunito";
-  if (FONTS[font] === undefined) throw new Error(`fontFamily must be one of ${Object.keys(FONTS).join(", ")}`);
+  const font = r.fontFamily === undefined ? "nunito" : normalizeFont(r.fontFamily);
+  if (font === undefined) throw new Error(FONT_HELP);
   const roughness = r.roughness === undefined ? 0 : Number(r.roughness);
   const strokeWidth = r.strokeWidth === undefined ? 2 : Number(r.strokeWidth);
   if (!(roughness >= 0 && roughness <= 2)) throw new Error("roughness must be 0 to 2");

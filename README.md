@@ -40,6 +40,14 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 - Stencils is the only library: Excalidraw's own Library button is hidden.
 - Recolor icons (with undo), an eyedropper that copies the real color of any shape or icon, and icons that keep their real colors in dark mode.
 
+**Fonts** (Preferences → Fonts…)
+- 21 extra fonts on top of Excalidraw's own, in Excalidraw's font list (searchable, each shown in its own font, with a pen icon for fun fonts and "Aa" for professional ones). Each weight is its own entry ("Inter Bold"), so labels can be bold.
+  - **Fun** (hand-drawn, cartoon, whiteboard): Caveat, Kalam, Patrick Hand, Architects Daughter, Gochi Hand, Permanent Marker, Indie Flower, Comic Neue, Bangers, Luckiest Guy, Fredoka.
+  - **Professional**: Inter, Roboto, Open Sans, Lato, IBM Plex Sans, Montserrat, Merriweather, Source Serif. **Mono**: IBM Plex Mono, JetBrains Mono.
+- **Download more** from the Google Fonts catalog (free, open licences): search, pick weights, install, remove.
+- A drawing **carries the fonts it uses** inside its file (only the letters' subsets it needs), so it looks the same on another machine, in exports and on the command line. Fonts that came with a drawing can be installed for all drawings from the Fonts dialog.
+- The Clean drawing style writes new text in Inter; Sketch keeps Excalifont. Themes and style presets can name any of these fonts.
+
 **Colors and styles**
 - Colors tab with two palettes and an any-color picker. Colors you pick (picker or eyedropper) are remembered **in the drawing** (up to 12, shown as "Colors in this drawing") and saved in its file. Opacity: Excalidraw's own Opacity row, and presets and themes can carry an opacity. Theme and style presets (built in, and yours, saved globally) apply to the selection or the whole drawing.
 

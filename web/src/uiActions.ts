@@ -3,7 +3,7 @@
 import { CaptureUpdateAction, newElementWith } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { FONTS, type StylePreset, type Theme } from "../../shared/styles";
+import { fontIdOf, type StylePreset, type Theme } from "../../shared/styles";
 import { applyThemeToScene, styleElements, type StyleResult } from "./agent/styles";
 import { isIconNode, withGroupsAndLabels, type El } from "./agent/sceneOps";
 import { allThemes } from "./styleStore";
@@ -46,7 +46,7 @@ export function applyThemeTo(api: ExcalidrawImperativeAPI, theme: Theme): number
     ...(only ? {} : { viewBackgroundColor: theme.background }),
     currentItemRoughness: theme.roughness,
     currentItemRoundness: theme.roundness,
-    currentItemFontFamily: FONTS[theme.fontFamily],
+    currentItemFontFamily: fontIdOf(theme.fontFamily),
     currentItemStrokeWidth: theme.strokeWidth,
   } as Partial<AppState>);
   return r.count;

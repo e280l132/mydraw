@@ -28,11 +28,30 @@ async function waitFor(fn, what, timeout = 10000) {
   }
 }
 
+// A stand-in for the Fontsource API and CDN (font catalog downloads), so the smoke test runs offline.
+const http = await import("node:http");
+const fakeFontDir = path.join(root, "node_modules/@fontsource/bangers");
+const fakeRanges = JSON.parse(fs.readFileSync(path.join(fakeFontDir, "unicode.json"), "utf8"));
+const fakeFont = { id: "smoke-display", family: "Smoke Display", subsets: ["latin", "latin-ext"], weights: [400], styles: ["normal"], defSubset: "latin", category: "display", license: "OFL-1.1", type: "google" };
+const fontServer = http.createServer((req, res) => {
+  const send = (code, body, type = "application/json") => {
+    res.writeHead(code, { "Content-Type": type });
+    res.end(body);
+  };
+  if (req.url === "/v1/fonts") return send(200, JSON.stringify([fakeFont, { ...fakeFont, id: "smoke-icons", family: "Smoke Icons", category: "icons" }]));
+  if (req.url === "/v1/fonts/smoke-display") return send(200, JSON.stringify({ ...fakeFont, unicodeRange: fakeRanges }));
+  const m = /^\/fontsource\/fonts\/smoke-display@latest\/(latin(?:-ext)?)-400-normal\.woff2$/.exec(req.url);
+  if (m) return send(200, fs.readFileSync(path.join(fakeFontDir, "files", `bangers-${m[1]}-400-normal.woff2`)), "font/woff2");
+  send(404, "not found", "text/plain");
+});
+await new Promise((r) => fontServer.listen(0, "127.0.0.1", r));
+const fontOrigin = `http://127.0.0.1:${fontServer.address().port}`;
+
 async function launch() {
   const app = await electron.launch({
     executablePath: electronBinary(),
     args: [root],
-    env: { ...process.env, MYDRAW_TEST: "1", MYDRAW_USER_DATA: userData, MYDRAW_LIBRARY: libraryDir },
+    env: { ...process.env, MYDRAW_TEST: "1", MYDRAW_USER_DATA: userData, MYDRAW_LIBRARY: libraryDir, MYDRAW_FONT_API: fontOrigin, MYDRAW_FONT_CDN: fontOrigin },
   });
   const page = await app.firstWindow();
   await page.setViewportSize({ width: 1400, height: 860 });
@@ -1476,10 +1495,10 @@ await t((x) => x.command({ type: "help" }));
 await page.waitForSelector(".md-help h2");
 assert.match(await page.textContent(".md-help h2"), /features and shortcuts/, "help dialog title");
 const helpTitles = await page.$$eval(".md-help-section", (els) => els.map((e) => e.getAttribute("data-help")));
-for (const title of ["Files and tabs", "Export", "Stencils and icons", "Colors and styles", "Diagrams from text", "Properties, inventory and links", "Pages and presentation", "Checks and layout", "Appearance", "Command line and Claude Code"]) {
+for (const title of ["Files and tabs", "Export", "Stencils and icons", "Colors and styles", "Fonts", "Diagrams from text", "Properties, inventory and links", "Pages and presentation", "Checks and layout", "Appearance", "Command line and Claude Code"]) {
   assert.ok(helpTitles.includes(title), `help has the "${title}" section`);
 }
-assert.equal(helpTitles.length, 12, "help section count");
+assert.equal(helpTitles.length, 13, "help section count");
 assert.match(await page.textContent(".md-help"), /Preferences → Quick connect shortcuts/, "help names the real menu path");
 await page.keyboard.press("Escape");
 await waitFor(async () => (await page.locator(".md-help").count()) === 0, "Esc closes help");
@@ -2493,6 +2512,124 @@ assert.ok(near(fbPx, "#993f69", 8), `fallback: Excalidraw's own dark image corre
 await page.evaluate(() => (window.__mydrawNoGridHook = false));
 await page.evaluate(() => window.mydraw.updateSettings({ theme: "light" }));
 
+step("Fonts: fun + professional extra fonts in Excalidraw's picker, used by name, embedded in the file, carried to another machine");
+const fontInfo = await t((x) => x.fonts());
+assert.equal(fontInfo.status.ok, true, `font registry hooked (${fontInfo.status.error ?? ""})`);
+assert.ok(fontInfo.status.builtin >= 30, "built-in fonts registered");
+for (const cat of ["fun", "professional", "mono"]) assert.ok(fontInfo.list.some((f) => f.category === cat), `has ${cat} fonts`);
+const listed = await call("list_fonts");
+for (const name of ["Caveat", "Permanent Marker", "Inter Bold", "Merriweather", "JetBrains Mono", "Excalifont"]) {
+  assert.ok(listed.fonts.some((f) => f.name === name), `list_fonts has ${name}`);
+}
+await call("new_drawing", { title: "Fonts" });
+await call("add_elements", {
+  elements: [
+    { type: "text", id: "fz1", x: 300, y: 320, text: "Sketchy note", fontFamily: "Caveat", fontSize: 28 },
+    { type: "rectangle", id: "fz2", x: 300, y: 420, width: 220, height: 80, label: { text: "Bold box", fontFamily: "Inter Bold" } },
+  ],
+});
+await assert.rejects(call("add_elements", { elements: [{ type: "text", x: 0, y: 300, text: "x", fontFamily: "No Such Font" }] }), /unknown font/);
+const caveatId = await t((x) => x.fontId("Caveat"));
+const fontEls = await t((x) => x.api().getSceneElements().filter((e) => e.type === "text").map((e) => ({ text: e.text, fontFamily: e.fontFamily, width: e.width })));
+assert.equal(fontEls.find((e) => e.text === "Sketchy note").fontFamily, caveatId, "text uses Caveat");
+assert.equal(fontEls.find((e) => e.text === "Bold box").fontFamily, await t((x) => x.fontId("Inter Bold")), "label uses Inter Bold");
+await call("update_elements", { updates: [{ id: "fz1", fontFamily: "Permanent Marker" }] });
+assert.equal(
+  await t((x) => x.api().getSceneElements().find((e) => e.id === "fz1").fontFamily),
+  await t((x) => x.fontId("Permanent Marker")),
+  "update_elements takes a font name",
+);
+await call("update_elements", { updates: [{ id: "fz1", fontFamily: "Caveat" }] });
+await page.waitForFunction(() => document.fonts.check("16px Caveat", "abc") && document.fonts.check("16px Inter Bold", "abc"));
+// Excalidraw's own picker lists them, without quotes, with their category icon.
+await page.evaluate(() => {
+  const api = window.__mydrawTest.api();
+  api.updateScene({ appState: { selectedElementIds: { fz1: true } } });
+});
+const visibleTab = '.md-drawing:not([style*="display: none"])';
+await page.locator(`${visibleTab} [data-testid="font-family-show-fonts"]`).click();
+await page.locator(".dropdown-menu.fonts .dropdown-menu-item").first().waitFor();
+const pickerNames = await page.$$eval(".dropdown-menu.fonts .dropdown-menu-item", (els) => els.map((e) => e.textContent.trim()));
+for (const name of ["Caveat", "Bangers", "Inter", "Inter Bold", "Montserrat", "IBM Plex Mono", "Excalifont"]) assert.ok(pickerNames.includes(name), `picker lists ${name}`);
+assert.ok(!pickerNames.some((n) => n.includes('"')), "picker names have no quotes");
+await page.screenshot({ path: path.join(shots, "fonts-picker.png") });
+await page.keyboard.press("Escape");
+await page.evaluate(() => window.__mydrawTest.api().updateScene({ appState: { selectedElementIds: {} } }));
+// Saved files carry the fonts their text uses; the history id stays readable at the end.
+const fontsFile = path.join(work, "fonts.excalidraw");
+await call("save", { path: fontsFile });
+const fontsSaved = JSON.parse(fs.readFileSync(fontsFile, "utf8"));
+assert.deepEqual(Object.keys(fontsSaved).slice(-2), ["mydrawFonts", "mydraw"], "fonts block sits just before the meta block");
+const savedFaces = fontsSaved.mydrawFonts.faces.map((f) => f.family).sort();
+assert.deepEqual(savedFaces, ["Caveat", "Inter Bold"], "only the fonts in use are embedded");
+assert.ok(fontsSaved.mydrawFonts.faces.every((f) => f.files.length >= 1 && f.files[0].data.length > 1000), "font files embedded");
+// SVG export inlines them.
+const fontsSvg = path.join(work, "fonts.svg");
+await call("export", { path: fontsSvg });
+const fontsSvgText = fs.readFileSync(fontsSvg, "utf8");
+assert.ok(/font-family: Caveat;/.test(fontsSvgText) && /font-family: Inter Bold;/.test(fontsSvgText), "SVG export inlines the fonts");
+// A drawing from another machine whose font this app doesn't have: it comes from the file. Its id
+// clashes with the built-in Caveat here, so it is moved to a free id.
+const foreign = structuredClone(fontsSaved);
+const foreignFace = foreign.mydrawFonts.faces.find((f) => f.family === "Caveat");
+foreignFace.family = "Caveat Elsewhere";
+foreign.mydraw.id = "f0f0f0f0-0000-4000-8000-00000000f0f0";
+const foreignFile = path.join(work, "foreign-font.excalidraw");
+fs.writeFileSync(foreignFile, JSON.stringify(foreign));
+fs.copyFileSync(foreignFile, path.join(work, "foreign-font-frozen.excalidraw"));
+await call("open_drawing", { path: foreignFile });
+const foreignId = await t((x) => x.fontId("Caveat Elsewhere"));
+assert.ok(foreignId && foreignId !== caveatId, "embedded font registered under a free id");
+assert.equal(
+  await t((x) => x.api().getSceneElements().find((e) => e.type === "text" && e.text === "Sketchy note").fontFamily),
+  foreignId,
+  "its text was moved to that id",
+);
+await page.waitForFunction(() => document.fonts.check("16px Caveat Elsewhere", "abc"), null, { timeout: 10000 });
+assert.ok((await t((x) => x.fonts())).list.some((f) => f.family === "Caveat Elsewhere" && f.source === "embedded"));
+await call("export", { path: fontsSvg });
+assert.ok(/font-family: Caveat Elsewhere;/.test(fs.readFileSync(fontsSvg, "utf8")), "the file's own font is used in exports");
+
+step("Fonts dialog: Fun / Professional / Mono previews, download from the catalog, remove, keep a drawing's font");
+await t((x) => x.command({ type: "fonts" }));
+await page.waitForSelector(".md-fonts");
+// The open drawing carries "Caveat Elsewhere": the dialog starts on its tab and can install it.
+assert.equal(await page.getAttribute('.md-fonts-tab[aria-selected="true"]', "data-tab"), "drawing");
+await page.click('.md-font-row[data-typeface="Caveat"][data-source="embedded"] .md-font-keep');
+const fontStore = path.join(userData, "fonts", "fonts.json");
+await waitFor(() => fs.existsSync(fontStore) && JSON.parse(fs.readFileSync(fontStore, "utf8")).faces.some((f) => f.family === "Caveat Elsewhere"), "embedded font installed");
+await page.waitForSelector('.md-fonts-tab[data-tab="drawing"]', { state: "detached" });
+await page.click('.md-fonts-tab[data-tab="fun"]');
+const funRows = await page.$$eval(".md-font-row", (els) => els.map((e) => e.dataset.typeface));
+for (const name of ["Caveat", "Kalam", "Permanent Marker", "Bangers", "Comic Neue"]) assert.ok(funRows.includes(name), `Fun tab lists ${name}`);
+await page.click('.md-fonts-tab[data-tab="professional"]');
+const proRows = await page.$$eval(".md-font-row", (els) => els.map((e) => e.dataset.typeface));
+for (const name of ["Inter", "Roboto", "Merriweather", "Montserrat"]) assert.ok(proRows.includes(name), `Professional tab lists ${name}`);
+assert.ok(!proRows.includes("Caveat"), "fun fonts are not under Professional");
+await page.screenshot({ path: path.join(shots, "fonts-dialog.png") });
+// Catalog: icons are filtered out; install downloads into <userData>/fonts and registers at once.
+await page.click('.md-fonts-tab[data-tab="catalog"]');
+await page.waitForSelector('.md-font-row[data-catalog="smoke-display"]');
+assert.equal(await page.$('.md-font-row[data-catalog="smoke-icons"]'), null, "icon fonts are not offered");
+await page.fill(".md-fonts-search", "smoke");
+await page.click('.md-font-row[data-catalog="smoke-display"] .md-font-install');
+await waitFor(async () => (await t((x) => x.fontId("Smoke Display"))) !== null, "catalog font registered");
+const store = JSON.parse(fs.readFileSync(fontStore, "utf8"));
+const smokeFace = store.faces.find((f) => f.family === "Smoke Display");
+assert.equal(smokeFace.category, "fun", "display fonts count as fun");
+assert.equal(smokeFace.files.length, 2, "latin + latin-ext downloaded");
+assert.ok((await call("list_fonts")).fonts.some((f) => f.name === "Smoke Display" && f.category === "fun"), "list_fonts has the download");
+await call("add_elements", { elements: [{ type: "text", id: "fz9", x: 300, y: 600, text: "Downloaded", fontFamily: "Smoke Display" }] });
+await page.waitForFunction(() => document.fonts.check("16px Smoke Display", "abc"), null, { timeout: 10000 });
+// Remove (two steps): store entry and files go; drawings keep their own copy.
+await page.click('.md-fonts-tab[data-tab="fun"]');
+await page.click('.md-font-row[data-typeface="Smoke Display"][data-source="catalog"] .md-font-remove');
+await page.click('.md-font-row[data-typeface="Smoke Display"] .md-pack-confirm .danger');
+await waitFor(() => !JSON.parse(fs.readFileSync(fontStore, "utf8")).faces.some((f) => f.family === "Smoke Display"), "font removed");
+for (const f of smokeFace.files) assert.ok(!fs.existsSync(path.join(userData, "fonts", f.url.split("/").pop())), "font file deleted");
+await page.keyboard.press("Escape");
+await page.waitForSelector(".md-fonts", { state: "detached" });
+
 await client.close();
 
 app.process().kill("SIGKILL");
@@ -2552,5 +2689,11 @@ r = cli("convert", drawioFile, "--to", "drawio");
 assert.equal(r.code, 1);
 assert.ok(/refusing to overwrite/.test(r.err), "never overwrites the input");
 
+const fontPdf = path.join(work, "foreign-font.pdf");
+r = cli("export", path.join(work, "foreign-font-frozen.excalidraw"), "-o", fontPdf);
+assert.equal(r.code, 0, r.err);
+assert.ok(fs.readFileSync(fontPdf).toString("latin1").includes("Caveat-Regular"), "CLI PDF embeds the drawing's own font");
+
 assert.deepEqual(errors, [], "no uncaught page errors");
+fontServer.close();
 console.log(`\nAll smoke checks passed. Screenshots in ${shots}`);

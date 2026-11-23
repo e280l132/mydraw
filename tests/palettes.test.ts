@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { shadesOf, PALETTES, SHADES, mainSwatches, paletteById, requireColor, resolveColor } from "../shared/palettes";
-import { BUILTIN_PRESETS, BUILTIN_THEMES as THEMES, INK_COLORS, normalizeLibrary, normalizeTheme, slugId, normalizeStyle, stylePatch, themeById } from "../shared/styles";
+import { BUILTIN_PRESETS, BUILTIN_THEMES as THEMES, INK_COLORS, normalizeLibrary, normalizeTheme, slugId, normalizeStyle, stylePatch, themeById, fontIdOf } from "../shared/styles";
+import { fontIdFor } from "../shared/fonts";
 
 describe("palettes", () => {
   it("builds a 22 x 10 ramp of valid hex colors", () => {
@@ -135,7 +136,16 @@ describe("themes and presets", () => {
     expect(() => normalizeStyle({ strokeColor: "bluish" })).toThrow();
     expect(() => normalizeStyle({ strokeStyle: "wavy" })).toThrow(/strokeStyle/);
     expect(() => normalizeStyle({ opacity: 150 })).toThrow(/opacity/);
-    expect(() => normalizeStyle({ fontFamily: "Comic Sans" })).toThrow(/fontFamily/);
+    expect(() => normalizeStyle({ fontFamily: "Comic; Sans" })).toThrow(/fontFamily/);
+    expect(() => normalizeStyle({ fontFamily: "3D Font" })).toThrow(/fontFamily/);
     expect(() => normalizeStyle("x")).toThrow();
+  });
+
+  it("styles take Excalidraw font slugs or extra font names", () => {
+    expect(normalizeStyle({ fontFamily: "Cascadia" }).fontFamily).toBe("cascadia");
+    expect(normalizeStyle({ fontFamily: "Caveat Bold" }).fontFamily).toBe("Caveat Bold");
+    expect(fontIdOf("cascadia")).toBe(3);
+    expect(fontIdOf("Inter Bold")).toBe(fontIdFor("Inter Bold"));
+    expect(stylePatch({ fontFamily: "Inter" }, "text").fontFamily).toBe(fontIdFor("Inter"));
   });
 });

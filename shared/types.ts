@@ -1,4 +1,5 @@
 import type { AgentCommand, AgentReply } from "./agent";
+import type { EmbeddedFonts, FontCategory, FontEntry } from "./fonts";
 import type { LibraryIndex } from "./library";
 import type { GridSettings } from "./grid";
 import type { QuickConnectSettings } from "./quickBindings";
@@ -50,6 +51,17 @@ export interface RecoveryEntry {
   title: string;
   content: string;
   savedAt: number;
+}
+
+/** A font of the download catalog (Google Fonts via Fontsource; see app/src/fonts.ts). */
+export interface CatalogFont {
+  id: string;
+  family: string;
+  category: FontCategory;
+  /** The catalog's own category: sans-serif, serif, display, handwriting, monospace. */
+  style: string;
+  weights: number[];
+  license: string;
 }
 
 export interface PackStatus {
@@ -122,6 +134,7 @@ export type MenuCommand =
   | { type: "help" }
   | { type: "importText" }
   | { type: "quickConnectSettings" }
+  | { type: "fonts" }
   | { type: "toggleGrid" }
   | { type: "gridSettings" }
   | { type: "snapToGrid" }
@@ -205,6 +218,17 @@ export interface MydrawBridge {
   pathForFile(file: File): string;
   onLibraryChanged(cb: (index: LibraryIndex) => void): () => void;
   onPackProgress(cb: (message: string) => void): () => void;
+
+  // ----- fonts (app/src/fonts.ts) -----
+  /** Fonts downloaded from the catalog or installed from a drawing. */
+  fontsInstalled(): Promise<FontEntry[]>;
+  fontCatalog(refresh?: boolean): Promise<CatalogFont[]>;
+  /** Download weights (normal style) of a catalog font; returns the new entries. */
+  fontInstall(id: string, weights: number[]): Promise<FontEntry[]>;
+  /** Install fonts a drawing carries (EmbeddedFonts), so other drawings can use them. */
+  fontInstallEmbedded(fonts: EmbeddedFonts): Promise<FontEntry[]>;
+  /** Remove every installed weight of a typeface; returns the removed family names. */
+  fontRemove(typeface: string): Promise<string[]>;
 
   // ----- agent control (MCP) -----
   onAgentCommand(cb: (cmd: AgentCommand) => void): () => void;

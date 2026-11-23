@@ -281,6 +281,7 @@ export function AppMenu({ settings, panels, onCommand, onSettings }: Props) {
             Autosave saved files
           </CheckItem>
           <MainMenu.Item onSelect={run({ type: "quickConnectSettings" })}>Quick connect shortcuts…</MainMenu.Item>
+          <MainMenu.Item onSelect={run({ type: "fonts" })}>Fonts…</MainMenu.Item>
         </Section>
       )}
 

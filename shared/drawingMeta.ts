@@ -4,6 +4,8 @@
 //   palette  the custom colors picked in this drawing, so another person sees the same swatches
 // Pure helpers (no Electron, no DOM) used by the renderer, main and tests.
 
+import { FONTS_KEY, type EmbeddedFonts } from "./fonts";
+
 export const META_KEY = "mydraw";
 export const PALETTE_MAX = 12;
 /** What a history id may look like (it becomes a folder name, so keep it strict). */
@@ -71,13 +73,19 @@ export function historyIdFromContent(content: string): string | null {
   return m && HISTORY_ID.test(m[1]) ? m[1] : null;
 }
 
-/** `content` (Excalidraw's JSON) with the meta block as its last key. Replaces an existing block. */
-export function withMeta(content: string, meta: DrawingMeta): string {
+/**
+ * `content` (Excalidraw's JSON) with the meta block as its last key. Replaces an existing block.
+ * `fonts` (the drawing's embedded fonts, shared/fonts.ts) goes in its own "mydrawFonts" key just
+ * BEFORE the meta block: it can be large, and `historyIdFromContent` only reads the last 4 KB.
+ * `content` must not already have a "mydrawFonts" key (serializeScene passes Excalidraw's fresh JSON).
+ */
+export function withMeta(content: string, meta: DrawingMeta, fonts?: EmbeddedFonts | null): string {
   const block = JSON.stringify({ version: 1, id: meta.id, palette: meta.palette });
   const end = content.lastIndexOf("}");
   if (end < 0) return content;
   const head = content.slice(0, end).replace(/\s+$/, "");
   const existing = /,\s*"mydraw"\s*:\s*\{[^}]*\}$/.exec(head);
   const base = existing ? head.slice(0, existing.index) : head;
-  return `${base},\n  "${META_KEY}": ${block}\n}\n`;
+  const fontsBlock = fonts?.faces.length ? `,\n  "${FONTS_KEY}": ${JSON.stringify(fonts)}` : "";
+  return `${base}${fontsBlock},\n  "${META_KEY}": ${block}\n}\n`;
 }

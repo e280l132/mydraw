@@ -73,6 +73,7 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
   add("Edit", "Remove links from selection", c.clearLinks, { keywords: "hyperlink unlink" });
   cmd("View", "Start presentation (frames as slides)", { type: "present" }, { hint: sc("present"), keywords: "slides fullscreen present show pages" });
   cmd("File", "Version history…", { type: "versionHistory" }, { hint: sc("versionHistory"), keywords: "snapshots restore previous older undo save" });
+  cmd("Edit", "Fonts…", { type: "fonts" }, { keywords: "font typeface handwriting hand drawn cartoon comic professional serif sans mono download google install" }),
   cmd("Edit", "Quick connect shortcuts…", { type: "quickConnectSettings" }, { keywords: "keyboard modifiers option command shift click handle plus arrow link rebind settings preferences" });
   cmd("File", "Import diagram from text (CSV / YAML / Mermaid)…", { type: "importText" }, { hint: sc("importText"), keywords: "paste hosts list diagram as code build generate" });
   cmd("Edit", "Inventory table…", { type: "inventory" }, { hint: sc("inventory"), keywords: "nodes hosts ip hostname properties grid spreadsheet" });

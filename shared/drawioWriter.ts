@@ -43,6 +43,8 @@ export interface DrawioPage {
 export interface DrawioOptions {
   /** Canvas background color (written as the page background, also used behind edge labels). */
   background?: string;
+  /** Names of fonts outside Excalidraw's own set (mydraw's extra fonts), by font id. */
+  fontNames?: Record<number, string>;
 }
 
 export interface DrawioResult {
@@ -159,11 +161,11 @@ function common(el: DrawioEl): Record<string, string | number | undefined> {
   };
 }
 
-function font(t: DrawioEl | undefined): Record<string, string | number | undefined> {
+function font(t: DrawioEl | undefined, names: Record<number, string> = {}): Record<string, string | number | undefined> {
   if (!t) return {};
   return {
     fontSize: t.fontSize ? r2(t.fontSize) : undefined,
-    fontFamily: t.fontFamily ? FONTS[t.fontFamily] : undefined,
+    fontFamily: t.fontFamily ? (FONTS[t.fontFamily] ?? names[t.fontFamily]) : undefined,
     fontColor: drawioColor(t.strokeColor),
   };
 }
@@ -217,6 +219,7 @@ function props(el: DrawioEl): Record<string, string> {
 }
 
 function pageXml(page: DrawioPage, files: Record<string, DrawioFile>, opts: DrawioOptions, warnings: Set<string>, index: number): string {
+  const fontOf = (t: DrawioEl | undefined) => font(t, opts.fontNames);
   const live = page.elements.filter((e) => !e.isDeleted);
   const byId = new Map(live.map((e) => [e.id, e]));
   const consumed = new Set<string>();
@@ -346,7 +349,7 @@ function pageXml(page: DrawioPage, files: Record<string, DrawioFile>, opts: Draw
         spacingLeft: 10,
         spacingTop: 2,
         fontStyle: 1,
-        ...font(title),
+        ...fontOf(title),
         ...common(el),
         mydrawZone: 1,
       }),
@@ -384,11 +387,11 @@ function pageXml(page: DrawioPage, files: Record<string, DrawioFile>, opts: Draw
               imageAspect: 0,
               aspect: "fixed",
               image: imageUri,
-              ...font(caption),
+              ...fontOf(caption),
               ...common(img!),
               mydrawIcon: 1,
             })
-          : styleString({ rounded: 0, whiteSpace: "wrap", html: 1, ...font(caption) }),
+          : styleString({ rounded: 0, whiteSpace: "wrap", html: 1, ...fontOf(caption) }),
       });
       continue;
     }
@@ -420,7 +423,7 @@ function pageXml(page: DrawioPage, files: Record<string, DrawioFile>, opts: Draw
           strokeColor: "none",
           fillColor: "none",
           spacing: 0,
-          ...font(el),
+          ...fontOf(el),
           ...common(el),
         }),
       });
@@ -449,7 +452,7 @@ function pageXml(page: DrawioPage, files: Record<string, DrawioFile>, opts: Draw
           ...sketch(el),
           align: label?.textAlign,
           verticalAlign: label?.verticalAlign,
-          ...font(label),
+          ...fontOf(label),
           ...common(el),
         }),
       });
@@ -504,7 +507,7 @@ function pageXml(page: DrawioPage, files: Record<string, DrawioFile>, opts: Draw
         startArrow: start.arrow,
         startFill: start.fill,
         labelBackgroundColor: drawioColor(opts.background) ?? "#ffffff",
-        ...font(label),
+        ...fontOf(label),
         ...common(el),
       }),
     });

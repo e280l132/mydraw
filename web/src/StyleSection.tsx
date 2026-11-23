@@ -1,12 +1,13 @@
 // Colors / Presets / Themes section rendered inside Excalidraw's properties panel (via portal, like
 // the icon color section). Acts on the active drawing's API; each click is one undo step. Presets and
 // themes come from the global style library (styleStore), so every drawing sees the same ones.
+import { customFonts, fontById } from "./fontRegistry";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { ColorPicker, EyedropperIcon } from "./library/IconColorSection";
 import { paletteById, resolveColor, shadesOf } from "../../shared/palettes";
-import { FONTS, type StylePreset, type StyleSpec, type Theme } from "../../shared/styles";
+import { FONTS, fontIdOf, type StylePreset, type StyleSpec, type Theme } from "../../shared/styles";
 import type { IconSelection } from "./library/iconColor";
 import { applyThemeToScene, styleElements, type StyleResult } from "./agent/styles";
 import { isIconNode, withGroupsAndLabels } from "./agent/sceneOps";
@@ -296,9 +297,18 @@ function currentLook(st: AppState, fallbackFont: string): Partial<ThemeDraft> {
     roughness: String(st.currentItemRoughness),
     roundness: st.currentItemRoundness === "round" ? "round" : "sharp",
     strokeWidth: String(st.currentItemStrokeWidth),
-    fontFamily: Object.entries(FONTS).find(([, v]) => v === st.currentItemFontFamily)?.[0] ?? fallbackFont,
+    fontFamily:
+      Object.entries(FONTS).find(([, v]) => v === st.currentItemFontFamily)?.[0] ??
+      fontById(st.currentItemFontFamily)?.family ??
+      fallbackFont,
   };
 }
+
+const FONT_GROUPS = [
+  ["fun", "Fun"],
+  ["professional", "Professional"],
+  ["mono", "Mono"],
+] as const;
 
 function ThemeEditor({
   draft,
@@ -334,10 +344,23 @@ function ThemeEditor({
       <label className="md-field">
         <span>Font</span>
         <select value={draft.fontFamily} onChange={(e) => set("fontFamily")(e.target.value)}>
-          {Object.keys(FONTS).map((f) => (
-            <option key={f} value={f}>
-              {f}
-            </option>
+          <optgroup label="Excalidraw">
+            {Object.keys(FONTS).map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
+          </optgroup>
+          {FONT_GROUPS.map(([cat, title]) => (
+            <optgroup key={cat} label={title}>
+              {customFonts()
+                .filter((f) => f.category === cat && f.source !== "embedded")
+                .map((f) => (
+                  <option key={f.id} value={f.family}>
+                    {f.family}
+                  </option>
+                ))}
+            </optgroup>
           ))}
         </select>
       </label>
@@ -508,7 +531,7 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
         ...(only ? {} : { viewBackgroundColor: t.background }),
         currentItemRoughness: t.roughness,
         currentItemRoundness: t.roundness,
-        currentItemFontFamily: FONTS[t.fontFamily],
+        currentItemFontFamily: fontIdOf(t.fontFamily),
         currentItemStrokeWidth: t.strokeWidth,
       } as Partial<AppState>);
     });

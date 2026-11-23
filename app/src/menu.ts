@@ -35,6 +35,7 @@ export function buildMenu(settings: Settings, h: MenuHandlers): void {
               { role: "about" as const },
               { type: "separator" as const },
               { label: "Quick Connect Shortcuts…", click: cmd({ type: "quickConnectSettings" }) },
+              { label: "Fonts…", click: cmd({ type: "fonts" }) },
               { type: "separator" as const },
               { role: "services" as const },
               { type: "separator" as const },
@@ -158,6 +159,7 @@ export function buildMenu(settings: Settings, h: MenuHandlers): void {
           : [
               { type: "separator" as const },
               { label: "Quick Connect Shortcuts…", click: cmd({ type: "quickConnectSettings" }) },
+              { label: "Fonts…", click: cmd({ type: "fonts" }) },
             ]),
       ],
     },

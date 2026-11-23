@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { CaptureUpdateAction, exportToBlob } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { describeSnapshotTime, type SnapshotInfo } from "../../shared/snapshots";
-import { parseDrawing, serializeScene } from "./scene";
+import { parseDrawing, prepareSerialize, serializeScene } from "./scene";
 
 interface Props {
   api: ExcalidrawImperativeAPI;
@@ -76,6 +76,7 @@ export function VersionHistoryDialog({ api, filePath, title, onClose, onDone }: 
     setBusy(true);
     try {
       const loaded = await parseDrawing(await window.mydraw.readSnapshot(filePath, selected));
+      await prepareSerialize(api);
       await window.mydraw.addSnapshot(filePath, serializeScene(api)); // keep what is open now
       api.updateScene({
         elements: loaded.elements,

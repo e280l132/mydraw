@@ -39,6 +39,7 @@ import { InventoryDialog } from "./InventoryDialog";
 import { HelpDialog } from "./HelpDialog";
 import { ImportDialog } from "./ImportDialog";
 import { QuickConnectSettingsDialog } from "./QuickConnectSettings";
+import { FontsDialog } from "./FontsDialog";
 import { DEFAULT_QUICK_CONNECT } from "../../shared/quickBindings";
 import { VersionHistoryDialog } from "./VersionHistoryDialog";
 import { PresentationMode } from "./PresentationMode";
@@ -65,7 +66,8 @@ import {
   type StencilContent,
 } from "./library/stencilContent";
 import { DEFAULT_EXPORT_OPTIONS, renderClipboard, renderExport, type ExportFormat, type ExportOptions } from "./exportImage";
-import { apiSceneHash, parseDrawing, sceneHash, serializeScene, type LoadedScene } from "./scene";
+import { customFonts, fontIdByName, fontStatus, usedFontFamilies } from "./fontRegistry";
+import { apiSceneHash, parseDrawing, prepareSerialize, sceneHash, serializeScene, type LoadedScene } from "./scene";
 import { TabBar, type TabInfo } from "./TabBar";
 import { createAgentExecutor } from "./agent/executor";
 import { drawioToScene } from "./drawioImport";
@@ -235,6 +237,7 @@ export function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [fontsOpen, setFontsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [presenting, setPresenting] = useState(false);
   useEffect(() => {
@@ -373,6 +376,7 @@ export function App() {
 
       // A copy made by Save As gets its own version history.
       if (saveAs && tab.filePath) forkHistory(api);
+      await prepareSerialize(api); // font files the drawing embeds
       const content = serializeScene(api);
       const hash = apiSceneHash(api);
       let filePath = tab.filePath;
@@ -416,13 +420,15 @@ export function App() {
     const tab = getTab(id);
     const api = apis.current.get(id);
     if (!tab || !api || !tab.dirty) return;
-    void bridge.writeRecovery({
-      tabId: id,
-      filePath: tab.filePath,
-      title: tab.title,
-      content: serializeScene(api),
-      savedAt: Date.now(),
-    });
+    void prepareSerialize(api).then(() =>
+      bridge.writeRecovery({
+        tabId: id,
+        filePath: tab.filePath,
+        title: tab.title,
+        content: serializeScene(api),
+        savedAt: Date.now(),
+      }),
+    );
   }, []);
 
   const scheduleBackground = useCallback(
@@ -1119,6 +1125,9 @@ export function App() {
         case "quickConnectSettings":
           setShortcutsOpen(true);
           return;
+        case "fonts":
+          setFontsOpen(true);
+          return;
         case "importText":
           if (apis.current.get(activeRef.current)) setImportOpen(true);
           return;
@@ -1431,6 +1440,12 @@ export function App() {
       canvasStatus: () => canvasStatusByTab.get(activeRef.current)?.() ?? null,
       /** Counters of the exact-colour image patches (web/src/darkImages.ts). */
       darkImageStats: () => darkImageStats(),
+      /** Extra fonts (web/src/fontRegistry.tsx): status and the registered list. */
+      fonts: () => ({
+        status: fontStatus(),
+        list: customFonts().map(({ id, family, category, source }) => ({ id, family, category, source })),
+      }),
+      fontId: (name: string) => fontIdByName(name) ?? null,
       elementCount: () => api()?.getSceneElements().length ?? -1,
       currentItemRoughness: () => api()?.getAppState().currentItemRoughness,
       addSample: (label = "Router") => {
@@ -1663,7 +1678,7 @@ export function App() {
           getApi={getActiveApi}
           library={libraryIndex}
           quick={settings?.quickConnect ?? DEFAULT_QUICK_CONNECT}
-          blocked={shortcutsOpen || helpOpen || inventoryOpen || importOpen || historyOpen || exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
+          blocked={shortcutsOpen || fontsOpen || helpOpen || inventoryOpen || importOpen || historyOpen || exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
           onToast={showToast}
         />
       )}
@@ -1672,12 +1687,19 @@ export function App() {
           key={`tip-${activeId}`}
           tabId={activeId}
           getApi={getActiveApi}
-          blocked={shortcutsOpen || helpOpen || inventoryOpen || importOpen || historyOpen || exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
+          blocked={shortcutsOpen || fontsOpen || helpOpen || inventoryOpen || importOpen || historyOpen || exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
         />
       )}
       {presenting && activeApi && <PresentationMode key={activeId} api={activeApi} darkMode={theme === "dark"} onClose={() => setPresenting(false)} />}
       {historyOpen && activeApi && active?.filePath && (
         <VersionHistoryDialog key={activeId} api={activeApi} filePath={active.filePath} title={active.title} onClose={() => setHistoryOpen(false)} onDone={showToast} />
+      )}
+      {fontsOpen && (
+        <FontsDialog
+          drawingFamilies={activeApi ? usedFontFamilies(activeApi.getSceneElements()) : []}
+          onClose={() => setFontsOpen(false)}
+          onDone={showToast}
+        />
       )}
       {shortcutsOpen && (
         <QuickConnectSettingsDialog

@@ -1,6 +1,7 @@
 // Element-level helpers for agent commands: compact descriptions, building elements from skeletons,
 // binding arrows, relabeling and rerouting. Functions here never call updateScene; the executor
 // collects their results and applies each command as one scene update (= one undo step).
+import { fontIdByName } from "../fontRegistry";
 import { convertToExcalidrawElements, getCommonBounds, newElementWith } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState } from "@excalidraw/excalidraw/types";
@@ -236,8 +237,20 @@ export function styleDefaults(st: AppState, type: string): Loose {
   };
 }
 
+/** A font given by id or by name ("Caveat", "Inter Bold"; see list_fonts) -> Excalidraw's font id. */
+export function resolveFontFamily(v: unknown): number {
+  if (typeof v === "number" && Number.isInteger(v) && v > 0) return v;
+  if (typeof v === "string" && v.trim()) {
+    const id = fontIdByName(v);
+    if (id === undefined) throw new Error(`unknown font "${v}" (list_fonts shows the font names)`);
+    return id;
+  }
+  throw new Error("fontFamily must be a font name (list_fonts) or a font id");
+}
+
 function withDefaults(sk: Loose, st: AppState): Loose {
   const out: Loose = { ...styleDefaults(st, String(sk.type)), ...sk };
+  if (sk.fontFamily !== undefined) out.fontFamily = resolveFontFamily(sk.fontFamily);
   if (typeof out.link === "string" && out.link) {
     const bad = linkProblem(out.link);
     if (bad) throw new Error(`${sk.type} "${sk.id ?? ""}": ${bad}`);
@@ -247,6 +260,8 @@ function withDefaults(sk: Loose, st: AppState): Loose {
   if (typeof label === "string") out.label = { text: label };
   if (out.label && typeof out.label === "object") {
     out.label = { fontFamily: st.currentItemFontFamily, fontSize: st.currentItemFontSize, ...(out.label as Loose) };
+    const lf = (out.label as Loose).fontFamily;
+    if (lf !== undefined) (out.label as Loose).fontFamily = resolveFontFamily(lf);
     const lc = (out.label as Loose).strokeColor;
     if (typeof lc === "string") (out.label as Loose).strokeColor = requireColor(lc, "label color");
   }
@@ -818,7 +833,12 @@ export function applyUpdates(updates: unknown[], scene: readonly El[], st: AppSt
     for (const [k, v] of Object.entries(u)) {
       if (k === "id" || k === "label" || k === "dx" || k === "dy" || k === "data" || k === "routing") continue;
       if (!UPDATABLE.has(k)) throw new Error(`"${k}" can't be updated here (use raw_update for other fields)`);
-      patch[k] = (k === "strokeColor" || k === "backgroundColor") && typeof v === "string" ? requireColor(v, k) : v;
+      patch[k] =
+        (k === "strokeColor" || k === "backgroundColor") && typeof v === "string"
+          ? requireColor(v, k)
+          : k === "fontFamily"
+            ? resolveFontFamily(v)
+            : v;
     }
     if ("link" in patch) {
       if (patch.link === "" || patch.link === undefined) patch.link = null;

@@ -1,4 +1,5 @@
 import { MIME_TYPES, exportToBlob, exportToCanvas, exportToSvg, serializeLibraryAsJSON } from "@excalidraw/excalidraw";
+import { customFonts } from "./fontRegistry";
 import type { ExcalidrawElement, ExcalidrawFrameLikeElement, NonDeleted } from "@excalidraw/excalidraw/element/types";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { isPagedFormat } from "../../shared/agent";
@@ -287,7 +288,11 @@ async function renderPaged(api: ExcalidrawImperativeAPI, opts: ExportOptions, pa
     const { xml, warnings } = toDrawio(
       pages.map((p) => ({ name: p.name, elements: p.elements as unknown as DrawioEl[] })),
       files as unknown as Record<string, { dataURL: string }>,
-      { background: api.getAppState().viewBackgroundColor },
+      {
+        background: api.getAppState().viewBackgroundColor,
+        // draw.io gets the typeface ("Inter" for "Inter Bold"): it looks fonts up by their real name.
+        fontNames: Object.fromEntries(customFonts().map((f) => [f.id, f.typeface])),
+      },
     );
     return { data: xml, extension, mime: MIME.drawio, pages: pages.length, warnings };
   }

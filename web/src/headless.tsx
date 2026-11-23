@@ -10,7 +10,7 @@ import { drawingStyleAppState } from "./drawingStyle";
 import { drawioToScene } from "./drawioImport";
 import { DEFAULT_EXPORT_OPTIONS, EXPORT_FORMATS, findFrame, renderExport, renderFrameExports, type ExportFormat, type ExportOptions } from "./exportImage";
 import { setMeta } from "./drawingMeta";
-import { parseDrawing, serializeScene } from "./scene";
+import { parseDrawing, prepareSerialize, serializeScene } from "./scene";
 
 export interface HeadlessJob {
   inputKind: "excalidraw" | "drawio";
@@ -92,7 +92,10 @@ async function run(api: ExcalidrawImperativeAPI, job: HeadlessJob): Promise<Head
   await settled(() => api.getAppState().viewBackgroundColor === wantBg && api.getSceneElements().length > 0);
   if (!api.getSceneElements().length) throw new Error("the drawing is empty");
 
-  if (job.format === "excalidraw") return { files: [out(null, "excalidraw", serializeScene(api))], warnings };
+  if (job.format === "excalidraw") {
+    await prepareSerialize(api);
+    return { files: [out(null, "excalidraw", serializeScene(api))], warnings };
+  }
   if (!EXPORT_FORMATS.includes(job.format as ExportFormat)) throw new Error(`unknown format "${job.format}"`);
   const opts: ExportOptions = {
     ...DEFAULT_EXPORT_OPTIONS,

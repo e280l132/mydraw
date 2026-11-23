@@ -68,6 +68,26 @@ For dark mode: place a saturated logo (e.g. Dashboard Icons › Cloud › Broadc
 filled shape, switch to dark: the logo must keep its exact colour, the shape and background must look
 as in Excalidraw (background `#121212`/`#111111`), and switching back to light must restore everything.
 
+## Extra fonts: Excalidraw's font registry (high risk: not public API)
+
+Code: `web/src/excalidrawFonts.ts` (assumptions in its header), `web/src/fontRegistry.tsx`,
+`vite.config.ts` (`EXCALIDRAW_FONT_CHUNK`, `resolve.alias`, `optimizeDeps.include`). mydraw adds
+fonts (built-in set, catalog downloads, fonts carried inside drawings) by registering them in
+Excalidraw's own `Fonts` registry, so its font picker, canvas, text editor and SVG/PDF exports use them.
+If the registry can't be found, extra fonts switch off with a `console.warn`: text that uses them
+renders in a fallback font, and saved files keep the fonts they carry.
+
+| Assumption | Where in Excalidraw | If it breaks |
+|---|---|---|
+| `Fonts` (class) lives in the chunk named in `vite.config.ts` `EXCALIDRAW_FONT_CHUNK` (`dist/dev/chunk-4FTI6OG3.js`, `dist/prod/chunk-K2UTITRG.js` in 0.18.1). **The names change with every release**: grep the new `dist/*/chunk-*.js` for `Lilita One` / `loadElementsFonts` and update both paths | `fonts/Fonts.ts` | build error (missing file) or fonts off **(smoke)** |
+| That chunk also exports the public `FONT_FAMILY` object (same module instance check) and `Fonts` with static `registered` (Map id -> {metadata, fontFaces}), `register(family, metadata, ...{uri, descriptors})`, `loadElementsFonts` | `fonts/Fonts.ts`, `constants.ts` | fonts off **(smoke)** |
+| `FONT_FAMILY` (name -> id) is a plain mutable object; `getFontFamilyString` looks ids up in it and writes the name **unquoted** into the CSS font string (hence `cssSafeFamily`) | `constants.ts`, `utils.ts` | text drawn in a fallback font **(smoke)** |
+| `restoreElement` keeps unknown numeric `fontFamily` values | `data/restore.ts` | opened drawings lose their fonts **(smoke)** |
+| `FontPickerList` lists `Fonts.registered` (skipping `serverSide`/`fallback` metadata) each time it opens, with `metadata.icon` and the text `fontFaces[0].fontFace.family` (mydraw strips Chromium's quotes with an own `family` getter: `unquotePickerNames`); picker list class `.dropdown-menu.fonts`, trigger `[data-testid="font-family-show-fonts"]` | `components/FontPicker/*` | fonts missing from the picker, or quoted names **(smoke)** |
+| `getLineHeight` / `getVerticalOffset` read `metadata.metrics` from the registry | `fonts/Fonts.ts` | text sits a pixel or two off |
+| `ExcalidrawFontFace.createUrls`: `data:` URIs are used as they are; absolute `app:`/`mdfont:`/`http(s):` URLs survive `new URL(uri, base)`; SVG export fetches them to subset (`generateFontFaceDeclarations`) | `fonts/ExcalidrawFontFace.ts` | SVG/PDF exports without the font **(smoke)** |
+| Dev only: Vite must pre-bundle the alias together with `@excalidraw/excalidraw` (`optimizeDeps.include`), or there are two registries; excluding Excalidraw from pre-bundling breaks its CommonJS deps | `vite.config.ts` | by hand: `npm run dev`, fonts status in the console |
+
 ## Everything else that depends on internals
 
 | What mydraw relies on | Used by | Covered |

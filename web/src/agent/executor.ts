@@ -2,6 +2,7 @@
 // the latest scene, and each scene-changing command is applied as a single updateScene call, so it
 // is one undo step and never overwrites edits the user made in the meantime (elements are merged
 // by id).
+import { customFonts, fontIdByName, fontStatus } from "../fontRegistry";
 import { CaptureUpdateAction, convertToExcalidrawElements, newElementWith, restoreElements } from "@excalidraw/excalidraw";
 import { normalizeSpec, tint, uniquifySpec, type DiagramSpec } from "../../../shared/diagram";
 import { isFlowchart, parseMermaidFlowchart } from "../../../shared/mermaid";
@@ -9,7 +10,7 @@ import { PALETTES, requireColor, resolveColor } from "../../../shared/palettes";
 import { applyProperties } from "../../../shared/properties";
 import { INVENTORY_COLUMNS, inventoryEntries } from "../../../shared/inventory";
 import { extractGraph, type SceneEl } from "../../../shared/sceneGraph";
-import { FONTS, normalizeStyle, type StyleSpec } from "../../../shared/styles";
+import { fontIdOf, normalizeStyle, type StyleSpec } from "../../../shared/styles";
 import { allPresets, allThemes, deletePreset, deleteTheme, findPreset, findTheme, savePreset, saveTheme, stylesReady } from "../styleStore";
 import { applyThemeToScene, styleElements } from "./styles";
 import { isLintRule, LINT_RULES } from "../../../shared/lint";
@@ -36,7 +37,7 @@ import { colorOfElement } from "../library/pickColor";
 import { cloneForInsert, loadStencil } from "../library/stencilContent";
 import { autoLayout, buildDiagram, buildLegend, loadIconImage, makeIconNode, makeZone, zoneTitleSize } from "./diagram";
 import { trueColorFile } from "../library/trueColor";
-import { serializeScene } from "../scene";
+import { prepareSerialize, serializeScene } from "../scene";
 import {
   applyUpdates,
   bindTarget,
@@ -403,6 +404,7 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
           if (p.ids !== undefined || (p.scope !== undefined && p.scope !== "all")) {
             throw new Error("excalidraw export always writes the whole drawing; use save_as_stencil for a part of it");
           }
+          await prepareSerialize(api);
           return { data: serializeScene(api) };
         }
         if (!EXPORT_FORMATS.includes(format as ExportFormat)) throw new Error(`unknown export format "${format}"`);
@@ -721,6 +723,21 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
         return stencilContent(api, p);
       }
 
+      case "list_fonts": {
+        // Excalidraw's own fonts (minus fallbacks) and mydraw's extra ones, by category.
+        const own = ["Excalifont", "Virgil", "Comic Shanns", "Lilita One", "Nunito", "Helvetica", "Cascadia", "Liberation Sans"];
+        const status = fontStatus();
+        return {
+          ...(status.ok ? {} : { note: "Extra fonts are off in this build; only Excalidraw's own fonts work." }),
+          fonts: [
+            ...own.map((name) => ({ name, category: "excalidraw" })),
+            ...customFonts()
+              .filter((f) => status.ok && fontIdByName(f.family) !== undefined)
+              .map((f) => ({ name: f.family, category: f.category, ...(f.source === "embedded" ? { source: "this drawing" } : {}) })),
+          ],
+        };
+      }
+
       case "list_palettes": {
         const only = typeof p.palette === "string" ? p.palette.toLowerCase() : null;
         const list = PALETTES.filter((x) => !only || x.id === only);
@@ -787,7 +804,7 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
             ...(whole ? { viewBackgroundColor: theme.background } : {}),
             currentItemRoughness: theme.roughness,
             currentItemRoundness: theme.roundness === "round" ? "round" : "sharp",
-            currentItemFontFamily: FONTS[theme.fontFamily],
+            currentItemFontFamily: fontIdOf(theme.fontFamily),
             currentItemStrokeWidth: theme.strokeWidth,
           } as Partial<AppState> as AppState,
           captureUpdate: CaptureUpdateAction.IMMEDIATELY,

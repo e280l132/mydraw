@@ -290,7 +290,7 @@ tool(
   [
     "Add elements from Excalidraw element skeletons (all added as one undo step). Each needs type, x, y; id optional (returned).",
     'Shapes: {type:"rectangle"|"ellipse"|"diamond", x, y, width, height, label:"text" or {text, fontSize}, strokeColor, backgroundColor, fillStyle:"solid"|"hachure"|"cross-hatch", strokeWidth, strokeStyle:"solid"|"dashed"|"dotted", roundness:{type:3}|null}.',
-    'Text: {type:"text", x, y, text, fontSize, textAlign}. Frames: {type:"frame", x, y, width, height, name, children:[ids]}.',
+    'Text: {type:"text", x, y, text, fontSize, fontFamily (a name from list_fonts, e.g. "Inter Bold" or "Caveat"), textAlign}; labels take fontFamily too. Frames: {type:"frame", x, y, width, height, name, children:[ids]}.',
     'Arrows/lines: {type:"arrow"|"line", from:id, to:id, label, routing:"straight"|"elbow"|"curved"} draws a bound connector edge to edge (ids may be earlier in the same call or already in the drawing); or give x, y, points:[[0,0],[dx,dy],...] for a free line.',
     "Colors are hex. Unset style fields use the drawing's current style.",
   ].join("\n"),
@@ -572,6 +572,13 @@ tool(
 
 // palettes, themes, style presets
 tool(
+  "list_fonts",
+  "List the fonts you can use as fontFamily (text elements, labels, update_elements, style presets, themes), by name. Categories: excalidraw (built in: Excalifont hand-drawn, Nunito, Comic Shanns, ...), fun (hand-drawn, cartoon, whiteboard: Caveat, Kalam, Permanent Marker, Bangers, ...), professional (Inter, Roboto, Open Sans, Lato, Montserrat, Merriweather, ...), mono (IBM Plex Mono, JetBrains Mono). Weights are separate names: 'Inter Bold', 'Caveat Bold'. Fonts a drawing uses are saved inside the file.",
+  {},
+  call("list_fonts"),
+  { readOnlyHint: true },
+);
+tool(
   "list_palettes",
   "List color palettes and how to write colors. Everywhere a color is accepted (recolor, add_elements, update_elements, place_stencil, build_diagram) you can use hex (#ff9900), a ramp name (blue-600; plain 'blue' = blue-500; 22 hues x shades 50..900), a basic name (red, navy, mint, charcoal, ...) or 'transparent'. Pass palette:'ramp' to list every ramp name.",
   { palette: z.string().optional().describe("basic | ramp") },
@@ -593,7 +600,7 @@ tool(
 );
 tool(
   "apply_style_preset",
-  "Apply a named style preset (see list_themes; e.g. 'DMZ', 'Critical') or an inline style to elements. Labels follow. style fields: strokeColor, backgroundColor (names or hex), fillStyle, strokeWidth, strokeStyle (solid|dashed|dotted), roughness, opacity (0-100), roundness (sharp|round), fontFamily, fontSize.",
+  "Apply a named style preset (see list_themes; e.g. 'DMZ', 'Critical') or an inline style to elements. Labels follow. style fields: strokeColor, backgroundColor (names or hex), fillStyle, strokeWidth, strokeStyle (solid|dashed|dotted), roughness, opacity (0-100), roundness (sharp|round), fontFamily (slug like cascadia or a list_fonts name like \"Inter Bold\"), fontSize.",
   {
     drawing,
     ids,
@@ -620,7 +627,7 @@ tool("delete_style_preset", "Delete a user-saved style preset (built-ins can onl
 });
 tool(
   "save_theme",
-  "Save a custom theme (kept across sessions, available in every drawing). background and ink are colors; fontFamily one of virgil, helvetica, cascadia, excalifont, nunito, lilita-one, comic-shanns, liberation.",
+  "Save a custom theme (kept across sessions, available in every drawing). background and ink are colors; fontFamily one of virgil, helvetica, cascadia, excalifont, nunito, lilita-one, comic-shanns, liberation, or a font name from list_fonts (e.g. Inter, Caveat).",
   {
     drawing,
     name: z.string(),

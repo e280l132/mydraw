@@ -22,6 +22,7 @@ import { registerPdfIpc } from "./pdf";
 import { setupAgent } from "./agent";
 import { removeControlFile, startControlServer, writeControlFile } from "./control";
 import { LIBRARY_SCHEME, setupLibrary } from "./library-ipc";
+import { FONT_SCHEME, setupFonts } from "./fonts";
 import { buildMenu } from "./menu";
 import { getSettings, onSettingsChanged, rememberRecent, updateSettings } from "./settings-store";
 import { getStyleLibrary, saveStyleLibrary } from "./styles-store";
@@ -34,7 +35,10 @@ if (process.env.MYDRAW_USER_DATA) app.setPath("userData", process.env.MYDRAW_USE
 
 const webRoot = path.join(app.getAppPath(), "web", "dist");
 
-registerSchemes([{ scheme: LIBRARY_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
+registerSchemes([
+  { scheme: LIBRARY_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+  { scheme: FONT_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+]);
 
 let win: BrowserWindow | null = null;
 let allowClose = false;
@@ -507,6 +511,7 @@ if (!isTest && !app.requestSingleInstanceLock()) {
     registerIpc();
     registerPdfIpc();
     const store = setupLibrary(() => win, settings, (patch) => updateSettings(patch));
+    setupFonts();
     createWindow();
     void startAgentControl(store);
   });

@@ -3092,3 +3092,97 @@ body.md-panel-dragging * {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* ---------- Fonts dialog (web/src/FontsDialog.tsx) ---------- */
+.md-fonts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.md-fonts-sample {
+  padding: 6px 8px;
+  border: 1px solid var(--md-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--md-fg);
+}
+
+.md-fonts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.md-font-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+}
+
+.md-font-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.md-font-title {
+  font-weight: 600;
+}
+
+.md-font-preview {
+  margin: 4px 0;
+  font-size: 22px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.md-font-weights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.md-font-wcheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.md-font-install,
+.md-font-keep {
+  flex: none;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.md-font-keep {
+  border: 1px solid var(--md-border);
+  background: transparent;
+  color: var(--md-fg);
+}
+
+.md-font-install {
+  border: 0;
+  background: var(--md-accent);
+  color: #fff;
+}
+
+.md-app.theme-dark .md-font-install {
+  color: #16161a;
+}
+
+.md-font-install:disabled,
+.md-font-keep:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
