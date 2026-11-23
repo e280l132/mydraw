@@ -1,4 +1,6 @@
+import { readMeta, withMeta, type DrawingMeta } from "../../shared/drawingMeta";
 import { FILE_GRID_STATE } from "../../shared/grid";
+import { getMeta } from "./drawingMeta";
 import { hashElementsVersion, loadFromBlob, serializeAsJSON } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
@@ -8,6 +10,8 @@ export interface LoadedScene {
   elements: readonly ExcalidrawElement[];
   appState: Partial<AppState>;
   files: BinaryFiles;
+  /** History id and custom colors stored in the file (a fresh id when it has none). */
+  meta: DrawingMeta;
 }
 
 /** Parse and normalise `.excalidraw` JSON (also accepts PNG/SVG with an embedded scene later). */
@@ -25,6 +29,7 @@ export async function parseDrawing(content: string): Promise<LoadedScene> {
     },
     // SVG images keep their colors in dark mode (see library/trueColor.ts).
     files: trueColorFiles(data.files ?? {}),
+    meta: readMeta(content),
   };
 }
 
@@ -43,5 +48,6 @@ export function apiSceneHash(api: ExcalidrawImperativeAPI): string {
 export function serializeScene(api: ExcalidrawImperativeAPI): string {
   // The layout grid is an app preference, not part of the drawing: Excalidraw's grid mode is only
   // switched on for live snapping (web/src/useCanvasHook.ts), so files get Excalidraw's defaults.
-  return serializeAsJSON(api.getSceneElements(), { ...api.getAppState(), ...FILE_GRID_STATE }, api.getFiles(), "local");
+  const json = serializeAsJSON(api.getSceneElements(), { ...api.getAppState(), ...FILE_GRID_STATE }, api.getFiles(), "local");
+  return withMeta(json, getMeta(api));
 }

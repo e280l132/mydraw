@@ -43,18 +43,19 @@ import { DEFAULT_QUICK_CONNECT } from "../../shared/quickBindings";
 import { VersionHistoryDialog } from "./VersionHistoryDialog";
 import { PresentationMode } from "./PresentationMode";
 import { LintPanel } from "./LintPanel";
+import { PropertyTip } from "./PropertyTip";
 import { QuickConnect } from "./QuickConnect";
 import { listFrames } from "./exportImage";
 import { fileLink } from "../../shared/links";
 import { selectedIds, setSelectionLink } from "./uiActions";
 import { buildPaletteItems } from "./paletteItems";
 import { PacksDialog, RenameDialog, SaveStencilDialog } from "./library/dialogs";
-import { CUSTOM_COLOR_KEY } from "./library/IconColorSection";
+import { addDrawingColor, forkHistory, getMeta, setMeta } from "./drawingMeta";
+import type { DrawingMeta } from "../../shared/drawingMeta";
 import { StyleSection } from "./StyleSection";
 import { PropertiesSection } from "./PropertiesSection";
 import { followZones, type Positions } from "./zoneFollow";
 import { colorOfElement, elementAt } from "./library/pickColor";
-import { normalizeHex } from "../../shared/colorMath";
 import { IconRecolorSession, NO_ICONS, iconSelection, recolorSelectedIcons, type IconSelection } from "./library/iconColor";
 import { STENCIL_DRAG_TYPE, StencilPanel } from "./library/StencilPanel";
 import {
@@ -79,6 +80,8 @@ const RECOVERED = "recovered";
 
 interface Tab extends TabInfo {
   initialData: ExcalidrawInitialDataState;
+  /** History id and custom colors read from the file; applied when the tab's Excalidraw API arrives. */
+  meta?: DrawingMeta;
   /** Created by an agent: never silently replaced by the next opened file (the agent holds its id). */
   keep?: boolean;
   /** Set when the file changed on disk while this tab had unsaved edits. */
@@ -103,7 +106,7 @@ function nextUntitled(): string {
   return untitledCount === 1 ? "Untitled" : `Untitled ${untitledCount}`;
 }
 
-function initialDataFor(scene: LoadedScene | null, style: DrawingStyle): ExcalidrawInitialDataState {
+function initialDataFor(scene: Pick<LoadedScene, "elements" | "appState" | "files"> | null, style: DrawingStyle): ExcalidrawInitialDataState {
   return {
     elements: scene?.elements ?? [],
     appState: { viewBackgroundColor: "#ffffff", ...scene?.appState, ...drawingStyleAppState(style) },
@@ -278,12 +281,12 @@ export function App() {
   const [renaming, setRenaming] = useState<LibraryItem | null>(null);
   const [packsOpen, setPacksOpen] = useState(false);
   const [icons, setIcons] = useState<IconSelection>(NO_ICONS);
-  const [customColor, setCustomColorState] = useState<string | null>(() =>
-    normalizeHex(localStorage.getItem(CUSTOM_COLOR_KEY) ?? ""),
-  );
+  // Custom colors of the ACTIVE drawing: they are saved inside its file, so they travel with it.
+  const [palette, setPalette] = useState<string[]>([]);
+  const customColor = palette[0] ?? null;
   const setCustomColor = useCallback((hex: string) => {
-    localStorage.setItem(CUSTOM_COLOR_KEY, hex);
-    setCustomColorState(hex);
+    const api = apis.current.get(activeRef.current);
+    if (api) setPalette([...addDrawingColor(api, hex)]);
   }, []);
   const [picking, setPicking] = useState(false);
   const iconsKey = useRef("");
@@ -322,6 +325,8 @@ export function App() {
     setActiveIdState(id);
     iconsKey.current = "";
     setIcons(NO_ICONS);
+    const api = apis.current.get(id);
+    setPalette(api ? [...getMeta(api).palette] : []);
   }, []);
 
   const showToast = useCallback((text: string, error = false) => setToast({ text, error }), []);
@@ -366,6 +371,8 @@ export function App() {
       const t = timers.current.get(id);
       if (t) window.clearTimeout(t.autosave);
 
+      // A copy made by Save As gets its own version history.
+      if (saveAs && tab.filePath) forkHistory(api);
       const content = serializeScene(api);
       const hash = apiSceneHash(api);
       let filePath = tab.filePath;
@@ -438,6 +445,9 @@ export function App() {
 
   const onApi = useCallback((id: string, api: ExcalidrawImperativeAPI) => {
     apis.current.set(id, api);
+    const meta = getTab(id)?.meta;
+    if (meta) setMeta(api, meta);
+    if (id === activeRef.current) setPalette([...getMeta(api).palette]);
   }, []);
 
   const onChange = useCallback(
@@ -933,6 +943,7 @@ export function App() {
           filePath: f.path,
           dirty: false,
           conflict: null,
+          meta: scene.meta,
           initialData: initialDataFor(scene, style),
         });
         void bridge.watchFile(f.path);
@@ -1027,6 +1038,8 @@ export function App() {
         showToast(`Could not reload: ${(e as Error).message}`, true);
         return;
       }
+      setMeta(api, scene.meta);
+      if (id === activeRef.current) setPalette([...scene.meta.palette]);
       api.addFiles(Object.values(scene.files));
       api.updateScene({
         elements: scene.elements,
@@ -1228,6 +1241,7 @@ export function App() {
               filePath: r.filePath,
               dirty: true,
               conflict: null,
+              meta: scene.meta,
               initialData: initialDataFor(scene, settings.drawingStyle),
             },
           ]);
@@ -1578,7 +1592,7 @@ export function App() {
             onGridHealth={onGridHealth}
           />
         ))}
-        {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} changeTick={tuneTick} onToast={showToast} custom={customColor} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} /><PropertiesSection api={apis.current.get(activeId)} tick={tuneTick} /></>, styleHost)}
+        {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} changeTick={tuneTick} onToast={showToast} custom={customColor} palette={palette} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} /><PropertiesSection api={apis.current.get(activeId)} tick={tuneTick} /></>, styleHost)}
         <FineTune api={apis.current.get(activeId)} tick={tuneTick} hosts={ftHosts} />
         {footHost &&
           createPortal(
@@ -1651,6 +1665,14 @@ export function App() {
           quick={settings?.quickConnect ?? DEFAULT_QUICK_CONNECT}
           blocked={shortcutsOpen || helpOpen || inventoryOpen || importOpen || historyOpen || exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
           onToast={showToast}
+        />
+      )}
+      {activeId && (
+        <PropertyTip
+          key={`tip-${activeId}`}
+          tabId={activeId}
+          getApi={getActiveApi}
+          blocked={shortcutsOpen || helpOpen || inventoryOpen || importOpen || historyOpen || exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
         />
       )}
       {presenting && activeApi && <PresentationMode key={activeId} api={activeApi} darkMode={theme === "dark"} onClose={() => setPresenting(false)} />}

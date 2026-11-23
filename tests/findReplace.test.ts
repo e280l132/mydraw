@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countMatches, replaceInText } from "../shared/findReplace";
+import { countMatches, replaceInText, replaceNth } from "../shared/findReplace";
 
 const ci = { matchCase: false };
 const cs = { matchCase: true };
@@ -41,5 +41,25 @@ describe("replaceInText", () => {
   });
   it("respects case sensitivity", () => {
     expect(replaceInText("Web web", "web", "x", cs)).toEqual({ text: "Web x", count: 1 });
+  });
+});
+
+describe("replaceNth", () => {
+  const o = { matchCase: false };
+  it("replaces only the chosen occurrence", () => {
+    expect(replaceNth("web web web", "web", "app", o, 1)).toEqual({ text: "web app web", replaced: true });
+    expect(replaceNth("web web web", "web", "app", o, 0).text).toBe("app web web");
+  });
+  it("reports a missing occurrence and leaves the text alone", () => {
+    expect(replaceNth("web", "web", "app", o, 1)).toEqual({ text: "web", replaced: false });
+    expect(replaceNth("web", "", "app", o, 0).replaced).toBe(false);
+    expect(replaceNth("web", "web", "app", o, -1).replaced).toBe(false);
+  });
+  it("counts occurrences the same way as countMatches (whole word, case)", () => {
+    const w = { matchCase: true, wholeWord: true };
+    expect(replaceNth("web website Web web", "web", "X", w, 1).text).toBe("web website Web X");
+  });
+  it("takes the replacement literally", () => {
+    expect(replaceNth("a a", "a", "$&", o, 0).text).toBe("$& a");
   });
 });

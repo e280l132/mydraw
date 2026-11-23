@@ -984,6 +984,15 @@ const mdLines = fs.readFileSync(md, "utf8").split("\n");
 assert.equal(mdLines[0], "| Name | Kind | Type | Zone | Ip | Hostname | Vlan | Role | Owner | Url | Notes |", "Markdown table header");
 assert.ok(mdLines.some((l) => l.includes("Web \\| 1") && l.includes("10.0.0.5")), "Markdown row, pipe escaped");
 
+// Excalidraw library file: the drawing as one library item (images are left out), shareable with Excalidraw users.
+const libFile = path.join(outDir, "diagram.excalidrawlib");
+await call("export", { path: libFile });
+const libJson = JSON.parse(fs.readFileSync(libFile, "utf8"));
+assert.equal(libJson.type, "excalidrawlib", "library file type");
+assert.equal(libJson.libraryItems.length, 1, "one library item");
+assert.ok(libJson.libraryItems[0].elements.length >= 2, "the item holds the diagram's elements");
+assert.ok(!libJson.libraryItems[0].elements.some((e) => e.type === "image"), "images are left out of libraries");
+
 const html = path.join(outDir, "diagram.html");
 await call("export", { path: html });
 const htmlText = fs.readFileSync(html, "utf8");
@@ -1073,6 +1082,19 @@ await t((x) => x.command({ type: "copyAs", format: "svg" }));
 await waitFor(async () => (await clip(({ clipboard }) => clipboard.readText())).includes("<svg"), "SVG on the clipboard");
 await t((x) => x.command({ type: "copyAs", format: "png" }));
 await waitFor(async () => clip(async ({ clipboard }) => (await clipboard.has("image/png")) === true), "PNG on the clipboard");
+
+// The same from MCP: copy_to_clipboard puts the drawing on the system clipboard.
+await clip(({ clipboard }) => clipboard.writeText("sentinel"));
+const copiedMmd = await call("copy_to_clipboard", { format: "mermaid" });
+assert.equal(copiedMmd.copied, "mermaid");
+assert.ok((await clip(({ clipboard }) => clipboard.readText())).startsWith("flowchart"), "MCP copied Mermaid");
+await call("copy_to_clipboard", { format: "svg" });
+assert.ok((await clip(({ clipboard }) => clipboard.readText())).includes("<svg"), "MCP copied SVG");
+await clip(({ clipboard }) => clipboard.writeText("sentinel"));
+const copiedPng = await call("copy_to_clipboard", { format: "png", scale: 1 });
+assert.ok(copiedPng.bytes > 500, "MCP copied a PNG");
+assert.equal(await clip(async ({ clipboard }) => (await clipboard.has("image/png")) === true), true, "PNG on the clipboard from MCP");
+assert.equal((await callRaw("copy_to_clipboard", { format: "pdf" })).isError, true, "only png, svg and mermaid can be copied");
 
 // ---------- Phase 7: ease of use ----------
 step("Phase 7: command palette (⇧⌘P) runs mydraw commands, themes and templates");
@@ -1184,6 +1206,22 @@ await waitFor(async () => (await texts()).includes("app-1 app server"), "selecti
 assert.ok((await texts()).includes("WEB notes: web only, website"), "outside the selection untouched");
 await call("undo");
 
+// Step through the matches and replace one at a time (each Replace is its own undo step).
+await page.click('.md-find .md-seg button:text-is("Drawing")');
+await waitFor(async () => (await page.textContent(".md-find-count")).trim() === "6 in 3", "drawing scope count");
+await page.click('.md-find button[aria-label="Next match"]');
+await waitFor(async () => (await page.textContent(".md-find-count")).trim() === "1 of 6", "first match shown");
+await waitFor(async () => (await t((x) => x.selectedCount())) === 1, "stepping selects the match's shape");
+await page.click('.md-find button[aria-label="Next match"]');
+await waitFor(async () => (await page.textContent(".md-find-count")).trim() === "2 of 6", "second match shown");
+await page.click('.md-find button[aria-label="Previous match"]');
+await page.click('.md-find-btn:text-is("Replace")');
+const countOf = async (w) => ((await texts()).toLowerCase().match(new RegExp(w, "g")) ?? []).length;
+await waitFor(async () => (await countOf("app")) === 1 && (await countOf("web")) === 5, "exactly one match replaced");
+await waitFor(async () => (await page.textContent(".md-find-count")).trim() === "1 of 5", "moved on to the next match");
+await call("undo");
+await waitFor(async () => (await texts()).includes("web-1 Web server"), "Replace is one undo step");
+
 // Select matches selects the owning shapes.
 await page.fill('.md-find input[placeholder="Find"]', "web");
 await page.click('.md-find-btn:text-is("Select matches")');
@@ -1228,6 +1266,13 @@ const pagesDrawio = path.join(outDir, "pages-order.drawio");
 await call("export", { path: pagesDrawio, scope: "frames" });
 const diagramNames = [...fs.readFileSync(pagesDrawio, "utf8").matchAll(/<diagram [^>]*name="([^"]*)"/g)].map((m) => m[1]);
 assert.deepEqual(diagramNames, ["Page 2", "Intro"], "export follows the page order");
+// Each page shows a preview, redrawn when its content changes (the shape above sits in the first page).
+await waitFor(async () => (await page.locator(".md-page-thumb img").count()) === 2, "a preview for each page");
+const thumbSrcs = () => page.$$eval(".md-page-thumb img", (imgs) => imgs.map((i) => i.src).join("|"));
+const thumbBefore = await thumbSrcs();
+await call("add_elements", { elements: [{ type: "ellipse", id: "pgx", x: pageFrames[0].x + 300, y: pageFrames[0].y + 200, width: 200, height: 140 }] });
+await call("raw_update", { elements: [{ id: "pgx", frameId: pageFrames[0].id }] });
+await waitFor(async () => (await thumbSrcs()) !== thumbBefore, "preview redrawn after the page changed");
 await page.click('.md-page:has-text("Page 2")');
 await waitFor(async () => (await t((x) => x.selectedCount())) === 1, "clicking a page selects it");
 await page.keyboard.press(`${MOD}+Alt+KeyP`);
@@ -2009,6 +2054,25 @@ await waitFor(async () => (await page.locator(".md-props [data-prop]").count()) 
 await call("select", { ids: ["p1", "p2"] });
 await waitFor(async () => !(await page.$(".md-props")), "no properties section for a multi-selection");
 
+step("Phase 8: resting the pointer on a node shows its properties, without selecting it");
+await call("select", { ids: [] });
+const tipEl = (await call("get_element", { id: "p1" }))[0].element;
+const tipAt = await screenOf(tipEl.x + tipEl.width / 2, tipEl.y + tipEl.height / 2);
+await page.mouse.move(tipAt.x - 40, tipAt.y, { steps: 3 });
+await page.mouse.move(tipAt.x, tipAt.y, { steps: 3 });
+await page.waitForSelector(".md-proptip", { timeout: 5000 });
+const tipText = await page.textContent(".md-proptip");
+assert.ok(tipText.includes("10.0.0.1") && tipText.includes("core-1") && tipText.includes("core switch"), `tip lists the properties: ${tipText}`);
+assert.ok(tipText.includes("Core"), "tip is titled with the node's label");
+assert.equal(await t((x) => x.selectedCount()), 0, "hovering selects nothing");
+await page.mouse.move(tipAt.x + 30, tipAt.y + 6);
+await waitFor(async () => !(await page.$(".md-proptip")), "tip hides as soon as the pointer moves");
+await call("select", { ids: ["p1"] });
+await page.mouse.move(tipAt.x + 1, tipAt.y + 1, { steps: 2 });
+await page.waitForTimeout(1200);
+assert.ok(!(await page.$(".md-proptip")), "no tip on the selected shape (the Properties section shows it)");
+await call("select", { ids: [] });
+
 step("Phase 8: inventory table (⌥⌘T) lists nodes, filters, sorts, and edits the diagram");
 await call("select", { ids: [] });
 await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
@@ -2122,6 +2186,33 @@ await page.keyboard.press(`${MOD}+Alt+KeyV`);
 await page.waitForSelector(".md-toast.error", { timeout: 5000 });
 assert.ok((await page.textContent(".md-toast.error")).includes("Save the drawing first"), "unsaved drawings have no history yet");
 assert.equal(await page.$(".md-hist"), null);
+
+step("Portable drawings: custom colors and version history live in the file and survive a rename");
+const portDir = path.join(work, "portable");
+fs.mkdirSync(portDir, { recursive: true });
+const portA = path.join(portDir, "a.excalidraw");
+const portId = "5a1e5a1e-0000-4000-8000-00000000cafe";
+fs.writeFileSync(
+  portA,
+  JSON.stringify({ type: "excalidraw", version: 2, source: "test", elements: [], appState: { viewBackgroundColor: "#ffffff" }, files: {}, mydraw: { version: 1, id: portId, palette: ["#123456", "#abcdef", "#fedcba"] } }),
+);
+await call("open_drawing", { path: portA });
+await call("add_elements", { elements: [{ type: "rectangle", id: "pt1", x: 300, y: 300, width: 160, height: 80, label: "Port" }] });
+await call("select", { ids: ["pt1"] });
+const PSEC = ".md-drawing:not([style*='none']) .md-style";
+await page.waitForSelector(`${PSEC} .md-swatch-slot[title*="#123456"]`, { timeout: 10000 });
+assert.equal(await page.locator(`${PSEC} .md-drawing-palette .md-palette-swatch`).count(), 2, "the file's other custom colors are listed");
+await call("save", { path: portA });
+const savedA = JSON.parse(fs.readFileSync(portA, "utf8"));
+assert.equal(savedA.type, "excalidraw");
+assert.equal(savedA.mydraw.id, portId, "history id kept in the file");
+assert.deepEqual(savedA.mydraw.palette, ["#123456", "#abcdef", "#fedcba"], "palette kept in the file");
+await call("add_elements", { elements: [{ type: "rectangle", id: "pt2", x: 600, y: 300, width: 160, height: 80, label: "Port 2" }] });
+await call("save", { path: portA });
+const portB = path.join(portDir, "renamed.excalidraw");
+fs.renameSync(portA, portB);
+await call("open_drawing", { path: portB });
+assert.equal((await page.evaluate((f) => window.mydraw.listSnapshots(f), portB)).length, 2, "version history follows the renamed file");
 
 step("Phase 8: presentation mode shows each frame as a slide; keys and clicks navigate; Esc leaves");
 await call("new_drawing", { title: "Deck" });

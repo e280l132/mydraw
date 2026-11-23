@@ -32,6 +32,8 @@ interface Props {
   onToast(msg: string, isError?: boolean): void;
   /** The "last picked color" swatch (shared with the icon color section). */
   custom: string | null;
+  /** Custom colors of the active drawing (newest first; saved inside its file). `custom` is the first. */
+  palette: string[];
   onCustomChange(hex: string): void;
   /** Start / stop the canvas eyedropper (copies an item's color into the custom swatch). */
   onPick(): void;
@@ -397,7 +399,7 @@ function Well({ color }: { color: string | null }) {
   );
 }
 
-export function StyleSection({ api, tick, changeTick, onToast, custom: customColor, onCustomChange, onPick, picking, icons, onIconColor }: Props) {
+export function StyleSection({ api, tick, changeTick, onToast, custom: customColor, palette, onCustomChange, onPick, picking, icons, onIconColor }: Props) {
   useStyleLibrary();
   const [tab, setTab] = useState<Tab>("colors");
   // Stroke/Fill: one app-wide choice that sticks from item to item and across restarts.
@@ -592,6 +594,26 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
           }}
         />
       </div>
+      {palette.length > 1 && (
+        <>
+          <div className="md-iconcolor-note md-shades-label">Colors in this drawing (saved with the file)</div>
+          <div className="md-drawing-palette" role="group" aria-label="Colors in this drawing">
+            {palette.slice(1).map((c) => (
+              <button
+                key={c}
+                className={`md-swatch md-palette-swatch${current === c ? " on" : ""}`}
+                style={{ background: c }}
+                title={c}
+                aria-label={c}
+                onClick={(e) => {
+                  setBase(c);
+                  swatchClick(c, e);
+                }}
+              />
+            ))}
+          </div>
+        </>
+      )}
       {shades.length > 0 && (
         <>
           <div className="md-iconcolor-note md-shades-label">Shades of {baseName}</div>

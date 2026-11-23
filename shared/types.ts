@@ -71,7 +71,7 @@ export interface SaveStencilPayload {
 
 export type UnsavedChoice = "save" | "discard" | "cancel";
 
-export type ExportExtension = "png" | "jpg" | "webp" | "svg" | "html" | "pdf" | "pptx" | "drawio" | "mmd" | "csv" | "md";
+export type ExportExtension = "png" | "jpg" | "webp" | "svg" | "html" | "pdf" | "pptx" | "drawio" | "mmd" | "csv" | "md" | "excalidrawlib";
 
 export interface ExportFileRequest {
   defaultName: string;

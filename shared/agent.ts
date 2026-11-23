@@ -30,7 +30,7 @@ export interface AgentCommand {
 export type AgentReply = { id: number; ok: true; result: unknown } | { id: number; ok: false; error: string };
 
 /** Formats the `export` tool can write, and the file extension each gets by default. */
-export const AGENT_EXPORT_FORMATS = ["png", "jpg", "webp", "svg", "html", "pdf", "pptx", "drawio", "mermaid", "csv", "markdown", "excalidraw"] as const;
+export const AGENT_EXPORT_FORMATS = ["png", "jpg", "webp", "svg", "html", "pdf", "pptx", "drawio", "mermaid", "csv", "markdown", "excalidrawlib", "excalidraw"] as const;
 export type AgentExportFormat = (typeof AGENT_EXPORT_FORMATS)[number];
 
 export const AGENT_EXPORT_EXTENSION: Record<AgentExportFormat, string> = {
@@ -45,6 +45,7 @@ export const AGENT_EXPORT_EXTENSION: Record<AgentExportFormat, string> = {
   mermaid: "mmd",
   csv: "csv",
   markdown: "md",
+  excalidrawlib: "excalidrawlib",
   excalidraw: "excalidraw",
 };
 

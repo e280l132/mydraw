@@ -23,6 +23,20 @@ export function countMatches(text: string, find: string, opts: FindOptions): num
   return (text.match(re) ?? []).length;
 }
 
+/** `text` with only the `n`th match (0-based) replaced; `replaced` is false when there is no such match. */
+export function replaceNth(text: string, find: string, replacement: string, opts: FindOptions, n: number): { text: string; replaced: boolean } {
+  const re = matcher(find, opts);
+  if (!re || n < 0) return { text, replaced: false };
+  let i = 0;
+  let replaced = false;
+  const out = text.replace(re, (m) => {
+    if (i++ !== n) return m;
+    replaced = true;
+    return replacement;
+  });
+  return { text: replaced ? out : text, replaced };
+}
+
 /** `text` with every match replaced by `replacement` (taken literally, `$` is not special). */
 export function replaceInText(text: string, find: string, replacement: string, opts: FindOptions): { text: string; count: number } {
   const re = matcher(find, opts);

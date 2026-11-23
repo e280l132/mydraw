@@ -25,10 +25,11 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 - Several drawings open at once (⌘1–9, Ctrl+Tab), a dot on unsaved tabs, middle-click to close.
 - New / Open / Save / Save As (`.excalidraw`), Open Recent, opening from Finder or the command line. Opening a `.drawio` file makes a new unsaved drawing (never saved back into the `.drawio`).
 - Autosave for saved files, crash recovery for unsaved drawings, reload when a file changes on disk.
-- **Version history** (⌥⌘V): a snapshot is kept on each save (autosaves at most every 2 minutes, 60 kept). Preview a version and restore it as one undo step.
+- **Drawings are portable.** Everything a drawing needs travels in its `.excalidraw` file: shapes, embedded icons and images, properties, relative links, the custom colors picked in it, and an id for its version history. Another person opens the file in mydraw (or plain Excalidraw: the extra data is ignored) and sees the same thing. Your app preferences (grid, theme, shortcuts, style presets) and the version history itself stay on your machine.
+- **Version history** (⌥⌘V): a snapshot is kept on each save (autosaves at most every 2 minutes, 60 kept). Preview a version and restore it as one undo step. The history is tied to an id stored in the file, so renaming or moving the file keeps it. Save As starts a fresh history for the copy; a file you duplicate in Finder shares the original's until it is saved with Save As.
 
 **Export** (⇧⌘E, and Copy as in the menu)
-- PNG, JPG, WebP, SVG, HTML viewer, PDF (vector; fit, A4/Letter, or actual size over sheets), PowerPoint (one picture per slide), draw.io, Mermaid flowchart, CSV and Markdown inventory.
+- PNG, JPG, WebP, SVG, HTML viewer, PDF (vector; fit, A4/Letter, or actual size over sheets), PowerPoint (one picture per slide), draw.io, Mermaid flowchart, CSV and Markdown inventory, and an Excalidraw library (`.excalidrawlib`: the drawing, selection or a frame as one library item for Excalidraw users; icons and images are left out because libraries cannot hold them).
 - Scope: whole drawing, selection, one frame, or every frame (one file each, or one page or slide per frame in PDF, PowerPoint and draw.io). Scale, padding, background, dark mode, quality, embedded editable scene.
 - **Keep an image up to date**: per drawing, every save also rewrites e.g. `network.png` next to `network.excalidraw`.
 
@@ -40,7 +41,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 - Recolor icons (with undo), an eyedropper that copies the real color of any shape or icon, and icons that keep their real colors in dark mode.
 
 **Colors and styles**
-- Colors tab with two palettes and an any-color picker. Theme and style presets (built in, and yours, saved globally) apply to the selection or the whole drawing.
+- Colors tab with two palettes and an any-color picker. Colors you pick (picker or eyedropper) are remembered **in the drawing** (up to 12, shown as "Colors in this drawing") and saved in its file. Opacity: Excalidraw's own Opacity row, and presets and themes can carry an opacity. Theme and style presets (built in, and yours, saved globally) apply to the selection or the whole drawing.
 
 **Diagrams from text** (MCP, and ⌥⌘U)
 - `build_diagram`: nodes, edges and nested zones, laid out automatically (ELK), with icons from the library.
@@ -48,12 +49,12 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 - **Import from text** (⌥⌘U): paste or open CSV (a host list with zones, connections and properties, or a from/to list), YAML (the diagram spec with `a -> b: label` edges), or Mermaid.
 
 **Properties and inventory**
-- Hostname, IP, VLAN, role, owner, URL and notes on any shape or icon (the properties section in the right panel). Property edits are not in the undo history.
+- Hostname, IP, VLAN, role, owner, URL and notes on any shape or icon (the properties section in the right panel). Rest the pointer on a shape for a moment and a tip lists its properties, without selecting it. Property edits are not in the undo history.
 - **Inventory table** (⌥⌘T): every node in one grid. Sort, filter, edit names and properties in place, select a node in the drawing, export CSV.
 
 **Links, pages and presentation**
 - **Drill-down links**: a shape can link to a web address (opens in the browser) or a `.excalidraw` drawing (opens in a tab). Relative paths resolve from the saved drawing.
-- **Pages** (⌥⌘P): frames are pages. Click to zoom, double-click to rename, arrows to reorder. Exports follow the order.
+- **Pages** (⌥⌘P): frames are pages, each with a small preview that updates as you edit. Click to zoom, double-click to rename, arrows to reorder. Exports follow the order.
 - **Presentation** (⌥⌘↵): frames as full-screen slides. Arrows, space or click to move, Esc to leave.
 
 **Quick connect** (hover or select a shape, icon or group; four "+" handles appear)
@@ -67,7 +68,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 - **Layout grid** (⌘', or Grid settings… in the menu): lines or dots, spacing 4–100 px, a stronger line every N cells, any color, adjustable strength. Drawn behind the shapes. **Snap to grid** while moving, drawing and resizing (hold ⌘ to move freely); "Snap selection to grid" lines up existing shapes in one undo step. The grid is an app preference: it is never saved into drawings or exports.
 - **Align and distribute**: select 2+ shapes or icons and the Align section is in the left panel just above Edges (distribute needs 3+). Also in the command palette ("Arrange") and on Excalidraw's keys: ⇧⌘←/→/↑/↓ align, ⌥H / ⌥V distribute.
 - **Route arrows around shapes** (command palette): re-routes the selected arrows (or all of them) around shapes.
-- **Find and replace** (⌥⌘F): match case, whole word, selection or whole drawing, one undo step.
+- **Find and replace** (⌥⌘F): match case, whole word, selection or whole drawing. ↑ / ↓ (Enter, Shift+Enter in the Find box) step through the matches and select each one; **Replace** changes the current match and moves on (Enter in the Replace box), **Replace all** changes every match in one undo step (⌘Enter).
 - **Command palette** (⇧⌘P; ⌘K when nothing is selected): fuzzy search over every command, stencil, theme, preset, template, frame, element and file action.
 
 **Appearance**
@@ -118,7 +119,7 @@ The `mcp/` server talks to the running app (it starts the app if needed). Regist
 claude mcp add --scope user mydraw -- node ~/Projects/mydraw/mcp/dist/index.js
 ```
 
-Tools cover: drawings (`list_drawings`, `new_drawing`, `open_drawing`, `save`, `export`, `screenshot`), reading (`get_scene`, `get_element`, `get_selection`, `get_inventory`), building (`build_diagram`, `import_diagram`, `mermaid_to_scene`, `apply_template`, `add_elements`, `connect` with `avoid: true` for arrows around shapes, `place_stencil`, `create_zone`, `add_legend`), editing (`update_elements`, `move`, `set_properties`, `route_around`, `auto_layout`, `delete_elements`, `group`), stencils, palettes and themes, checks (`lint_diagram`), and `undo`/`redo`. Each tool call is one undo step.
+Tools cover: drawings (`list_drawings`, `new_drawing`, `open_drawing`, `save`, `export`, `screenshot`), reading (`get_scene`, `get_element`, `get_selection`, `get_inventory`), building (`build_diagram`, `import_diagram`, `mermaid_to_scene`, `apply_template`, `add_elements`, `connect` with `avoid: true` for arrows around shapes, `place_stencil`, `create_zone`, `add_legend`), editing (`update_elements`, `move`, `set_properties`, `route_around`, `auto_layout`, `delete_elements`, `group`), stencils, palettes and themes, checks (`lint_diagram`), `copy_to_clipboard` (PNG, SVG or Mermaid onto the system clipboard), and `undo`/`redo`. Each tool call is one undo step.
 
 ## Layout
 

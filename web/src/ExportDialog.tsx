@@ -29,6 +29,7 @@ export const FORMAT_LABEL: Record<ExportFormat, string> = {
   mermaid: "Mermaid",
   csv: "CSV",
   markdown: "Markdown",
+  excalidrawlib: "Excalidraw library",
 };
 
 /** Options as last used (scope is never remembered). */

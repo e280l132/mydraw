@@ -207,7 +207,7 @@ tool(
     "Pictures: png, jpg, webp (transparent with background:false), svg, html (one self-contained file: embedded SVG, pan/zoom, clickable links).",
     "Documents: pdf (vector; pageSize fit = page is the drawing's size (default), a4 or letter = scaled to fit the sheet, or actualSize:true = 100% over several sheets), pptx (one picture per slide; slideSize 16:9 or 4:3), drawio (draw.io/diagrams.net file: editable shapes, text, edges, zones as containers, icons as embedded images; approximate, `warnings` lists what was skipped).",
     "Text from the diagram structure: mermaid (flowchart .mmd; zones become subgraphs; re-readable by mermaid_to_scene), csv and markdown (inventory: one row per node with name, kind, type, zone, ip, hostname, notes from customData).",
-    "excalidraw writes the whole drawing.",
+    "excalidrawlib is an Excalidraw library file (the drawing or selection as one item, to share with Excalidraw users; images/icons are left out and reported in `warnings`). excalidraw writes the whole drawing.",
     "Content: scope all (default), selection, frame (+ `frame` name or id) or frames (every frame: pdf/pptx/drawio write ONE file with a page/slide per frame; other formats take a folder as `path`, one file per frame named after it, `format` required). Optional ids export only those elements (with their groups and labels).",
   ].join(" "),
   {
@@ -228,6 +228,20 @@ tool(
     slideSize: z.enum(["16:9", "4:3"]).optional().describe("PPTX slide size, default 16:9"),
   },
   call("export"),
+);
+tool(
+  "copy_to_clipboard",
+  "Put the drawing (or the selection) on the user's system clipboard, ready to paste into a doc or chat: png = a picture, svg / mermaid = text. Replaces whatever they had copied, so use it when they ask for it (or after saying so); to just save a file use export.",
+  {
+    format: z.enum(["png", "svg", "mermaid"]),
+    drawing,
+    scope: z.enum(["all", "selection"]).optional().describe("Default all"),
+    ids: ids.optional(),
+    scale: z.number().int().min(1).max(4).optional().describe("PNG pixel scale, default 2"),
+    background: z.boolean().optional(),
+    darkMode: z.boolean().optional(),
+  },
+  call("copy_to_clipboard"),
 );
 tool(
   "screenshot",

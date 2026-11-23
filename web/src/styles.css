@@ -1593,6 +1593,20 @@ body.md-panel-dragging * {
   box-shadow: inset 0 0 0 2px var(--color-primary, #6965db);
 }
 
+.md-drawing-palette {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0.25rem;
+}
+
+.md-palette-swatch {
+  width: 100%;
+  height: 1.5rem;
+}
+
 .md-shades-label {
   margin-top: 0.5rem;
 }
@@ -1692,7 +1706,7 @@ body.md-panel-dragging * {
   top: 104px;
   right: 24px;
   z-index: 60;
-  width: 380px;
+  width: 420px;
   padding: 10px;
   border-radius: 10px;
   background: var(--md-panel);
@@ -1768,6 +1782,11 @@ body.md-panel-dragging * {
   cursor: pointer;
 }
 
+.md-find-btn.md-find-step {
+  padding: 4px 8px;
+  line-height: 1;
+}
+
 .md-find-btn.primary {
   color: #fff;
   background: var(--md-accent);
@@ -1800,6 +1819,7 @@ body.md-panel-dragging * {
 
 .md-page {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
@@ -1814,6 +1834,25 @@ body.md-panel-dragging * {
 .md-page.on {
   background: var(--md-accent);
   color: #fff;
+}
+
+/* Preview under the page's name: a white-backed picture of the frame, as wide as the row. */
+.md-page-thumb {
+  flex: 0 0 100%;
+  min-height: 30px;
+  margin-top: 4px;
+  display: flex;
+  justify-content: center;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.12);
+  overflow: hidden;
+}
+
+.md-page-thumb img {
+  display: block;
+  max-width: 100%;
+  max-height: 120px;
+  object-fit: contain;
 }
 
 .md-page-num {
@@ -3011,4 +3050,45 @@ body.md-panel-dragging * {
 }
 .md-well-mixed {
   background: conic-gradient(#e03131 0 25%, #1971c2 0 50%, #2f9e44 0 75%, #f08c00 0);
+}
+
+/* ---------- properties on hover ---------- */
+
+.md-proptip {
+  position: fixed;
+  z-index: 55;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--md-panel);
+  color: var(--md-fg);
+  border: 1px solid var(--md-border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.md-proptip-title {
+  margin-bottom: 4px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-proptip-row {
+  display: flex;
+  gap: 8px;
+}
+
+.md-proptip-label {
+  flex: none;
+  width: 70px;
+  color: var(--md-muted);
+}
+
+.md-proptip-value {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

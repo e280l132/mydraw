@@ -30,7 +30,7 @@ export function helpSections(): Section[] {
     {
       title: "Export",
       rows: [
-        { keys: sc("export"), text: "Export: PNG, JPG, WebP, SVG, HTML, PDF, PowerPoint, draw.io, Mermaid, CSV, Markdown" },
+        { keys: sc("export"), text: "Export: PNG, JPG, WebP, SVG, HTML, PDF, PowerPoint, draw.io, Mermaid, CSV, Markdown, Excalidraw library" },
         { text: "Scope: whole drawing, selection, one frame, or every frame (one file each, or one page or slide per frame)" },
         { text: "Keep an image up to date: each save also rewrites e.g. network.png next to network.excalidraw" },
       ],
@@ -47,7 +47,7 @@ export function helpSections(): Section[] {
     {
       title: "Colors and styles",
       rows: [
-        { text: "Colors tab: two palettes and an any-color picker; Stroke, Fill and Icon targets" },
+        { text: "Colors tab: two palettes and an any-color picker; Stroke, Fill and Icon targets. Custom colors you pick are kept in the drawing file, so they travel with it" },
         { text: "Presets and Themes tabs: built-in and your own, saved globally; apply to the selection or the whole drawing" },
         { text: "Slider buttons next to stroke width, sloppiness and edges set values beyond the presets (with nothing selected they set the next shape you draw)" },
       ],
@@ -62,7 +62,7 @@ export function helpSections(): Section[] {
     {
       title: "Properties, inventory and links",
       rows: [
-        { text: "Hostname, IP, VLAN, role, owner, URL and notes on any shape or icon (right panel)" },
+        { text: "Hostname, IP, VLAN, role, owner, URL and notes on any shape or icon (right panel); rest the pointer on one to see them" },
         { keys: sc("inventory"), text: "Inventory table: sort, filter, edit names and properties, export CSV" },
         { text: "Drill-down links: a shape can open a web address or another .excalidraw drawing" },
       ],
@@ -70,7 +70,7 @@ export function helpSections(): Section[] {
     {
       title: "Pages and presentation",
       rows: [
-        { keys: sc("pages"), text: "Pages panel: frames are pages; click to zoom, double-click to rename, arrows to reorder" },
+        { keys: sc("pages"), text: "Pages panel: frames are pages, each with a preview; click to zoom, double-click to rename, arrows to reorder" },
         { keys: sc("present"), text: "Presentation: frames as full-screen slides (arrows, space or click to move; Esc to leave)" },
       ],
     },
@@ -92,7 +92,7 @@ export function helpSections(): Section[] {
         { keys: sc("grid"), text: "Show / hide the layout grid (Grid settings… in the menu); snap while moving and drawing" },
         { keys: sc("align"), text: `Align (Excalidraw); ${formatShortcut("⌥H")} / ${formatShortcut("⌥V")} distribute. The Align section sits above Edges in the panel` },
         { text: "Route arrows around shapes (command palette)" },
-        { keys: sc("findReplace"), text: "Find and replace: match case, whole word, selection or whole drawing" },
+        { keys: sc("findReplace"), text: "Find and replace: step through matches (Enter, Shift+Enter), replace one or all, match case, whole word, selection or whole drawing" },
       ],
     },
     {
@@ -114,7 +114,7 @@ export function helpSections(): Section[] {
       rows: [
         { text: "mydraw export drawing.excalidraw --format pdf --scope frames: export without opening the app" },
         { text: "mydraw convert x.drawio --to excalidraw (or --to drawio); mydraw help lists all options" },
-        { text: "Claude Code (MCP): list_drawings, get_scene, add_elements, build_diagram, connect, place_stencil, create_zone, lint_diagram, export, screenshot and more; each call is one undo step" },
+        { text: "Claude Code (MCP): list_drawings, get_scene, add_elements, build_diagram, connect, place_stencil, create_zone, lint_diagram, export, copy_to_clipboard, screenshot and more; each call is one undo step" },
       ],
     },
   ];

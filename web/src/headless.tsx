@@ -9,6 +9,7 @@ import type { PdfPageSize, SlideSize } from "../../shared/pdfLayout";
 import { drawingStyleAppState } from "./drawingStyle";
 import { drawioToScene } from "./drawioImport";
 import { DEFAULT_EXPORT_OPTIONS, EXPORT_FORMATS, findFrame, renderExport, renderFrameExports, type ExportFormat, type ExportOptions } from "./exportImage";
+import { setMeta } from "./drawingMeta";
 import { parseDrawing, serializeScene } from "./scene";
 
 export interface HeadlessJob {
@@ -82,6 +83,7 @@ async function run(api: ExcalidrawImperativeAPI, job: HeadlessJob): Promise<Head
     api.updateScene({ elements: scene.elements, appState: scene.appState as AppState });
     api.addFiles(Object.values(scene.files));
     inputBg = scene.appState?.viewBackgroundColor;
+    setMeta(api, scene.meta); // converting a drawing keeps its custom colors
   }
   if (job.backgroundColor) api.updateScene({ appState: { viewBackgroundColor: job.backgroundColor } });
   // The export code reads api.getAppState() (canvas color etc.), which only reflects the updates

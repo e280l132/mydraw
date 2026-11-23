@@ -1,4 +1,4 @@
-import { MIME_TYPES, exportToBlob, exportToCanvas, exportToSvg } from "@excalidraw/excalidraw";
+import { MIME_TYPES, exportToBlob, exportToCanvas, exportToSvg, serializeLibraryAsJSON } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement, ExcalidrawFrameLikeElement, NonDeleted } from "@excalidraw/excalidraw/element/types";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { isPagedFormat } from "../../shared/agent";
@@ -12,10 +12,10 @@ import { extractGraph, type SceneEl } from "../../shared/sceneGraph";
 import type { ExportExtension } from "../../shared/types";
 import { resolveColor } from "../../shared/palettes";
 
-export type ExportFormat = "png" | "jpg" | "webp" | "svg" | "html" | "pdf" | "pptx" | "drawio" | "mermaid" | "csv" | "markdown";
-export const EXPORT_FORMATS: readonly ExportFormat[] = ["png", "jpg", "webp", "svg", "html", "pdf", "pptx", "drawio", "mermaid", "csv", "markdown"];
+export type ExportFormat = "png" | "jpg" | "webp" | "svg" | "html" | "pdf" | "pptx" | "drawio" | "mermaid" | "csv" | "markdown" | "excalidrawlib";
+export const EXPORT_FORMATS: readonly ExportFormat[] = ["png", "jpg", "webp", "svg", "html", "pdf", "pptx", "drawio", "mermaid", "csv", "markdown", "excalidrawlib"];
 /** Formats that are text built from the diagram's structure, not a picture. */
-export const TEXT_FORMATS: readonly ExportFormat[] = ["mermaid", "csv", "markdown"];
+export const TEXT_FORMATS: readonly ExportFormat[] = ["mermaid", "csv", "markdown", "excalidrawlib"];
 
 export const FORMAT_EXTENSION: Record<ExportFormat, ExportExtension> = {
   png: "png",
@@ -29,6 +29,7 @@ export const FORMAT_EXTENSION: Record<ExportFormat, ExportExtension> = {
   mermaid: "mmd",
   csv: "csv",
   markdown: "md",
+  excalidrawlib: "excalidrawlib",
 };
 
 export type ExportScope = "all" | "selection" | "frame" | "frames";
@@ -94,7 +95,7 @@ export function findFrame(api: ExcalidrawImperativeAPI, ref: string): FrameInfo 
   return hit;
 }
 
-function frameElements(all: readonly Live[], frameId: string): { frame: ExcalidrawFrameLikeElement; elements: Live[] } {
+export function frameElements(all: readonly Live[], frameId: string): { frame: ExcalidrawFrameLikeElement; elements: Live[] } {
   const frame = all.find((e) => e.id === frameId) as ExcalidrawFrameLikeElement | undefined;
   if (!frame) throw new Error(`no frame with id "${frameId}"`);
   const inside = new Set(all.filter((e) => e.frameId === frameId).map((e) => e.id));
@@ -151,6 +152,7 @@ const MIME: Record<ExportExtension, string> = {
   mmd: "text/plain",
   csv: "text/csv",
   md: "text/markdown",
+  excalidrawlib: "application/json",
 };
 
 function sceneBounds(els: readonly Live[]): { width: number; height: number } {
@@ -167,8 +169,25 @@ function sceneBounds(els: readonly Live[]): { width: number; height: number } {
   return els.length ? { width: maxX - minX, height: maxY - minY } : { width: 0, height: 0 };
 }
 
+/**
+ * An Excalidraw library file (.excalidrawlib) with the elements as ONE item, so the drawing or
+ * selection can be shared with anyone who uses Excalidraw (Library -> Open). Libraries cannot
+ * hold images, so those are left out and reported.
+ */
+export function renderLibraryExport(elements: readonly Live[], name: string): { text: string; warnings: string[] } {
+  const kept = elements.filter((e) => !e.isDeleted && e.type !== "image").map((e) => ({ ...e, frameId: null }));
+  const images = elements.filter((e) => !e.isDeleted && e.type === "image").length;
+  if (!kept.length) throw new Error("nothing to export: libraries cannot hold images, and the scope has only images");
+  const text = serializeLibraryAsJSON([
+    { id: `mydraw-${Date.now().toString(36)}`, status: "unpublished", created: Date.now(), name, elements: kept as unknown as NonDeleted<ExcalidrawElement>[] },
+  ]);
+  const warnings = images ? [`${images} image${images === 1 ? "" : "s"} (icons) left out: Excalidraw libraries cannot hold images`] : [];
+  return { text, warnings };
+}
+
 /** Text exports (Mermaid, CSV, Markdown table) of the given elements. */
 export function renderTextExport(format: ExportFormat, elements: readonly Live[]): string {
+  if (format === "excalidrawlib") return renderLibraryExport(elements, "mydraw").text;
   const graph = extractGraph(elements as unknown as SceneEl[]);
   if (format === "mermaid") {
     if (!graph.nodes.length) throw new Error("no nodes to export: Mermaid needs labelled shapes or icon nodes");
@@ -327,6 +346,10 @@ async function renderElements(
 ): Promise<RenderedExport> {
   const extension = FORMAT_EXTENSION[opts.format];
   const preview = previewMaxSize != null;
+  if (opts.format === "excalidrawlib") {
+    const lib = renderLibraryExport(elements, (exportingFrame as { name?: string } | null)?.name || "mydraw");
+    return { data: lib.text, extension, mime: MIME[extension], warnings: lib.warnings };
+  }
   if (TEXT_FORMATS.includes(opts.format)) {
     return { data: renderTextExport(opts.format, elements), extension, mime: MIME[extension] };
   }

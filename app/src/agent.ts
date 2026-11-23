@@ -1,7 +1,7 @@
 // Agent command dispatcher (main process). Library and file-system methods run here; everything
 // that touches a drawing is forwarded to the renderer, which owns the scene and runs commands one
 // at a time (see web/src/agent/executor.ts).
-import { app, ipcMain, type BrowserWindow } from "electron";
+import { app, clipboard, ClipboardItem, ipcMain, type BrowserWindow } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { AGENT_EXPORT_FORMATS, exportFormatForPath, isPagedFormat, type AgentCommand, type AgentReply } from "../../shared/agent";
@@ -226,6 +226,22 @@ export function setupAgent(deps: AgentDeps): (method: string, params: Record<str
           ...(out.pages !== undefined ? { pages: out.pages } : {}),
           ...(out.warnings?.length ? { warnings: out.warnings } : {}),
         };
+      }
+      case "copy_to_clipboard": {
+        // The same as the app's Copy As: a PNG picture, or SVG / Mermaid text, on the system clipboard.
+        const format = params.format;
+        if (format !== "png" && format !== "svg" && format !== "mermaid") throw new Error("format must be png, svg or mermaid");
+        const scope = params.scope === undefined ? "all" : params.scope;
+        if (scope !== "all" && scope !== "selection") throw new Error("scope must be all or selection");
+        const out = (await renderer("render_export", { ...params, format, scope })) as { data?: ArrayBuffer | string };
+        if (out.data === undefined) throw new Error("nothing to copy");
+        if (format === "png") {
+          const bytes = out.data as ArrayBuffer;
+          await clipboard.write([new ClipboardItem({ "image/png": new Blob([bytes], { type: "image/png" }) })]);
+          return { copied: "png", bytes: bytes.byteLength };
+        }
+        clipboard.writeText(out.data as string);
+        return { copied: format, chars: (out.data as string).length };
       }
       case "screenshot": {
         const out = (await renderer("render_export", {

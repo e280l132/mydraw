@@ -259,6 +259,7 @@ function registerIpc(): void {
     mmd: { name: "Mermaid flowchart", extensions: ["mmd"] },
     csv: { name: "CSV inventory", extensions: ["csv"] },
     md: { name: "Markdown table", extensions: ["md"] },
+    excalidrawlib: { name: "Excalidraw library", extensions: ["excalidrawlib"] },
   };
   const isExt = (v: unknown): v is ExportExtension => typeof v === "string" && Object.hasOwn(EXPORT_TYPES, v);
   const isData = (v: unknown): v is ArrayBuffer | string => typeof v === "string" || v instanceof ArrayBuffer || ArrayBuffer.isView(v);

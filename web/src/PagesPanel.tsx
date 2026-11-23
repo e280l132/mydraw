@@ -4,6 +4,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { listFrames } from "./exportImage";
 import { addPage, movePage, renamePage, zoomToPage } from "./pages";
+import { usePageThumbs } from "./pageThumbs";
 
 interface Props {
   api: ExcalidrawImperativeAPI | undefined;
@@ -11,7 +12,7 @@ interface Props {
 }
 
 export function PagesPanel({ api, onClose }: Props) {
-  const [, refresh] = useReducer((n: number) => n + 1, 0);
+  const [tick, refresh] = useReducer((n: number) => n + 1, 0);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const input = useRef<HTMLInputElement>(null);
@@ -34,6 +35,7 @@ export function PagesPanel({ api, onClose }: Props) {
 
   const frames = api ? listFrames(api) : [];
   const selected = api?.getAppState().selectedElementIds ?? {};
+  const thumbs = usePageThumbs(api, frames.map((f) => f.id), tick);
 
   const commit = () => {
     // Escape unmounts the focused input, which fires onBlur: don't save then.
@@ -112,6 +114,9 @@ export function PagesPanel({ api, onClose }: Props) {
                 ↓
               </button>
             </span>
+            <div className="md-page-thumb" aria-hidden="true">
+              {thumbs[f.id] ? <img src={thumbs[f.id]} alt="" draggable={false} /> : null}
+            </div>
           </div>
         ))}
         {!frames.length && (
