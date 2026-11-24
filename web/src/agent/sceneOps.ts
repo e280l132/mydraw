@@ -170,7 +170,13 @@ export function describe(el: El, map: ElMap): Loose {
     const node = iconNodeOf(el, map);
     if (node) o.node = node.id;
   }
-  if (isIconNode(el)) {
+  if (isIconNode(el) && el.customData?.mydrawShape) {
+    // A drawn shape (database, cloud, person, ...): one node with its label.
+    o.type = "shape-node";
+    o.shape = el.customData.mydrawShape;
+    delete o.backgroundColor;
+    delete o.fillStyle;
+  } else if (isIconNode(el)) {
     // Present the node as one thing: its caption, its icon, and where to connect.
     o.type = "icon-node";
     delete o.strokeColor;
@@ -198,6 +204,7 @@ export function describe(el: El, map: ElMap): Loose {
     if (routing !== "straight") o.routing = routing;
   }
   if (el.customData?.mydrawKind) o.kind = el.customData.mydrawKind;
+  if (el.customData?.mydrawSubtitle) o.subtitle = el.customData.mydrawSubtitle;
   if (el.type === "frame" || el.type === "magicframe") o.name = e.name ?? null;
   if (el.groupIds.length) o.groupIds = el.groupIds;
   if (el.frameId) o.frameId = el.frameId;

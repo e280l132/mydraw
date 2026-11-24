@@ -344,3 +344,36 @@ describe("edges avoid zone title strips", () => {
     }
   });
 });
+
+describe("diagram spec: looks, shapes, emphasis, arrow semantics", () => {
+  it("accepts the new fields", () => {
+    const s = normalizeSpec({
+      look: "sketch",
+      title: "T",
+      subtitle: "Sub",
+      kinds: { Traffic: { color: "blue-600", weight: "primary", head: "triangle", style: "solid" } },
+      nodes: [
+        { id: "db", shape: "cylinder", emphasis: "primary", subtitle: "10.0.0.5" },
+        { id: "u", shape: "actor", emphasis: "muted" },
+      ],
+      edges: [{ from: "u", to: "db", kind: "Traffic", weight: "secondary", head: "crowfoot_many", tail: "none" }],
+    });
+    expect(s.look).toBe("sketch");
+    expect(s.subtitle).toBe("Sub");
+    expect(s.kinds!.Traffic).toMatchObject({ weight: "primary", head: "triangle" });
+    expect(s.kinds!.Traffic.color).toMatch(/^#[0-9a-f]{6}$/);
+    expect(s.nodes[0]).toMatchObject({ shape: "cylinder", emphasis: "primary", subtitle: "10.0.0.5" });
+    expect(s.edges![0]).toMatchObject({ weight: "secondary", head: "crowfoot_many", tail: "none" });
+  });
+
+  it("rejects bad values with readable messages", () => {
+    const base = { nodes: [{ id: "a" }, { id: "b" }] };
+    expect(() => normalizeSpec({ ...base, look: "neon" })).toThrow(/look must be one of professional, sketch/);
+    expect(() => normalizeSpec({ nodes: [{ id: "a", shape: "star" }] })).toThrow(/shape must be one of/);
+    expect(() => normalizeSpec({ nodes: [{ id: "a", emphasis: "loud" }] })).toThrow(/emphasis/);
+    expect(() => normalizeSpec({ ...base, edges: [{ from: "a", to: "b", weight: "heavy" }] })).toThrow(/weight/);
+    expect(() => normalizeSpec({ ...base, edges: [{ from: "a", to: "b", head: "star" }] })).toThrow(/head/);
+    expect(() => normalizeSpec({ ...base, kinds: { X: { color: "nope" } } })).toThrow(/kinds\.X\.color/);
+    expect(() => normalizeSpec({ ...base, kinds: [] })).toThrow(/kinds must be an object/);
+  });
+});

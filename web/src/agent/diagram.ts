@@ -2,8 +2,8 @@
 // mermaid_to_scene, apply_template), legends and auto layout of existing elements. Like sceneOps,
 // nothing here calls updateScene: callers commit the returned elements as one undo step.
 import { convertToExcalidrawElements, newElementWith } from "@excalidraw/excalidraw";
-import type { ExcalidrawImageElement } from "@excalidraw/excalidraw/element/types";
-import type { AppState, BinaryFileData, BinaryFiles } from "@excalidraw/excalidraw/types";
+import type { ExcalidrawImageElement, FileId } from "@excalidraw/excalidraw/element/types";
+import type { AppState, BinaryFileData, BinaryFiles, DataURL } from "@excalidraw/excalidraw/types";
 import { zoneColors, zoneDepths, type DiagramNode, type DiagramSpec } from "../../../shared/diagram";
 import type { Box, Point } from "../../../shared/geometry";
 import { translateLayout, type LayoutAlgorithm, type LayoutDirection, type LayoutResult } from "../../../shared/layout";
@@ -15,7 +15,11 @@ import { resolveColor } from "../../../shared/palettes";
 import type { Routing } from "../../../shared/routing";
 import { isRecolorableIcon, recoloredIcon } from "../library/iconColor";
 import { loadStencil } from "../library/stencilContent";
-import { trueColorFile } from "../library/trueColor";
+import { TRUE_COLOR_SVG_MIME, trueColorFile } from "../library/trueColor";
+import { svgToDataURL } from "../../../shared/recolor";
+import { CAPTION_SHAPES, CAPTION_SHAPE_SIZE, isSvgShape, SHAPE_PADDING, shapeSvg, type ShapeSvgOptions, type SvgShape } from "../../../shared/shapeSvgs";
+import { edgeLook, kindStyles, lookOf, type TextStyle } from "../../../shared/diagramLook";
+import { fontIdByName } from "../fontRegistry";
 import {
   applyUpdates,
   boundsOf,
@@ -47,8 +51,9 @@ export const NODE_FONT_SIZE = 16;
 export const CAPTION_FONT_SIZE = 14;
 export const ZONE_FONT_SIZE = 16;
 export const EDGE_FONT_SIZE = 14;
-const TITLE_FONT_SIZE = 28;
 const DEFAULT_ICON_SIZE = 64;
+/** A legend lists icon types only up to this many (beyond that, only arrow and shape kinds). */
+const MAX_LEGEND_ICONS = 10;
 /** Gap between a new diagram and existing content. */
 const PLACE_GAP = 120;
 const ZONE_TITLE_X = 14;
@@ -99,6 +104,12 @@ export interface IconNodeOptions {
   mask?: string | null;
   customData?: Loose;
   stencil?: { id: string; name: string };
+  /** Make the node at least this wide (equal widths in a row); the icon stays centred. */
+  width?: number;
+  /** Caption under the icon (default) or centred on it (a drawn shape with its label inside). */
+  labelInside?: boolean;
+  /** Opacity of icon and caption (muted nodes). */
+  opacity?: number;
 }
 
 /** Size of an icon node for an image size and caption (without building it). */
@@ -116,7 +127,9 @@ export function iconNodeSize(iw: number, ih: number, caption: { width: number; h
 export function makeIconNode(o: IconNodeOptions): El[] {
   const fontSize = o.fontSize ?? CAPTION_FONT_SIZE;
   const cap = o.caption ? measureText(o.caption, fontSize, o.fontFamily) : null;
-  const { width, height } = iconNodeSize(o.image.width, o.image.height, cap);
+  const natural = o.labelInside ? { width: o.image.width, height: o.image.height } : iconNodeSize(o.image.width, o.image.height, cap);
+  const width = Math.max(natural.width, o.width ?? 0);
+  const height = natural.height;
   const id = o.id ?? randomId();
   const made = convertToExcalidrawElements(
     [
@@ -141,7 +154,7 @@ export function makeIconNode(o: IconNodeOptions): El[] {
                 fontFamily: o.fontFamily as never,
                 strokeColor: o.strokeColor,
                 textAlign: "center",
-                verticalAlign: "bottom",
+                verticalAlign: o.labelInside ? "middle" : "bottom",
               },
             }
           : {}),
@@ -158,14 +171,34 @@ export function makeIconNode(o: IconNodeOptions): El[] {
   const image = {
     ...o.image,
     x: o.x + (container.width - o.image.width) / 2,
-    y: o.y + 4,
+    y: o.labelInside ? o.y : o.y + 4,
     groupIds: [g],
     frameId: null,
+    ...(o.opacity !== undefined ? { opacity: o.opacity } : {}),
   } as El;
   const out: El[] = [container, image];
   const text = made.find((e) => e.type === "text");
-  if (text) out.push({ ...text, groupIds: [g] } as El);
+  if (text) out.push({ ...text, groupIds: [g], ...(o.opacity !== undefined ? { opacity: o.opacity } : {}) } as El);
   return out;
+}
+
+// ---------- drawn shapes (database, cloud, person, ...) ----------
+
+async function sha1Text(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** A drawn shape (shared/shapeSvgs.ts) as an image element at (0,0) and its file. */
+export async function shapeImage(kind: SvgShape, o: ShapeSvgOptions): Promise<{ image: El; file: BinaryFileData }> {
+  const svg = shapeSvg(kind, o);
+  const fileId = (await sha1Text(svg)) as FileId;
+  const now = Date.now();
+  const [image] = convertToExcalidrawElements([{ type: "image", fileId, x: 0, y: 0, width: o.width, height: o.height }]);
+  return {
+    image: { ...image, status: "saved", roughness: 0 } as El,
+    file: { id: fileId, dataURL: svgToDataURL(svg) as DataURL, mimeType: TRUE_COLOR_SVG_MIME, created: now, lastRetrieved: now },
+  };
 }
 
 // ---------- zones ----------
@@ -180,6 +213,7 @@ export interface ZoneOptions {
   strokeWidth?: number;
   roughness: number;
   fontFamily: number;
+  fontSize?: number;
   locked?: boolean;
   parent?: string | null;
   customData?: Loose;
@@ -218,7 +252,7 @@ export function makeZone(o: ZoneOptions): El[] {
         x: o.box.x + ZONE_TITLE_X,
         y: o.box.y + ZONE_TITLE_Y,
         text: o.label,
-        fontSize: ZONE_FONT_SIZE,
+        fontSize: o.fontSize ?? ZONE_FONT_SIZE,
         fontFamily: o.fontFamily as never,
         strokeColor: o.stroke,
       } as never,
@@ -228,9 +262,9 @@ export function makeZone(o: ZoneOptions): El[] {
   return out;
 }
 
-export function zoneTitleSize(label: string | undefined, fontFamily: number): { titleHeight: number; minWidth: number } {
+export function zoneTitleSize(label: string | undefined, fontFamily: number, fontSize = ZONE_FONT_SIZE): { titleHeight: number; minWidth: number } {
   if (!label) return { titleHeight: 4, minWidth: 80 };
-  const m = measureText(label, ZONE_FONT_SIZE, fontFamily);
+  const m = measureText(label, fontSize, fontFamily);
   return { titleHeight: m.height + ZONE_TITLE_Y + 4, minWidth: m.width + ZONE_TITLE_X * 2 + 16 };
 }
 
@@ -247,14 +281,12 @@ interface NodePlan {
   width: number;
   height: number;
   icon?: { image: El; files: BinaryFileData[]; item: LibraryItem };
+  /** A drawn shape (shared/shapeSvgs.ts); `captionBelow` for the person and server. */
+  shape?: { kind: SvgShape; captionBelow: boolean };
+  /** Size of the subtitle line, when the node has one. */
+  sub?: { width: number; height: number } | null;
 }
 
-function arrowheads(arrow: "end" | "both" | "none" | undefined): Loose {
-  return {
-    startArrowhead: arrow === "both" ? "arrow" : null,
-    endArrowhead: arrow === "none" ? null : "arrow",
-  };
-}
 
 /**
  * Lay out a diagram with ELK and turn it into elements: zones (behind), arrows, then nodes.
@@ -266,9 +298,22 @@ export async function buildDiagram(
   spec: DiagramSpec,
   items: Record<string, LibraryItem | null>,
 ): Promise<DiagramBuild> {
-  const font = st.currentItemFontFamily as number;
+  // The look (professional by default, or sketch) sets fonts, sizes, strokes and roughness.
+  const look = lookOf(spec.look);
+  const fontFor = (t: TextStyle): number => fontIdByName(t.font) ?? fontIdByName(t.fallback) ?? (st.currentItemFontFamily as number);
+  const fonts = {
+    title: fontFor(look.title),
+    subtitle: fontFor(look.diagramSubtitle),
+    zone: fontFor(look.zoneTitle),
+    node: fontFor(look.nodeLabel),
+    nodeBold: fontFor(look.nodeLabelBold),
+    caption: fontFor(look.caption),
+    nodeSub: fontFor(look.nodeSubtitle),
+    edge: fontFor(look.edgeLabel),
+  };
+  const font = fonts.caption;
   const ink = st.currentItemStrokeColor;
-  const roughness = st.currentItemRoughness;
+  const roughness = look.roughness;
   const warnings: string[] = [];
   const taken = new Set(scene.map((e) => e.id));
   // Edge ids numbered automatically (e1, e2, ...) by normalizeSpec must not collide with an earlier
@@ -290,31 +335,84 @@ export async function buildDiagram(
   ].filter((id) => taken.has(id));
   if (clash.length) throw new Error(`ids already used in this drawing: ${clash.join(", ")} (pick other ids)`);
 
-  // Measure nodes; load icons.
+  // Text styles of a node: emphasis makes the label bold; muted nodes are grey.
+  const labelText = (n: DiagramNode) => (n.emphasis === "primary" ? { f: fonts.nodeBold, size: look.nodeLabelBold.size } : { f: fonts.node, size: look.nodeLabel.size });
+  const captionText = (n: DiagramNode) => (n.emphasis === "primary" ? { f: fonts.nodeBold, size: look.caption.size + 1 } : { f: fonts.caption, size: look.caption.size });
+  const strokeOf = (n: DiagramNode) => (n.emphasis === "muted" ? look.muted : (n.color ?? ink));
+  const opacityOf = (n: DiagramNode) => (n.emphasis === "muted" ? look.faded : undefined);
+  const subtitleSize = (n: DiagramNode) => (n.subtitle ? measureText(n.subtitle, look.nodeSubtitle.size, fonts.nodeSub) : null);
+
+  // Measure nodes; load icons; plan drawn shapes.
   const plans = new Map<string, NodePlan>();
   for (const n of spec.nodes) {
     const label = n.label ?? n.id;
+    const sub = subtitleSize(n);
     const item = n.icon ? items[n.icon] : undefined;
     if (n.icon && !item) warnings.push(`no icon found for "${n.icon}" (node ${n.id}); drew a ${n.shape ?? "rectangle"} instead`);
     if (item) {
       try {
-        const icon = await loadIconImage(item, { size: spec.iconSize ?? DEFAULT_ICON_SIZE, color: n.iconColor, fontFamily: font, strokeColor: ink });
-        const cap = label ? measureText(label, CAPTION_FONT_SIZE, font) : null;
+        const c = captionText(n);
+        const icon = await loadIconImage(item, { size: spec.iconSize ?? DEFAULT_ICON_SIZE, color: n.iconColor, fontFamily: c.f, strokeColor: ink });
+        const cap = label ? measureText(label, c.size, c.f) : null;
         const size = iconNodeSize(icon.image.width, icon.image.height, cap);
-        plans.set(n.id, { node: n, ...size, icon: { ...icon, item } });
+        // A subtitle goes under the caption, inside the node's layout box.
+        plans.set(n.id, { node: n, width: Math.max(size.width, sub ? sub.width + 8 : 0), height: size.height + (sub ? sub.height + 4 : 0), icon: { ...icon, item }, sub });
         continue;
       } catch (e) {
         warnings.push(`icon "${item.name}" for node ${n.id} failed (${e instanceof Error ? e.message : e}); drew a shape instead`);
       }
     }
-    const m = measureText(label, NODE_FONT_SIZE, font);
     const shape = n.shape ?? "rectangle";
-    const k = shape === "diamond" ? 1.7 : shape === "ellipse" ? 1.35 : 1;
+    if (isSvgShape(shape)) {
+      if (CAPTION_SHAPES.has(shape)) {
+        const img = CAPTION_SHAPE_SIZE[shape as "actor" | "server"];
+        const c = captionText(n);
+        const cap = label ? measureText(label, c.size, c.f) : null;
+        const size = iconNodeSize(img.width, img.height, cap);
+        plans.set(n.id, { node: n, width: Math.max(size.width, sub ? sub.width + 8 : 0), height: size.height + (sub ? sub.height + 4 : 0), shape: { kind: shape, captionBelow: true }, sub });
+      } else {
+        const t = labelText(n);
+        const m = measureText(label, t.size, t.f);
+        const pad = SHAPE_PADDING[shape];
+        plans.set(n.id, {
+          node: n,
+          width: n.width ?? Math.max(120, m.width + pad.x, sub ? sub.width + pad.x : 0),
+          height: n.height ?? Math.max(shape === "cylinder" ? 90 : 64, m.height + pad.y) + (sub ? sub.height + 6 : 0),
+          shape: { kind: shape, captionBelow: false },
+          sub,
+        });
+      }
+      continue;
+    }
+    const native = shape as "rectangle" | "ellipse" | "diamond";
+    const t = labelText(n);
+    const m = measureText(label, t.size, t.f);
+    const k = native === "diamond" ? 1.7 : native === "ellipse" ? 1.35 : 1;
     plans.set(n.id, {
       node: n,
-      width: n.width ?? Math.max(120, (m.width + 36) * k),
-      height: n.height ?? Math.max(shape === "diamond" ? 80 : 60, (m.height + 26) * k),
+      width: n.width ?? Math.max(120, (m.width + 36) * k, sub ? (sub.width + 36) * k : 0),
+      height: (n.height ?? Math.max(native === "diamond" ? 80 : 60, (m.height + 26) * k)) + (sub ? sub.height + 6 : 0),
+      sub,
     });
+  }
+
+  // Equal sizes: nodes of one type in one zone share the widest width (and, for shapes, height),
+  // so rows and columns line up. Sizes the caller gave are kept.
+  const groups = new Map<string, NodePlan[]>();
+  for (const plan of plans.values()) {
+    const n = plan.node;
+    const type = plan.icon ? "icon" : plan.shape ? `shape:${plan.shape.kind}` : `native:${n.shape ?? "rectangle"}`;
+    const key = `${n.zone ?? ""}|${type}`;
+    groups.set(key, [...(groups.get(key) ?? []), plan]);
+  }
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const w = Math.max(...list.map((p) => p.width));
+    const h = Math.max(...list.map((p) => p.height));
+    for (const p of list) {
+      if (p.node.width === undefined) p.width = w;
+      if (!p.icon && !p.shape?.captionBelow && p.node.height === undefined) p.height = h;
+    }
   }
 
   const edges = (spec.edges ?? []).filter((e) => {
@@ -322,12 +420,12 @@ export async function buildDiagram(
     warnings.push(`edge ${e.id} from "${e.from}" to itself was skipped`);
     return false;
   });
-  const zoneSizes = new Map((spec.zones ?? []).map((z) => [z.id, zoneTitleSize(z.label, font)]));
+  const zoneSizes = new Map((spec.zones ?? []).map((z) => [z.id, zoneTitleSize(z.label, fonts.zone, look.zoneTitle.size)]));
   const best = await layoutBest({
     nodes: spec.nodes.map((n) => ({ id: n.id, width: plans.get(n.id)!.width, height: plans.get(n.id)!.height, zone: n.zone })),
     zones: (spec.zones ?? []).map((z) => ({ id: z.id, parent: z.parent, ...zoneSizes.get(z.id)! })),
     edges: edges.map((e) => {
-      const m = e.label ? measureText(e.label, EDGE_FONT_SIZE, font) : null;
+      const m = e.label ? measureText(e.label, look.edgeLabel.size, fonts.edge) : null;
       return { id: e.id!, from: e.from, to: e.to, label: m ? { width: m.width + 8, height: m.height + 4 } : undefined };
     }),
     direction: spec.direction,
@@ -350,10 +448,17 @@ export async function buildDiagram(
   let titleId: string | null = null;
   if (spec.title) {
     const [t] = convertToExcalidrawElements([
-      { type: "text", x: origin.x, y: origin.y, text: spec.title, fontSize: TITLE_FONT_SIZE, fontFamily: font as never, strokeColor: ink },
+      { type: "text", x: origin.x, y: origin.y, text: spec.title, fontSize: look.title.size, fontFamily: fonts.title as never, strokeColor: ink },
     ]);
     added.push(t);
     titleId = t.id;
+    origin = { x: origin.x, y: origin.y + t.height + (spec.subtitle ? 6 : 24) };
+  }
+  if (spec.subtitle) {
+    const [t] = convertToExcalidrawElements([
+      { type: "text", x: origin.x, y: origin.y, text: spec.subtitle, fontSize: look.diagramSubtitle.size, fontFamily: fonts.subtitle as never, strokeColor: look.muted },
+    ]);
+    added.push(t);
     origin = { x: origin.x, y: origin.y + t.height + 24 };
   }
   layout = translateLayout(layout, origin);
@@ -373,15 +478,24 @@ export async function buildDiagram(
       stroke: c.stroke,
       fill: c.fill,
       style: z.style,
-      strokeWidth: depths.get(z.id) === 0 ? 2 : 1,
+      strokeWidth: depths.get(z.id) === 0 ? look.zoneStroke.outer : look.zoneStroke.inner,
       roughness,
-      fontFamily: font,
+      fontFamily: fonts.zone,
+      fontSize: look.zoneTitle.size,
       locked: z.locked,
       parent: z.parent,
     });
     added.push(...els);
     byId.set(z.id, els[0]);
   }
+
+  /** The grey second line of a node, centred at `cx` with its top at `y`, in the node's group. */
+  const subtitleEl = (n: DiagramNode, cx: number, y: number, groupIds: readonly string[]): El => {
+    const [t] = convertToExcalidrawElements([
+      { type: "text", x: cx, y, text: n.subtitle!, fontSize: look.nodeSubtitle.size, fontFamily: fonts.nodeSub as never, strokeColor: look.muted, textAlign: "center" } as never,
+    ]);
+    return { ...t, x: cx - t.width / 2, groupIds: [...groupIds], customData: { mydrawSubtitleOf: n.id }, ...(opacityOf(n) !== undefined ? { opacity: opacityOf(n) } : {}) } as El;
+  };
 
   // Nodes (created now so arrows can bind to them; added after the arrows so lines go underneath).
   const nodeEls: El[] = [];
@@ -391,49 +505,108 @@ export async function buildDiagram(
     const data: Loose = { ...(n.data ?? {}) };
     if (n.kind) data.mydrawKind = n.kind;
     if (n.zone) data.mydrawZoneId = n.zone;
-    if (plan.icon) {
+    if (n.subtitle) data.mydrawSubtitle = n.subtitle;
+    const stroke = strokeOf(n);
+    if (plan.icon || plan.shape?.captionBelow) {
+      // Icon, or a drawn shape with its label underneath (person, server).
+      let image: El;
+      if (plan.icon) {
+        image = plan.icon.image;
+        files.push(...plan.icon.files);
+      } else {
+        const size = CAPTION_SHAPE_SIZE[plan.shape!.kind as "actor" | "server"];
+        const drawn = await shapeImage(plan.shape!.kind, { ...size, stroke, fill: n.fill ?? "#ffffff", strokeWidth: look.nodeStroke[n.emphasis ?? "normal"] });
+        image = drawn.image;
+        files.push(drawn.file);
+        data.mydrawShape = plan.shape!.kind;
+      }
+      const c = captionText(n);
       const els = makeIconNode({
         id: n.id,
-        image: plan.icon.image,
+        image,
         caption: n.label ?? n.id,
-        fontFamily: font,
-        strokeColor: n.color ?? ink,
+        fontFamily: c.f,
+        fontSize: c.size,
+        strokeColor: stroke,
         x: box.x,
         y: box.y,
+        width: box.width,
         customData: data,
-        stencil: { id: plan.icon.item.id, name: plan.icon.item.name },
+        opacity: opacityOf(n),
+        ...(plan.icon ? { stencil: { id: plan.icon.item.id, name: plan.icon.item.name } } : {}),
       });
       if (n.link) els[0] = { ...els[0], link: n.link } as El;
+      if (n.subtitle) els.push(subtitleEl(n, box.x + els[0].width / 2, box.y + els[0].height + 2, els[0].groupIds));
       nodeEls.push(...els);
-      files.push(...plan.icon.files);
       byId.set(n.id, els[0]);
+    } else if (plan.shape) {
+      // A drawn shape with its label inside (database, cloud, queue, ...).
+      data.mydrawShape = plan.shape.kind;
+      const drawn = await shapeImage(plan.shape.kind, { width: box.width, height: box.height, stroke, fill: n.fill ?? "#ffffff", strokeWidth: look.nodeStroke[n.emphasis ?? "normal"] });
+      files.push(drawn.file);
+      const t = labelText(n);
+      const els = makeIconNode({
+        id: n.id,
+        image: drawn.image,
+        caption: n.label ?? n.id,
+        fontFamily: t.f,
+        fontSize: t.size,
+        strokeColor: stroke,
+        x: box.x,
+        y: box.y,
+        labelInside: true,
+        customData: data,
+        opacity: opacityOf(n),
+      });
+      if (n.link) els[0] = { ...els[0], link: n.link } as El;
+      if (n.subtitle) {
+        const label = els.find((e) => e.type === "text");
+        const below = label ? label.y + label.height + 3 : box.y + box.height / 2;
+        els.push(subtitleEl(n, box.x + box.width / 2, below, els[0].groupIds));
+      }
+      // The shape image goes first: Excalidraw draws a bound label right after its container, so
+      // with the container first the (filled) image would cover the label.
+      const [container, image, ...rest] = els;
+      nodeEls.push(image, container, ...rest);
+      byId.set(n.id, container);
     } else {
-      const shape = n.shape ?? "rectangle";
+      const shape = (n.shape ?? "rectangle") as "rectangle" | "ellipse" | "diamond";
+      const t = labelText(n);
       const made: El[] = convertToExcalidrawElements(
         [
           {
             type: shape,
             id: n.id,
             ...box,
-            strokeColor: n.color ?? ink,
+            strokeColor: stroke,
             backgroundColor: n.fill ?? "#ffffff",
             fillStyle: "solid",
-            strokeWidth: st.currentItemStrokeWidth,
+            strokeWidth: look.nodeStroke[n.emphasis ?? "normal"],
             roughness,
             roundness: shape === "ellipse" ? null : { type: 3 },
             link: n.link ?? null,
-            label: { text: n.label ?? n.id, fontSize: NODE_FONT_SIZE, fontFamily: font as never, strokeColor: n.color ?? ink },
+            ...(opacityOf(n) !== undefined ? { opacity: opacityOf(n) } : {}),
+            label: { text: n.label ?? n.id, fontSize: t.size, fontFamily: t.f as never, strokeColor: stroke },
           } as never,
         ],
         { regenerateIds: false },
       );
       made[0] = { ...made[0], customData: Object.keys(data).length ? data : undefined } as El;
+      if (n.subtitle) {
+        // Shape, label and subtitle move together.
+        const g = randomId();
+        for (let i = 0; i < made.length; i++) made[i] = { ...made[i], groupIds: [g] } as El;
+        const label = made.find((e) => e.type === "text");
+        const below = label ? label.y + label.height + 3 : box.y + box.height / 2;
+        made.push(subtitleEl(n, box.x + box.width / 2, below, [g]));
+      }
       nodeEls.push(...made);
       byId.set(n.id, made[0]);
     }
   }
 
-  // Arrows.
+  // Arrows: colour, dash, width, opacity and arrowheads from the edge, its kind and the look.
+  const kinds = kindStyles(edges.map((e) => e.kind), spec.kinds);
   const arrowEls: El[] = [];
   const boundTo = new Map<string, { id: string; type: "arrow" }[]>();
   for (const e of edges) {
@@ -441,15 +614,18 @@ export async function buildDiagram(
     const b = byId.get(e.to)!;
     const routing: Routing = e.routing ?? spec.routing ?? "elbow";
     const given = layout.orthogonal && routing === "elbow" ? tidied.get(e.id!) : undefined;
+    const L = edgeLook(e, look, kinds, ink);
     const sk: Loose = {
       type: "arrow",
       id: e.id,
-      strokeColor: e.color ?? ink,
-      strokeWidth: e.width ?? 2,
-      strokeStyle: e.style ?? "solid",
+      strokeColor: L.color,
+      strokeWidth: L.width,
+      strokeStyle: L.style,
+      opacity: L.opacity,
       roughness,
-      ...arrowheads(e.arrow),
-      ...(e.label ? { label: { text: e.label, fontSize: EDGE_FONT_SIZE, fontFamily: font, strokeColor: e.color ?? ink } } : {}),
+      startArrowhead: L.startArrowhead,
+      endArrowhead: L.endArrowhead,
+      ...(e.label ? { label: { text: e.label, fontSize: look.edgeLabel.size, fontFamily: fonts.edge, strokeColor: L.color } } : {}),
       ...(e.kind ? { customData: { mydrawKind: e.kind } } : {}),
     };
     arrowEls.push(...connectorElements(sk, a, b, routing, given?.points, given?.label?.center));
@@ -574,6 +750,10 @@ export function buildLegend(
       });
     }
   }
+  // Many icon types make a legend as long as the diagram, and every icon has its caption anyway:
+  // then the legend lists only the kinds (arrows and shapes).
+  const iconKeys = [...entries.keys()].filter((k) => k.startsWith("i:"));
+  if (iconKeys.length > MAX_LEGEND_ICONS && entries.size > iconKeys.length) for (const k of iconKeys) entries.delete(k);
   if (!entries.size) {
     throw new Error("nothing for a legend: no icons, and no shapes or arrows with a kind (set kind on nodes/edges, or data.mydrawKind)");
   }
@@ -732,7 +912,9 @@ export async function autoLayout(
       nodes: units.map((u) => ({ id: u.id, width: u.box.width, height: u.box.height, zone: u.zone })),
       zones: zones.map((z) => {
         const title = zoneTitleOf(z, map) as (El & { text: string }) | undefined;
-        return { id: z.id, parent: zoneParent(z), ...zoneTitleSize(title?.text, font) };
+        // The title as drawn (its own font and size), not re-measured in the drawing's font.
+        const size = title ? { titleHeight: title.height + ZONE_TITLE_Y + 4, minWidth: title.width + ZONE_TITLE_X * 2 + 16 } : zoneTitleSize(undefined, font);
+        return { id: z.id, parent: zoneParent(z), ...size };
       }),
       edges: edges.map((e) => {
         const label = boundTextOf(e.arrow, map);

@@ -4,10 +4,13 @@
 import { hexToRgb, rgbToHex } from "./colorMath";
 import { linkProblem } from "./links";
 import { resolveColor } from "./palettes";
+import { ARROWHEADS, EDGE_WEIGHTS, LOOKS_LIST, NODE_EMPHASES, type Arrowhead, type EdgeWeight, type KindStyle, type LookName, type NodeEmphasis } from "./diagramLook";
 import type { LayoutAlgorithm, LayoutDirection } from "./layout";
 import type { Routing } from "./routing";
+import { SVG_SHAPES, type SvgShape } from "./shapeSvgs";
 
-export type NodeShape = "rectangle" | "ellipse" | "diamond";
+/** Excalidraw's own shapes, plus the drawn ones of shared/shapeSvgs.ts (cylinder for a database, ...). */
+export type NodeShape = "rectangle" | "ellipse" | "diamond" | SvgShape;
 export type LineStyle = "solid" | "dashed" | "dotted";
 
 export interface DiagramNode {
@@ -30,6 +33,10 @@ export interface DiagramNode {
   link?: string;
   /** Category shown in the legend, e.g. "Server". */
   kind?: string;
+  /** "primary": thicker border, bold label; "muted": grey and thin. */
+  emphasis?: NodeEmphasis;
+  /** Second line under the label (an IP, a role), smaller and grey. */
+  subtitle?: string;
 }
 
 export interface DiagramZone {
@@ -56,8 +63,13 @@ export interface DiagramEdge {
   /** Arrowheads: "end" (default), "both", "none". */
   arrow?: "end" | "both" | "none";
   routing?: Routing;
-  /** Category shown in the legend, e.g. "Replication". */
+  /** Category shown in the legend, e.g. "Replication"; edges of one kind share its style (DiagramSpec.kinds). */
   kind?: string;
+  /** "primary" (thick), "normal" (default) or "secondary" (thin, faded). */
+  weight?: EdgeWeight;
+  /** Arrowhead at the end / start (Excalidraw's: triangle, dot, diamond, crowfoot_many, ..., or none). */
+  head?: Arrowhead;
+  tail?: Arrowhead;
 }
 
 export interface DiagramSpec {
@@ -79,12 +91,18 @@ export interface DiagramSpec {
   legend?: boolean | string;
   /** Title text above the diagram. */
   title?: string;
+  /** A line under the title. */
+  subtitle?: string;
+  /** "professional" (default) or "sketch" (hand-drawn). */
+  look?: LookName;
+  /** Style per edge kind, so every arrow of a kind looks the same; kinds without one get a colour of their own. */
+  kinds?: Record<string, KindStyle>;
 }
 
 export const DIRECTIONS: readonly LayoutDirection[] = ["right", "down", "left", "up"];
 export const ALGORITHMS: readonly LayoutAlgorithm[] = ["layered", "tree", "radial", "force", "grid"];
 export const ROUTINGS: readonly Routing[] = ["elbow", "straight", "curved"];
-const SHAPES: readonly NodeShape[] = ["rectangle", "ellipse", "diamond"];
+const SHAPES: readonly NodeShape[] = ["rectangle", "ellipse", "diamond", ...SVG_SHAPES];
 const STYLES: readonly LineStyle[] = ["solid", "dashed", "dotted"];
 
 /** Zone colors used in turn when a zone has none: [border, fill]. */
@@ -189,6 +207,8 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
       data,
       link: link(n.link, `node ${id} link`),
       kind: str(n.kind, `node ${id} kind`),
+      emphasis: oneOf(n.emphasis, NODE_EMPHASES, `node ${id} emphasis`),
+      subtitle: str(n.subtitle, `node ${id} subtitle`),
     };
   });
   if (!nodes.length && !zones.length) throw new Error("diagram needs at least one node");
@@ -218,6 +238,9 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
       arrow: oneOf(e.arrow, ["end", "both", "none"] as const, `edge ${id} arrow`),
       routing: oneOf(e.routing, ROUTINGS, `edge ${id} routing`),
       kind: str(e.kind, `edge ${id} kind`),
+      weight: oneOf(e.weight, EDGE_WEIGHTS, `edge ${id} weight`),
+      head: oneOf(e.head, ARROWHEADS, `edge ${id} head`),
+      tail: oneOf(e.tail, ARROWHEADS, `edge ${id} tail`),
     };
   });
   const zoneIds = new Set(zones.map((z) => z.id));
@@ -237,7 +260,29 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
     y: num(r.y, "y"),
     legend: typeof r.legend === "string" ? r.legend : r.legend === true ? true : undefined,
     title: str(r.title, "title"),
+    subtitle: str(r.subtitle, "subtitle"),
+    look: oneOf(r.look, LOOKS_LIST, "look"),
+    kinds: kindsOf(r.kinds),
   };
+}
+
+/** Untrusted `kinds` -> validated kind styles. */
+function kindsOf(v: unknown): Record<string, KindStyle> | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "object" || Array.isArray(v)) throw new Error("kinds must be an object: { \"Traffic\": { color, style, weight, head } }");
+  const out: Record<string, KindStyle> = {};
+  for (const [k, raw] of Object.entries(v as Loose)) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`kinds.${k} must be an object`);
+    const s = raw as Loose;
+    out[k] = {
+      color: color(s.color, `kinds.${k}.color`),
+      style: oneOf(s.style, STYLES, `kinds.${k}.style`),
+      weight: oneOf(s.weight, EDGE_WEIGHTS, `kinds.${k}.weight`),
+      head: oneOf(s.head, ARROWHEADS, `kinds.${k}.head`),
+      tail: oneOf(s.tail, ARROWHEADS, `kinds.${k}.tail`),
+    };
+  }
+  return out;
 }
 
 /** Depth of each zone (0 = top level). */

@@ -32,8 +32,14 @@ export const TRACK = 14;
 const MIN_NEIGHBOUR = 8;
 /** An arrow slides along a node's side, but never closer than this to the corner. */
 const SIDE_INSET = 6;
+/** Most shifts tried by separateParallel (keeps big diagrams fast). */
+export const MAX_ATTEMPTS = 3000;
 const SHIFTS = [TRACK, -TRACK, 2 * TRACK, -2 * TRACK, 3 * TRACK, -3 * TRACK];
 const TITLE_COST = 40;
+/** A label lying across a zone's outline. */
+const OUTLINE_COST = 12;
+const insideBox = (inner: Box, outer: Box) =>
+  inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.width <= outer.x + outer.width && inner.y + inner.height <= outer.y + outer.height;
 /** A label centred on a vertical stretch has the arrow through its text: worse than a small collision. */
 const VERTICAL_LABEL_COST = 25;
 /** Gap between a vertical arrow and a label placed beside it. */
@@ -101,7 +107,9 @@ export function separateParallel(input: TidyInput): QRoute[] {
     return pts;
   };
 
-  for (let pass = 0; pass < 6; pass++) {
+  // Work cap: the search is quadratic in arrows and runs; big diagrams stop early with what they have.
+  let attempts = 0;
+  for (let pass = 0; pass < 6 && attempts < MAX_ATTEMPTS; pass++) {
     let changed = false;
     for (let i = 0; i < routes.length; i++) {
       for (let j = i + 1; j < routes.length; j++) {
@@ -117,6 +125,7 @@ export function separateParallel(input: TidyInput): QRoute[] {
           for (const [ri, si] of [[j, run.sj], [i, run.si]] as const) {
             const before = cost(ri) + 0;
             for (const d of SHIFTS) {
+              if (++attempts > MAX_ATTEMPTS) break;
               const pts = shifted(ri, si, d);
               if (!pts) continue;
               const old = routes[ri].points;
@@ -186,6 +195,8 @@ export function placeLabels(input: TidyInput): Map<string, Point> {
     let k = 0;
     for (const n of input.nodes.values()) if (boxesOverlap(rect, n)) k += QUALITY_WEIGHTS.labelCollision;
     for (const t of titles) if (boxesOverlap(rect, t)) k += QUALITY_WEIGHTS.labelCollision;
+    // Half in, half out of a zone reads badly: a small penalty for sitting across a zone's outline.
+    for (const z of input.zones.values()) if (boxesOverlap(rect, z) && !insideBox(rect, z)) k += OUTLINE_COST;
     for (const o of routes) {
       if (o.id === r.id) continue;
       const other = rects.get(o.id);

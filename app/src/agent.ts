@@ -116,7 +116,7 @@ export function setupAgent(deps: AgentDeps): (method: string, params: Record<str
         if (format !== "csv" && format !== "yaml" && format !== "mermaid") throw new Error("format must be csv, yaml or mermaid (or give a path ending in .csv, .yaml or .mmd)");
         if (format === "mermaid") return renderer("mermaid_to_scene", { ...params, mermaid: text });
         const { spec, warnings } = format === "csv" ? csvToSpec(text) : yamlToSpec(text);
-        for (const k of ["direction", "algorithm", "routing", "spacing", "x", "y", "title", "legend", "iconSize"]) if (params[k] !== undefined) spec[k] = params[k];
+        for (const k of ["direction", "algorithm", "routing", "spacing", "x", "y", "title", "subtitle", "legend", "iconSize", "look", "kinds"]) if (params[k] !== undefined) spec[k] = params[k];
         const result = (await buildDiagram(normalizeSpec(spec), params, true)) as Record<string, unknown>;
         const built = Array.isArray(result.warnings) ? (result.warnings as string[]) : [];
         return { ...result, format, warnings: [...warnings, ...built] };
@@ -127,7 +127,7 @@ export function setupAgent(deps: AgentDeps): (method: string, params: Record<str
         const t = findTemplate(str(params.name, "name"));
         if (!t) throw new Error(`no template "${params.name}" (templates: ${TEMPLATES.map((x) => x.name).join(", ")})`);
         const spec: Record<string, unknown> = structuredClone(t.spec) as unknown as Record<string, unknown>;
-        for (const k of ["x", "y", "direction", "algorithm", "routing", "spacing", "legend", "title", "iconSize"]) {
+        for (const k of ["x", "y", "direction", "algorithm", "routing", "spacing", "legend", "title", "subtitle", "iconSize", "look", "kinds"]) {
           if (params[k] !== undefined) spec[k] = params[k];
         }
         return buildDiagram(normalizeSpec(spec), params, true);

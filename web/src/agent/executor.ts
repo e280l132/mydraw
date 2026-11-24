@@ -929,7 +929,7 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
         if (!src.trim()) throw new Error("mermaid text is empty");
         if (isFlowchart(src)) {
           const spec = parseMermaidFlowchart(src);
-          for (const k of ["direction", "algorithm", "routing", "spacing", "x", "y", "title", "legend"] as const) {
+          for (const k of ["direction", "algorithm", "routing", "spacing", "x", "y", "title", "subtitle", "legend", "look", "kinds"] as const) {
             if (p[k] !== undefined) (spec as unknown as Params)[k] = p[k];
           }
           const unique = uniquifySpec(normalizeSpec(spec), new Set(api.getSceneElementsIncludingDeleted().map((e) => e.id)));

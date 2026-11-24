@@ -52,6 +52,12 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 - **Font size slider**: the sliders button after S / M / L / XL sets any size from 4 to 300 px. Labels in shapes and on arrows follow and the shape grows to fit; free text grows from the same point as with the S/M/L/XL buttons; one drag is one undo step. With nothing selected it sets the size of the next text you write.
 - Colors tab with two palettes and an any-color picker. Colors you pick (picker or eyedropper) are remembered **in the drawing** (up to 12, shown as "Colors in this drawing") and saved in its file. Opacity: Excalidraw's own Opacity row, and presets and themes can carry an opacity. Theme and style presets (built in, and yours, saved globally) apply to the selection or the whole drawing.
 
+**Generated diagrams** (Claude's `build_diagram`, Mermaid, templates)
+- Two looks: **professional** (default: crisp lines, bold Montserrat title, Inter labels, IBM Plex Mono for IPs) and **sketch** (hand-drawn lines and handwriting fonts), chosen by asking for it.
+- Arrows by meaning: thick primary flows, thin faded secondary ones, dashed or dotted kinds, arrowheads such as triangle, dot, diamond and crow's foot; one style per kind of relationship, shown in the legend.
+- Shapes beyond boxes: database cylinder, cloud, queue, document, person, server, hexagon, folder; important nodes in bold, external ones greyed out; a second line under a label for an IP or a role.
+- Every build tries several layouts and keeps the cleanest (no arrow through a node, labels on free stretches, arrows apart) and reports what could be simpler.
+
 **Diagrams from text** (MCP, and ⌥⌘U)
 - `build_diagram`: nodes, edges and nested zones, laid out automatically (ELK), with icons from the library.
 - Mermaid (flowcharts become zones; other Mermaid diagram types go through Mermaid), starter templates (3-tier web, AWS VPC, GCP project, home network, Kubernetes, homelab), legends, `auto_layout`.

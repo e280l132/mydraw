@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { measureQuality, QUALITY_WEIGHTS, scoreOf, segmentHitsBox, type QNode, type QRoute, type QualityInput } from "../shared/diagramQuality";
+import { measureQuality, QUALITY_WEIGHTS, scoreOf, segmentHitsBox, zonesCrossed, type QNode, type QRoute, type QualityInput } from "../shared/diagramQuality";
 
 const box = (x: number, y: number, width = 100, height = 60) => ({ x, y, width, height });
 const pts = (...p: [number, number][]) => p.map(([x, y]) => ({ x, y }));
@@ -100,7 +100,7 @@ describe("diagram quality", () => {
   });
 
   it("scores problems far above bends and length, and an extreme aspect ratio", () => {
-    const base = { nodes: 10, edges: 1, edgeOverlap: 0, throughNode: 0, labelCollision: 0, crossings: 0, bends: 0, length: 0, aspect: 1 };
+    const base = { nodes: 10, edges: 1, zoneCrossings: 0, edgeOverlap: 0, throughNode: 0, labelCollision: 0, crossings: 0, bends: 0, length: 0, aspect: 1 };
     expect(scoreOf({ ...base, labelCollision: 1 })).toBe(QUALITY_WEIGHTS.labelCollision);
     expect(scoreOf({ ...base, bends: 10, length: 1000 })).toBe(20);
     expect(scoreOf({ ...base, aspect: 5 })).toBe(60);
@@ -118,4 +118,22 @@ describe("diagram quality", () => {
     expect(segmentHitsBox({ x: 0, y: 50 }, { x: 100, y: 50 }, box(40, 0, 20, 10))).toBe(false);
     expect(segmentHitsBox({ x: 50, y: 5 }, { x: 50, y: 5 }, box(40, 0, 20, 10))).toBe(true);
   });
+
+  it("counts arrows cutting through zones that hold neither end", () => {
+    const zones = new Map([
+      ["mid", { ...box(150, -50, 150, 200), titleWidth: 40, titleHeight: 20 }],
+      ["home", { ...box(-20, -20, 140, 100), titleWidth: 40, titleHeight: 20 }],
+    ]);
+    const nodes = new Map<string, QNode>([
+      ["a", { ...box(0, 0), zone: "home" }],
+      ["b", box(400, 0)],
+    ]);
+    const through = { id: "e1", from: "a", to: "b", points: pts([105, 30], [395, 30]) };
+    expect(zonesCrossed(through, { nodes, zones })).toEqual(["mid"]); // not "home": a sits in it
+    const q = measureQuality({ nodes, zones, routes: [through] });
+    expect(q.metrics.zoneCrossings).toBe(1);
+    // an arrow to the zone itself is fine
+    expect(zonesCrossed({ ...through, to: "mid" }, { nodes, zones })).toEqual([]);
+  });
 });
+

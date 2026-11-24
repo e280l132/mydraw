@@ -34,7 +34,7 @@ export interface QualityInput {
   routes: readonly QRoute[];
 }
 
-export type QualityKind = "edge-overlap" | "edge-through-node" | "label-collision";
+export type QualityKind = "edge-overlap" | "edge-through-node" | "label-collision" | "zone-crossing";
 
 export interface QualityIssue {
   kind: QualityKind;
@@ -52,6 +52,8 @@ export interface QualityMetrics {
   throughNode: number;
   labelCollision: number;
   crossings: number;
+  /** Arrows cutting through zones that hold neither of their ends (one per arrow and zone). */
+  zoneCrossings: number;
   bends: number;
   /** Total route length in px. */
   length: number;
@@ -82,6 +84,7 @@ export const QUALITY_WEIGHTS = {
   throughNode: 80,
   labelCollision: 60,
   crossing: 4,
+  zoneCrossing: 15,
   bend: 1,
   lengthPerPx: 0.01,
   /** Per unit of aspect ratio beyond `aspectFree` (diagrams of at least `aspectMinNodes` nodes: a short chain is naturally wide). */
@@ -216,6 +219,25 @@ export function nodesThrough(r: QRoute, input: Pick<QualityInput, "nodes" | "zon
   return out;
 }
 
+/**
+ * Zones a route cuts through without either end inside: its core runs (not the ends) enter the
+ * zone's box, and the zone is neither an end nor holds one, nor sits inside a zone the arrow ends at.
+ */
+export function zonesCrossed(r: QRoute, input: Pick<QualityInput, "nodes" | "zones">): string[] {
+  const related = new Set<string>([r.from, r.to, ...ancestors(r.from, input), ...ancestors(r.to, input)]);
+  const core = coreSegments(r.points);
+  const out: string[] = [];
+  for (const [id, z] of input.zones) {
+    if (related.has(id)) continue;
+    // A zone inside a zone the arrow ends at belongs to that end.
+    const chain = ancestors(id, input);
+    if (chain.includes(r.from) || chain.includes(r.to)) continue;
+    const inner = inflate(z, -2);
+    if (core.some((s) => segmentHitsBox(s.a, s.b, inner))) out.push(id);
+  }
+  return out;
+}
+
 export function measureQuality(input: QualityInput): QualityReport {
   const issues: QualityIssue[] = [];
   const routes = input.routes.filter((r) => r.points.length >= 2);
@@ -299,6 +321,15 @@ export function measureQuality(input: QualityInput): QualityReport {
     }
   }
 
+  // Arrows cutting through zones they have nothing to do with.
+  let zoneCrossings = 0;
+  for (let i = 0; i < routes.length; i++) {
+    for (const z of zonesCrossed(routes[i], input)) {
+      zoneCrossings++;
+      issues.push({ kind: "zone-crossing", edge: routes[i].id, other: z, message: `arrow "${routes[i].id}" cuts through zone "${z}"` });
+    }
+  }
+
   const bends = routes.reduce((n, r) => n + Math.max(0, r.points.length - 2), 0);
   const totalLength = full.reduce((n, segs) => n + segs.reduce((m, s) => m + segLength(s), 0), 0);
   const boxes = [...input.nodes.values(), ...input.zones.values()];
@@ -309,7 +340,7 @@ export function measureQuality(input: QualityInput): QualityReport {
     aspect = w > 0 && h > 0 ? Math.max(w / h, h / w) : 1;
   }
 
-  const metrics: QualityMetrics = { nodes: input.nodes.size, edges: routes.length, edgeOverlap, throughNode, labelCollision, crossings, bends, length: Math.round(totalLength), aspect: Math.round(aspect * 100) / 100 };
+  const metrics: QualityMetrics = { nodes: input.nodes.size, edges: routes.length, edgeOverlap, throughNode, labelCollision, crossings, zoneCrossings, bends, length: Math.round(totalLength), aspect: Math.round(aspect * 100) / 100 };
   return { metrics, issues, score: scoreOf(metrics), advice: adviceFor(input, routes, metrics, full) };
 }
 
@@ -320,6 +351,7 @@ export function scoreOf(m: QualityMetrics): number {
     m.throughNode * w.throughNode +
     m.labelCollision * w.labelCollision +
     m.crossings * w.crossing +
+    m.zoneCrossings * w.zoneCrossing +
     m.bends * w.bend +
     m.length * w.lengthPerPx +
     (m.nodes >= w.aspectMinNodes ? Math.max(0, m.aspect - w.aspectFree) * w.aspect : 0);
@@ -349,6 +381,7 @@ function adviceFor(input: QualityInput, routes: readonly QRoute[], m: QualityMet
   }
   if (m.labelCollision) advice.push(`${m.labelCollision} label(s) collide with other things: shorten them, or label only short arrows.`);
   if (m.edgeOverlap) advice.push(`${m.edgeOverlap} pair(s) of arrows run on top of each other: use fewer arrows leaving the same node, or different directions.`);
+  if (m.zoneCrossings >= 3) advice.push(`${m.zoneCrossings} arrow(s) cut through zones that hold neither of their ends: draw them to the zone, or put related nodes in the same zone.`);
   if (m.throughNode) advice.push(`${m.throughNode} arrow(s) pass through nodes they don't connect: re-route them (connect {avoid: true}) or change the layout direction.`);
   if (m.nodes >= QUALITY_WEIGHTS.aspectMinNodes && m.aspect > QUALITY_WEIGHTS.aspectFree) advice.push(`The diagram is ${m.aspect}:1 (very wide or tall): try the other direction, or split it.`);
   return advice;

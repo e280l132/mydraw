@@ -2780,7 +2780,8 @@ const labelOffsets = () =>
         const c = { x: t.x + t.width / 2, y: t.y + t.height / 2 };
         let off = Infinity;
         for (let i = 1; i < pts.length; i++) off = Math.min(off, dist(c, pts[i - 1], pts[i]));
-        return { id: a.id, label: t.text, off };
+        // on the arrow, or beside a vertical stretch of it (half the label's width plus a gap)
+        return { id: a.id, label: t.text, off, ok: off <= t.width / 2 + 20 };
       })
       .filter(Boolean);
   });
@@ -2794,7 +2795,7 @@ assert.equal(qLint.summary["label-collision"], 0, "lint agrees: no label collisi
 assert.equal(qLint.summary["edge-through-node"], 0, "lint agrees: no arrow through a node");
 let offsets = await labelOffsets();
 assert.equal(offsets.length, 8, "every labelled arrow has its label");
-for (const o of offsets) assert.ok(o.off < 6, `label "${o.label}" sits on its arrow (off by ${Math.round(o.off)} px)`);
+for (const o of offsets) assert.ok(o.ok, `label "${o.label}" sits on (or beside) its arrow (off by ${Math.round(o.off)} px)`);
 // Simulate the defect (a label far from its arrow); the next agent change to that arrow puts it back.
 const victim = offsets[2];
 await page.evaluate((id) => {
@@ -2805,7 +2806,7 @@ await page.evaluate((id) => {
 assert.ok((await labelOffsets()).find((o) => o.id === victim.id).off > 1000, "label displaced for the test");
 await call("update_elements", { updates: [{ id: victim.id, strokeColor: "#c2255c" }] });
 offsets = await labelOffsets();
-assert.ok(offsets.find((o) => o.id === victim.id).off < 6, "the safety net put the detached label back on its arrow");
+assert.ok(offsets.find((o) => o.id === victim.id).ok, "the safety net put the detached label back on its arrow");
 // lint_diagram finds a label dropped on a node and fixes it (one undo step).
 const dropVictim = offsets[3];
 await page.evaluate((id) => {
@@ -2819,8 +2820,94 @@ const foundLabels = await call("lint_diagram", { rules: ["label-collision"] });
 assert.ok(foundLabels.issues.some((i) => i.id === dropVictim.id && i.rule === "label-collision"), "lint finds the label sitting on a node");
 const fixedLabelLint = await call("lint_diagram", { rules: ["label-collision"], fix: true });
 assert.ok(fixedLabelLint.fixed >= 1, "fix:true moves the label");
-assert.ok((await labelOffsets()).find((o) => o.id === dropVictim.id).off < 6, "the label is back on its arrow");
+assert.ok((await labelOffsets()).find((o) => o.id === dropVictim.id).ok, "the label is back on its arrow");
 assert.equal((await call("lint_diagram", { rules: ["label-collision"] })).summary["label-collision"], 0, "and nothing collides now");
+step("Generated diagrams: professional and sketch looks, drawn shapes, emphasis, subtitles, arrow weights / heads / kinds");
+const looksSpec = (look) => ({
+  look,
+  title: "Looks",
+  subtitle: "smoke test",
+  legend: true,
+  kinds: { Main: { weight: "primary", color: "#1971c2" }, Mgmt: { weight: "secondary", style: "dashed", head: "dot" } },
+  nodes: [
+    { id: `${look}-users`, shape: "actor", label: "Users" },
+    { id: `${look}-api`, label: "API", emphasis: "primary", subtitle: "10.0.0.1" },
+    { id: `${look}-db`, shape: "cylinder", label: "Orders DB", subtitle: "pg 16" },
+    { id: `${look}-q`, shape: "queue", label: "Events" },
+    { id: `${look}-old`, shape: "ellipse", label: "Legacy", emphasis: "muted" },
+  ],
+  edges: [
+    { id: `${look}-e1`, from: `${look}-users`, to: `${look}-api`, kind: "Main", label: "HTTPS" },
+    { id: `${look}-e2`, from: `${look}-api`, to: `${look}-db`, kind: "Main" },
+    { id: `${look}-e3`, from: `${look}-api`, to: `${look}-q`, head: "triangle_outline" },
+    { id: `${look}-e4`, from: `${look}-old`, to: `${look}-api`, kind: "Mgmt" },
+  ],
+});
+const lookScene = (look) =>
+  page.evaluate((look) => {
+    const els = window.__mydrawTest.api().getSceneElements();
+    const at = (id) => els.findIndex((e) => e.id === id);
+    const by = (id) => els.find((e) => e.id === id);
+    const labelOf = (id) => els.find((e) => e.type === "text" && e.containerId === id);
+    const db = by(`${look}-db`);
+    const dbImage = els.find((e) => e.type === "image" && e.groupIds[0] === db.groupIds[0]);
+    const pick = (e) => e && { strokeWidth: e.strokeWidth, opacity: e.opacity, strokeStyle: e.strokeStyle, strokeColor: e.strokeColor, startArrowhead: e.startArrowhead, endArrowhead: e.endArrowhead, roughness: e.roughness };
+    const title = els.find((e) => e.type === "text" && e.text === "Looks");
+    const sub = els.find((e) => e.type === "text" && e.text === "smoke test");
+    const apiSub = els.find((e) => e.customData?.mydrawSubtitleOf === `${look}-api`);
+    return {
+      titleFont: title?.fontFamily,
+      subColor: sub?.strokeColor,
+      api: pick(by(`${look}-api`)),
+      apiLabelFont: labelOf(`${look}-api`)?.fontFamily,
+      apiSubText: apiSub?.text,
+      apiSubGrouped: !!apiSub && apiSub.groupIds[0] === by(`${look}-api`).groupIds[0],
+      old: pick(by(`${look}-old`)),
+      dbShape: db.customData?.mydrawShape,
+      dbLabel: labelOf(`${look}-db`)?.text,
+      dbLabelAboveImage: !!dbImage && at(dbImage.id) < at(labelOf(`${look}-db`).id),
+      users: by(`${look}-users`).customData?.mydrawShape,
+      e1: pick(by(`${look}-e1`)),
+      e3: pick(by(`${look}-e3`)),
+      e4: pick(by(`${look}-e4`)),
+    };
+  }, look);
+const fontIdOf = (name) => t((x, n) => x.fontId(n), name);
+
+await call("new_drawing", { title: "Professional look" });
+const pro = await call("build_diagram", looksSpec("professional"));
+assert.ok(pro.legend, "legend drawn");
+let L = await lookScene("professional");
+assert.equal(L.titleFont, await fontIdOf("Montserrat Bold"), "professional title in Montserrat Bold");
+assert.equal(L.subColor, "#868e96", "diagram subtitle in grey");
+assert.equal(L.apiLabelFont, await fontIdOf("Inter Bold"), "a primary node's label is bold");
+assert.equal(L.api.strokeWidth, 3, "a primary node has a thick border");
+assert.equal(L.api.roughness, 0, "professional lines are crisp");
+assert.equal(L.apiSubText, "10.0.0.1", "node subtitle drawn");
+assert.ok(L.apiSubGrouped, "the subtitle moves with its node");
+assert.equal(L.old.opacity, 70, "a muted node is faded");
+assert.equal(L.old.strokeColor, "#868e96", "and grey");
+assert.equal(L.dbShape, "cylinder", "a drawn database shape");
+assert.equal(L.dbLabel, "Orders DB", "with its label inside");
+assert.ok(L.dbLabelAboveImage, "the label is drawn above the shape image");
+assert.equal(L.users, "actor", "a person shape");
+assert.equal(L.e1.strokeWidth, 3, "a primary kind draws thick arrows");
+assert.equal(L.e1.strokeColor, "#1971c2", "in the kind's colour");
+assert.equal(L.e3.endArrowhead, "triangle_outline", "an arrowhead by name");
+assert.deepEqual([L.e4.strokeWidth, L.e4.opacity, L.e4.strokeStyle, L.e4.endArrowhead], [1.25, 70, "dashed", "dot"], "a secondary kind: thin, faded, dashed, dot head");
+const proScene = await call("get_scene", { ids: ["professional-db"] });
+assert.equal(proScene.elements[0].type, "shape-node", "get_scene reports a shape node");
+assert.equal(proScene.elements[0].subtitle, "pg 16", "with its subtitle");
+assert.equal((await call("lint_diagram", { rules: ["label-collision", "edge-through-node", "overlap"] })).issues.length, 0, "the generated diagram lints clean");
+
+await call("new_drawing", { title: "Sketch look" });
+await call("build_diagram", looksSpec("sketch"));
+L = await lookScene("sketch");
+assert.equal(L.titleFont, await fontIdOf("Permanent Marker"), "sketch title in Permanent Marker");
+assert.equal(L.apiLabelFont, await fontIdOf("Kalam Bold"), "sketch labels in Kalam");
+assert.equal(L.api.roughness, 1, "sketch lines are rough");
+assert.equal(L.e1.strokeWidth, 3.5, "sketch arrows are a bit heavier");
+
 // The app records the build it started with; the MCP server warns when disk has a newer one.
 const { buildId } = await import("../shared/buildId.ts");
 const ctl = JSON.parse(fs.readFileSync(controlFile, "utf8"));

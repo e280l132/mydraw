@@ -21,7 +21,8 @@ export interface LayoutVariant {
 /** In the order they are tried. The first is the plain layout. */
 export const VARIANTS: readonly LayoutVariant[] = [
   { name: "base", elk: {} },
-  { name: "wide-tracks", elk: { "elk.spacing.edgeEdge": "24", "elk.layered.spacing.edgeEdgeBetweenLayers": "20" } },
+  // Ignores the input order and searches harder for fewer crossings.
+  { name: "free-order", elk: { "elk.layered.considerModelOrder.strategy": "NONE", "elk.layered.thoroughness": "60", "elk.spacing.edgeEdge": "20" } },
   {
     name: "balanced",
     elk: {

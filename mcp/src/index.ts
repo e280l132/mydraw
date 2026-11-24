@@ -402,7 +402,12 @@ const node = z
     label: z.string().optional().describe("Text in the shape, or the icon's caption. Default: the id. \n for line breaks"),
     icon: z.string().optional().describe('Stencil id, name or search ("Amazon EC2", "AWS:Amazon RDS", "Network:router"). Falls back to a shape if not found'),
     iconColor: z.string().optional().describe("Recolor an SVG icon (hex)"),
-    shape: z.enum(["rectangle", "ellipse", "diamond"]).optional().describe("For nodes without an icon (default rectangle)"),
+    shape: z
+      .enum(["rectangle", "ellipse", "diamond", "cylinder", "cloud", "document", "queue", "actor", "server", "hexagon", "folder"])
+      .optional()
+      .describe("For nodes without an icon (default rectangle). cylinder = database, cloud = internet/SaaS, queue = message queue, document = file/report, actor = person (label under it), server = server (label under it), hexagon = service, folder = storage"),
+    emphasis: z.enum(["primary", "muted"]).optional().describe("primary: thicker border and bold label (the main components); muted: grey and thin (external or less important)"),
+    subtitle: z.string().optional().describe("Second, smaller grey line under the label, e.g. an IP address or a role"),
     zone: z.string().optional().describe("Id of the zone the node sits in"),
     color: z.string().optional().describe("Stroke/text color (hex)"),
     fill: z.string().optional().describe("Fill color (hex), default white"),
@@ -422,6 +427,14 @@ const zone = z.object({
   style: lineStyle.optional(),
   locked: z.boolean().optional().describe("Default true (users can't drag it by accident)"),
 });
+const arrowhead = z.enum(["arrow", "triangle", "triangle_outline", "dot", "circle", "circle_outline", "diamond", "diamond_outline", "bar", "crowfoot_one", "crowfoot_many", "crowfoot_one_or_many", "none"]);
+const kindStyle = z.object({
+  color: z.string().optional(),
+  style: lineStyle.optional(),
+  weight: z.enum(["primary", "normal", "secondary"]).optional(),
+  head: arrowhead.optional(),
+  tail: arrowhead.optional(),
+});
 const edge = z.object({
   id: z.string().optional(),
   from: z.string().describe("Node or zone id"),
@@ -429,10 +442,13 @@ const edge = z.object({
   label: z.string().optional(),
   color: z.string().optional(),
   style: lineStyle.optional(),
-  width: z.number().optional().describe("Stroke width, default 2"),
-  arrow: z.enum(["end", "both", "none"]).optional().describe("Arrowheads, default end"),
+  width: z.number().optional().describe("Stroke width in px (overrides weight)"),
+  weight: z.enum(["primary", "normal", "secondary"]).optional().describe("primary = thick (main flows), normal (default), secondary = thin and faded (management, optional paths)"),
+  arrow: z.enum(["end", "both", "none"]).optional().describe("Arrowheads shortcut, default end"),
+  head: arrowhead.optional().describe("Arrowhead at the end (overrides arrow)"),
+  tail: arrowhead.optional().describe("Arrowhead at the start"),
   routing: z.enum(["elbow", "straight", "curved"]).optional(),
-  kind: z.string().optional().describe('Category for the legend, e.g. "Replication"'),
+  kind: z.string().optional().describe('Relationship type, e.g. "Traffic", "Replication": every arrow of a kind is drawn the same (see kinds) and the legend lists it'),
 });
 const layoutOpts = {
   direction: z.enum(["right", "down", "left", "up"]).optional().describe("Flow direction, default right"),
@@ -444,6 +460,9 @@ const placeOpts = {
   x: z.number().optional().describe("Top-left corner; default right of the existing content"),
   y: z.number().optional(),
   title: z.string().optional().describe("Title text above the diagram"),
+  subtitle: z.string().optional().describe("A smaller line under the title"),
+  look: z.enum(["professional", "sketch"]).optional().describe("professional (default): crisp lines, Inter/Montserrat type with bold titles and labels; sketch: hand-drawn lines and handwriting fonts. Use sketch when the user asks for a sketch, whiteboard or hand-drawn look"),
+  kinds: z.record(z.string(), kindStyle).optional().describe('Style per relationship kind, e.g. {"Traffic": {"color": "#1971c2", "weight": "primary"}, "Async": {"style": "dashed", "head": "triangle_outline"}}; kinds without an entry get a distinct colour'),
   legend: z.union([z.boolean(), z.string()]).optional().describe("Add a legend (true or its title)"),
   zoom: z.boolean().optional().describe("Zoom the view to the new diagram (default true)"),
 };
@@ -454,7 +473,8 @@ tool(
     "laid out automatically with ELK (layered by default) and connected with elbow arrows that re-route when nodes move. The main 'draw me X' tool.",
     "Ids you give become element ids. It tries several layouts, keeps the cleanest (arrows moved apart, labels on free stretches) and returns ids, bounds, warnings (e.g. icons not found) and `quality`:",
     "score (lower is better), arrowsOnTopOfEachOther, arrowsThroughNodes, labelsColliding, crossings and `advice` (what to change in the spec if it is crowded). Read `quality`, then check the result with screenshot.",
-    "Drawing well: keep to about 40 arrows or fewer; draw one arrow to a ZONE (from/to may be a zone id) instead of one per node; give a label only to short arrows; one colour per kind of relationship (use `kind` and a legend); if `advice` says a node has many arrows or an arrow is very long, change the spec and build again rather than accepting it.",
+    "Looks: look professional (default) or sketch (when the user asks for hand-drawn); title + subtitle; node shapes include cylinder (database), cloud, queue, document, actor (person), server, hexagon, folder; node emphasis primary/muted and subtitle (IP, role); arrows have weight primary/normal/secondary, head/tail arrowheads (triangle, dot, diamond, crowfoot_many for ER), and a kind whose style is shared (kinds) and shown in the legend.",
+    "Drawing well: keep to about 40 arrows or fewer; mark the main path's arrows primary and management or optional ones secondary; draw one arrow to a ZONE (from/to may be a zone id) instead of one per node; give a label only to short arrows; one colour per kind of relationship (use `kind` and a legend); if `advice` says a node has many arrows or an arrow is very long, change the spec and build again rather than accepting it.",
   ].join(" "),
   {
     drawing,
