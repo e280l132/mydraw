@@ -113,6 +113,7 @@ renders in a fallback font, and saved files keep the fonts they carry.
 | Elbow arrows: Excalidraw re-routes them on drag only with `fixedPoint` bindings; `fixedSegments` survive drags; `restoreElements` drops such bindings | `web/src/agent/sceneOps.ts`, `shared/avoidRoute.ts` | smoke |
 | `convertToExcalidrawElements`: binds only within its own batch, shifts multi-point arrows, needs `children: []` on frames, `regenerateIds: false` keeps ids | `sceneOps.ts`, `drawioImport.ts` | smoke + unit |
 | Arrow label position (middle point / middle of middle segment) | `labelPoint` in `sceneOps.ts` | smoke |
+| Draw order: a bound text label is drawn right after its container, so a filled shape image must be pushed BEFORE the container or it covers the label | `shapeImage` / `makeIconNode` in `web/src/agent/diagram.ts` | smoke (generated shapes) |
 | `normalizeLink` leaves relative paths alone | drill-down links | smoke |
 | `getAppState()` doesn't see an `updateScene` from the same tick | `web/src/headless.tsx` (CLI) | smoke (CLI) |
 | Excalidraw's `CommandPalette` isn't public; its own palette is never rendered | `CommandPalette.tsx` | by hand: ⌘K / ⇧⌘P open ours |
