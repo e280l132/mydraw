@@ -281,3 +281,58 @@ export function remapFontFamilies<T extends { type: string; fontFamily?: number 
     return to === undefined ? el : { ...el, fontFamily: to };
   });
 }
+
+// ---------- bold / italic ----------
+//
+// Excalidraw stores one font per text, so "bold" and "italic" mean switching the text to another
+// face of the same typeface ("Inter" -> "Inter Bold" -> "Inter Bold Italic"). Pure: the renderer
+// passes the faces it has registered.
+
+/** Weight at or above which a face counts as bold. */
+export const BOLD_FROM = 600;
+/** Weight a text switches to when made bold and its typeface has no heavier face than regular. */
+const BOLD_PREFERRED = [700, 600, 800, 900, 500];
+
+/** A text's current font: bold when its weight is 600 or more. */
+export const isBoldFace = (f: Pick<FontEntry, "weight">): boolean => f.weight >= BOLD_FROM;
+export const isItalicFace = (f: Pick<FontEntry, "style">): boolean => f.style === "italic";
+
+type FaceKey = Pick<FontEntry, "typeface" | "weight" | "style">;
+
+/** Faces that belong to `face`'s typeface (same typeface name, case-insensitive). */
+export function siblingsOf<T extends FaceKey>(face: FaceKey, all: readonly T[]): T[] {
+  const name = face.typeface.toLowerCase();
+  return all.filter((f) => f.typeface.toLowerCase() === name);
+}
+
+/** Can a text in `face` be made bold (or back to regular) / italic (or back to upright)? */
+export function canStyle<T extends FaceKey>(face: FaceKey, all: readonly T[]): { bold: boolean; italic: boolean } {
+  const sibs = siblingsOf(face, all);
+  const hasBold = sibs.some(isBoldFace);
+  const hasRegular = sibs.some((f) => !isBoldFace(f));
+  return {
+    bold: hasBold && hasRegular,
+    italic: sibs.some(isItalicFace) && sibs.some((f) => !isItalicFace(f)),
+  };
+}
+
+/**
+ * The face to use when `face` is switched to the wanted bold / italic state, keeping the other
+ * property. Null when the typeface has no such face. Among several bold weights 700 wins, then
+ * 600 (Inter has both); regular means 400, else the lightest non-bold face.
+ */
+export function faceFor<T extends FaceKey>(face: FaceKey, all: readonly T[], want: { bold?: boolean; italic?: boolean }): T | null {
+  const bold = want.bold ?? isBoldFace(face);
+  const italic = want.italic ?? face.style === "italic";
+  const pool = siblingsOf(face, all).filter((f) => isItalicFace(f) === italic);
+  if (!pool.length) return null;
+  if (bold) {
+    for (const w of BOLD_PREFERRED) {
+      const hit = pool.find((f) => f.weight === w && isBoldFace(f));
+      if (hit) return hit;
+    }
+    return pool.filter(isBoldFace).sort((a, b) => a.weight - b.weight)[0] ?? null;
+  }
+  const regulars = pool.filter((f) => !isBoldFace(f));
+  return regulars.find((f) => f.weight === 400) ?? regulars.sort((a, b) => a.weight - b.weight)[0] ?? null;
+}

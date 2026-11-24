@@ -101,6 +101,7 @@ export function buildMenu(settings: Settings, h: MenuHandlers): void {
         { label: "Stencils Panel", accelerator: "CmdOrCtrl+Shift+Y", click: cmd({ type: "toggleStencils" }) },
         { label: "Pages Panel", ...shown("Alt+CmdOrCtrl+P"), click: cmd({ type: "togglePages" }) },
         { label: "Diagram Lint", ...shown("Alt+CmdOrCtrl+L"), click: cmd({ type: "toggleLint" }) },
+        { label: "Pin Style Panel", click: cmd({ type: "togglePinPanel" }) },
         { type: "separator" },
         {
           label: "Grid",

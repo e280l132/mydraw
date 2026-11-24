@@ -59,6 +59,9 @@ import { followZones, type Positions } from "./zoneFollow";
 import { colorOfElement, elementAt } from "./library/pickColor";
 import { IconRecolorSession, NO_ICONS, iconSelection, recolorSelectedIcons, type IconSelection } from "./library/iconColor";
 import { STENCIL_DRAG_TYPE, StencilPanel } from "./library/StencilPanel";
+import { applyPanelPinned, loadPanelPinned } from "./panelPin";
+import { attachTextStyleHost, TextStyle } from "./TextStyle";
+import { toggleTextStyle } from "./textStyleOps";
 import {
   insertStencil,
   loadStencil,
@@ -275,9 +278,19 @@ export function App() {
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
   const [libraryIndex, setLibraryIndex] = useState<LibraryIndex | null>(null);
   const [panelOpen, setPanelOpen] = useState(() => localStorage.getItem("mydraw.panelOpen") !== "0");
+  const [panelPinned, setPanelPinned] = useState(loadPanelPinned);
+  useEffect(() => {
+    globalThis.__mydrawPinPanel = panelPinned;
+  }, [panelPinned]);
+  const togglePinPanel = useCallback(() => {
+    setPanelPinned((v) => {
+      applyPanelPinned(!v, apis.current.values());
+      return !v;
+    });
+  }, []);
   const menuPanels = useMemo<MenuPanels>(
-    () => ({ stencils: panelOpen, pages: pagesOpen, lint: lintOpen }),
-    [panelOpen, pagesOpen, lintOpen],
+    () => ({ stencils: panelOpen, pages: pagesOpen, lint: lintOpen, pinned: panelPinned }),
+    [panelOpen, pagesOpen, lintOpen, panelPinned],
   );
   const [addLabels, setAddLabels] = useState(() => localStorage.getItem("mydraw.addLabels") !== "0");
   const [saveSelection, setSaveSelection] = useState<(StencilContent & { suggestedName: string }) | null>(null);
@@ -300,6 +313,7 @@ export function App() {
   const tuneKey = useRef("");
   const [tuneTick, setTuneTick] = useState(0);
   const [ftHosts, setFtHosts] = useState<FineTuneHosts>({});
+  const [textStyleHost, setTextStyleHost] = useState<HTMLElement | null>(null);
 
   // Refs hold the latest values for callbacks fired by Excalidraw, IPC and timers.
   const tabsRef = useRef<Tab[]>([]);
@@ -468,11 +482,13 @@ export function App() {
           selKey.current = sk;
           setSelTick((n) => n + 1);
         }
-        const tk = elements
-          // a selected shape's label too: the font size slider reads its size
-          .filter((e) => appState.selectedElementIds[e.id] || (e.type === "text" && e.containerId && appState.selectedElementIds[e.containerId]))
-          .map((e) => `${e.id}:${e.version}`)
-          .join(",");
+        const editingId = appState.editingTextElement?.id ?? "";
+        const tk =
+          elements
+            // a selected shape's label too: the font size slider reads its size
+            .filter((e) => appState.selectedElementIds[e.id] || e.id === editingId || (e.type === "text" && e.containerId && appState.selectedElementIds[e.containerId]))
+            .map((e) => `${e.id}:${e.version}`)
+            .join(",") + (editingId ? `|edit:${editingId}` : "");
         if (tk !== tuneKey.current) {
           tuneKey.current = tk;
           setTuneTick((n) => n + 1);
@@ -657,6 +673,7 @@ export function App() {
       const column = root.querySelector<HTMLElement>(".md-drawing:not([style*='none']) .App-menu__left .panelColumn");
       if (!column) {
         setFtHosts((prev) => (sameHosts(prev, {}) ? prev : {}));
+        setTextStyleHost(null);
         setFootHost(null);
         return setStyleHost(null);
       }
@@ -685,6 +702,8 @@ export function App() {
       tagArrangeSection(column);
       const ft = attachFineTuneHosts(column);
       setFtHosts((prev) => (sameHosts(prev, ft) ? prev : ft));
+      const tsHost = attachTextStyleHost(column);
+      setTextStyleHost((prev) => (prev === tsHost ? prev : tsHost));
       // Section order (drag a section by its title; global setting): inline CSS `order`.
       applyPanelOrder(column, settingsRef.current?.panelOrder ?? []);
       setStyleHost((prev) => (prev === host ? prev : host));
@@ -1115,6 +1134,8 @@ export function App() {
         }
         case "toggleLint":
           return toggleLint();
+        case "togglePinPanel":
+          return togglePinPanel();
         case "present":
           if (apis.current.get(activeRef.current)) setPresenting(true);
           return;
@@ -1129,6 +1150,14 @@ export function App() {
         case "fonts":
           setFontsOpen(true);
           return;
+        case "toggleBold":
+        case "toggleItalic": {
+          const api = apis.current.get(activeRef.current);
+          if (!api) return;
+          const r = toggleTextStyle(api, cmd.type === "toggleBold" ? "bold" : "italic");
+          if (typeof r === "string") showToast(r, true);
+          return;
+        }
         case "importText":
           if (apis.current.get(activeRef.current)) setImportOpen(true);
           return;
@@ -1175,7 +1204,7 @@ export function App() {
           return quickSaveStencil();
       }
     },
-    [closeTab, newTab, openFiles, openSaveStencil, quickSaveStencil, save, setActive, showToast, toggleLint, togglePages, togglePanel, setGridPanel],
+    [closeTab, newTab, openFiles, openSaveStencil, quickSaveStencil, save, setActive, showToast, toggleLint, togglePinPanel, togglePages, togglePanel, setGridPanel],
   );
 
   // Main process saves settings and broadcasts them back (settings:changed), which updates state.
@@ -1308,6 +1337,20 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
       const key = e.key.toLowerCase();
+      if (!e.altKey && !e.shiftKey && (e.code === "KeyB" || e.code === "KeyI")) {
+        // ⌘B / ⌘I: bold / italic for the selected text and labels (not while typing in a field;
+        // the text editor in Excalidraw is a textarea, so editing a text keeps its own behaviour).
+        const t = e.target as HTMLElement | null;
+        const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+        const api = apis.current.get(activeRef.current);
+        if (!typing && api && !paletteOpenRef.current && Object.keys(api.getAppState().selectedElementIds).length) {
+          e.preventDefault();
+          e.stopPropagation();
+          const r = toggleTextStyle(api, e.code === "KeyB" ? "bold" : "italic");
+          if (typeof r === "string") showToast(r, true);
+          return;
+        }
+      }
       if (!e.altKey && !e.shiftKey && e.code === "Quote") {
         // ⌘': our grid (Excalidraw's own ⌘' grid is never wanted: it can't be styled).
         e.preventDefault();
@@ -1608,8 +1651,9 @@ export function App() {
             onGridHealth={onGridHealth}
           />
         ))}
-        {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} changeTick={tuneTick} onToast={showToast} custom={customColor} palette={palette} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} /><PropertiesSection api={apis.current.get(activeId)} tick={tuneTick} /></>, styleHost)}
+        {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} changeTick={tuneTick} onToast={showToast} custom={customColor} palette={palette} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} pinned={panelPinned} onTogglePin={togglePinPanel} /><PropertiesSection api={apis.current.get(activeId)} tick={tuneTick} /></>, styleHost)}
         <FineTune api={apis.current.get(activeId)} tick={tuneTick} hosts={ftHosts} />
+        <TextStyle api={apis.current.get(activeId)} tick={tuneTick} host={textStyleHost} onToast={showToast} />
         {footHost &&
           createPortal(
             <PanelFooter

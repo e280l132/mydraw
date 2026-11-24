@@ -50,6 +50,8 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 
 **Colors and styles**
 - **Font size slider**: the sliders button after S / M / L / XL sets any size from 4 to 300 px. Labels in shapes and on arrows follow and the shape grows to fit; free text grows from the same point as with the S/M/L/XL buttons; one drag is one undo step. With nothing selected it sets the size of the next text you write.
+- **Bold and italic**: B and I buttons under the Font family picker, or ⌘B / ⌘I, for the selected text and the labels of selected shapes and arrows (also while you are typing in a text). They switch the whole text to the bold or italic face of the same typeface (Inter → Inter Bold → Inter Bold Italic), so labels re-fit their shapes and one click is one undo step. Italic faces ship for the Professional and Mono fonts; a button is greyed out (with a hint) when the font has no such face, e.g. the hand-drawn fonts have no italic and Excalidraw's own fonts have neither.
+- **Pin the style panel**: the pin in the Colors & styles header (or View → Pin style panel) keeps the panel on screen with nothing selected, so Stroke and Fill set the colors of the next shapes and stencil labels. A color picked for a selection also becomes the default for the next shapes and labels.
 - Colors tab with two palettes and an any-color picker. Colors you pick (picker or eyedropper) are remembered **in the drawing** (up to 12, shown as "Colors in this drawing") and saved in its file. Opacity: Excalidraw's own Opacity row, and presets and themes can carry an opacity. Theme and style presets (built in, and yours, saved globally) apply to the selection or the whole drawing.
 
 **Generated diagrams** (Claude's `build_diagram`, Mermaid, templates)
@@ -104,6 +106,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 | ⌥⌘↵ | Presentation |
 | ⇧⌘E | Export |
 | ⇧⌘Y | Stencils panel |
+| ⌘B, ⌘I | Bold, italic for the selected text and labels (fonts with a bold / italic face) |
 | ⌘F, Alt+S, ? | Excalidraw's own find, object snapping, help |
 
 The main menu groups everything into File, View, Diagram and Preferences (collapsible; the menu bar follows the same grouping). Two helps are there: **mydraw features and shortcuts…** (also in the command palette) and Excalidraw's own Help (`?`, or the corner button: drawing-tool and editing keys). Each dialog has a button that opens the other.

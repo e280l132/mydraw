@@ -54,6 +54,9 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
 
   cmd("View", "Show / hide pages panel", { type: "togglePages" }, { hint: sc("pages"), keywords: "frames navigator slides" });
   cmd("View", "Show / hide diagram lint", { type: "toggleLint" }, { hint: sc("lint"), keywords: "check problems review overlap unconnected arrows palette colors fix" });
+  cmd("View", "Pin / unpin style panel", { type: "togglePinPanel" }, { keywords: "colors styles sidebar keep open always show stroke fill panel" });
+  cmd("Text", "Bold (selected text and labels)", { type: "toggleBold" }, { hint: sc("bold"), keywords: "font weight strong heavy b" });
+  cmd("Text", "Italic (selected text and labels)", { type: "toggleItalic" }, { hint: sc("italic"), keywords: "font slant oblique i" });
   cmd("View", "Show / hide grid", { type: "toggleGrid" }, { hint: sc("grid"), keywords: "layout align lines dots guide snap background" });
   cmd("View", "Grid settings (size, color, strength)…", { type: "gridSettings" }, { keywords: "layout align lines dots spacing color opacity light dark major minor" });
   add("View", "Rearrange panel sections (on / off)", c.toggleArrangePanel, { keywords: "properties sidebar sections drag reorder move layout" });

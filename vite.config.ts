@@ -2,6 +2,8 @@ import react from "@vitejs/plugin-react";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
+// @ts-expect-error plain .mjs without types
+import { excalidrawPanelPin } from "./scripts/excalidrawPatch.mjs";
 
 // Strict CSP for the packaged app. Dev mode skips it because Vite injects inline scripts.
 const CSP = [
@@ -38,7 +40,8 @@ export const EXCALIDRAW_FONT_CHUNK = {
 export default defineConfig(({ mode }) => ({
   root: "web",
   base: "./",
-  plugins: [react(), cspPlugin()],
+  // The pin patch rewrites the same chunk the font alias points at (see scripts/excalidrawPatch.mjs).
+  plugins: [react(), cspPlugin(), excalidrawPanelPin(Object.values(EXCALIDRAW_FONT_CHUNK))],
   resolve: {
     alias: {
       "mydraw-excalidraw-chunk": mode === "development" ? EXCALIDRAW_FONT_CHUNK.development : EXCALIDRAW_FONT_CHUNK.production,

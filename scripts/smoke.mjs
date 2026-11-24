@@ -592,6 +592,27 @@ await page.evaluate(() => window.mydraw.updateSettings({ panelOrder: [] }));
 await waitFor(async () => (await sectionOrder())[0] === "colors", "reset restores the default order");
 await t((x) => x.selectType("none"));
 
+step("pin style panel: the column shows with nothing selected only while pinned (patched showSelectedShapeActions)");
+await page.evaluate(() => window.__mydrawTest.api().setActiveTool({ type: "selection" }));
+await t((x) => x.selectType("none"));
+const colExists = () => page.evaluate((col) => !!document.querySelector(col), COL);
+await waitFor(async () => !(await colExists()), "no style column with the select tool and nothing selected");
+await t((x) => x.command({ type: "togglePinPanel" }));
+await waitFor(async () => colExists(), "pinned: the style column shows with nothing selected");
+await page.waitForSelector(`${COL} .md-style`);
+await page.screenshot({ path: path.join(shots, "pinned-panel.png") });
+const pinBtn = page.locator(`${COL} .md-pin-btn`);
+assert.equal(await pinBtn.getAttribute("aria-pressed"), "true", "pin button shows the pinned state");
+await pinBtn.click();
+await waitFor(async () => !(await colExists()), "unpinned with the button: the style column goes away again");
+await t((x) => x.selectType("rectangle"));
+await page.waitForSelector(`${COL} .md-pin-btn[aria-pressed="false"]`);
+await page.locator(`${COL} .md-pin-btn`).click();
+await t((x) => x.selectType("none"));
+await waitFor(async () => colExists(), "pinned with the button while a shape was selected: stays after deselecting");
+await page.locator(`${COL} .md-pin-btn`).click();
+await waitFor(async () => !(await colExists()), "button unpins again");
+
 
 step("MCP: control file is private; requests without the key are refused");
 const controlFile = path.join(userData, "control.json");
@@ -2589,6 +2610,94 @@ await page.waitForFunction(() => document.fonts.check("16px Caveat Elsewhere", "
 assert.ok((await t((x) => x.fonts())).list.some((f) => f.family === "Caveat Elsewhere" && f.source === "embedded"));
 await call("export", { path: fontsSvg });
 assert.ok(/font-family: Caveat Elsewhere;/.test(fs.readFileSync(fontsSvg, "utf8")), "the file's own font is used in exports");
+
+step("Bold / italic: B and I buttons, ⌘B / ⌘I, labels re-fit, disabled without a face, one undo step");
+await call("new_drawing", { title: "Bold italic" });
+await call("add_elements", {
+  elements: [
+    { type: "text", id: "bi1", x: 300, y: 320, text: "Plain Inter text", fontFamily: "Inter", fontSize: 24 },
+    { type: "rectangle", id: "bi2", x: 300, y: 420, width: 140, height: 60, label: { text: "Label", fontFamily: "Roboto" } },
+    { type: "text", id: "bi3", x: 300, y: 540, text: "Marker has no bold", fontFamily: "Permanent Marker", fontSize: 24 },
+  ],
+});
+const fid = (id) => t((x, id) => x.api().getSceneElements().find((e) => e.id === id).fontFamily, id);
+const labelFont = () => t((x) => x.api().getSceneElements().find((e) => e.type === "text" && e.containerId).fontFamily);
+const TS = ".md-drawing:not([style*='none']) .md-ts-btn";
+await call("select", { ids: ["bi1"] });
+await page.waitForSelector(`${TS}[aria-label="Bold"]:not([disabled])`);
+await page.locator(`${TS}[aria-label="Bold"]`).click();
+assert.equal(await fid("bi1"), await t((x) => x.fontId("Inter Bold")), "B switches Inter to Inter Bold");
+await waitFor(async () => (await page.locator(`${TS}[aria-label="Bold"]`).getAttribute("aria-pressed")) === "true", "Bold shows pressed");
+await page.locator(`${TS}[aria-label="Italic"]`).click();
+assert.equal(await fid("bi1"), await t((x) => x.fontId("Inter Bold Italic")), "I adds italic to the bold face");
+await page.locator(`${TS}[aria-label="Bold"]`).click();
+assert.equal(await fid("bi1"), await t((x) => x.fontId("Inter Italic")), "B off keeps the italic");
+await page.locator(`${TS}[aria-label="Italic"]`).click();
+assert.equal(await fid("bi1"), await t((x) => x.fontId("Inter")), "I off returns to the regular face");
+// One click = one undo step.
+await page.locator(`${TS}[aria-label="Bold"]`).click();
+await page.locator(".md-drawing:not([style*='none']) [data-testid=\"button-undo\"]").click();
+assert.equal(await fid("bi1"), await t((x) => x.fontId("Inter")), "undo restores the font in one step");
+// ⌘B / ⌘I with the canvas focused.
+await page.locator(".md-drawing:not([style*='none']) .excalidraw").first().click({ position: { x: 5, y: 700 } });
+await call("select", { ids: ["bi1"] });
+await page.keyboard.press(process.platform === "darwin" ? "Meta+KeyB" : "Control+KeyB");
+await waitFor(async () => (await fid("bi1")) === (await t((x) => x.fontId("Inter Bold"))), "⌘B makes the selected text bold");
+await page.keyboard.press(process.platform === "darwin" ? "Meta+KeyI" : "Control+KeyI");
+await waitFor(async () => (await fid("bi1")) === (await t((x) => x.fontId("Inter Bold Italic"))), "⌘I adds italic");
+// Colors still work on bold / italic text: free text, a label, and a text that is being edited.
+const strokeOf = (id) => t((x, id) => x.api().getSceneElements().find((e) => e.id === id).strokeColor, id);
+const labelStroke = () => t((x) => x.api().getSceneElements().find((e) => e.type === "text" && e.containerId).strokeColor);
+const SW = ".md-drawing:not([style*='none']) .md-style .md-swatch";
+await call("select", { ids: ["bi1"] });
+await page.locator(`${SW}[aria-label="red"]`).click();
+await waitFor(async () => (await strokeOf("bi1")) !== "#1e1e1e", "red applies to bold italic free text");
+const redHex = await strokeOf("bi1");
+await call("select", { ids: ["bi2"] });
+await page.locator(`${SW}[aria-label="blue"]`).click();
+await waitFor(async () => (await labelStroke()) !== redHex && (await labelStroke()) !== "#1e1e1e", "blue applies to an italic label");
+await call("select", { ids: ["bi1"] });
+await page.locator(`${SW}[aria-label="green"]`).click();
+await waitFor(async () => (await strokeOf("bi1")) !== redHex, "a second color still applies after the first");
+// While the text is being edited (Enter on a selected text): the buttons stay usable and keep the editor open.
+await page.locator(".md-drawing:not([style*='none']) .excalidraw").first().click({ position: { x: 5, y: 700 } });
+await call("select", { ids: ["bi1"] });
+await page.keyboard.press("Enter");
+await page.waitForSelector("textarea.excalidraw-wysiwyg");
+await page.waitForSelector(`${TS}[aria-label="Bold"]:not([disabled])`, { timeout: 5000 });
+await page.locator(`${TS}[aria-label="Bold"]`).click();
+await waitFor(async () => (await fid("bi1")) === (await t((x) => x.fontId("Inter Italic"))), "B works while the text is being edited");
+assert.ok(await page.$("textarea.excalidraw-wysiwyg"), "the editor is still open after clicking B");
+// ...and a color picked now reaches the text being edited.
+const beforeEdit = await strokeOf("bi1");
+await page.locator(`${SW}[aria-label="purple"]`).click();
+await waitFor(async () => (await strokeOf("bi1")) !== beforeEdit, "a color picked while editing bold text applies to it");
+await page.keyboard.press("Escape");
+// A label: the shape's text switches face and stays inside the shape.
+await call("select", { ids: ["bi2"] });
+await page.locator(`${TS}[aria-label="Italic"]`).click();
+assert.equal(await labelFont(), await t((x) => x.fontId("Roboto Italic")), "the label of a selected shape goes italic");
+const boxOk = await t((x) => {
+  const els = x.api().getSceneElements();
+  const label = els.find((e) => e.type === "text" && e.containerId);
+  const box = els.find((e) => e.id === label.containerId);
+  return label.x >= box.x && label.x + label.width <= box.x + box.width;
+});
+assert.ok(boxOk, "the italic label still fits inside its shape");
+// No face: the buttons are disabled with a hint, not silently wrong.
+await call("select", { ids: ["bi3"] });
+await page.waitForSelector(`${TS}[aria-label="Bold"][disabled]`);
+assert.ok(await page.locator(`${TS}[aria-label="Italic"]`).isDisabled(), "a font without italic disables I");
+await page.keyboard.press(process.platform === "darwin" ? "Meta+KeyB" : "Control+KeyB");
+assert.equal(await fid("bi3"), await t((x) => x.fontId("Permanent Marker")), "⌘B leaves a font without a bold face alone");
+// A font with a bold face but no italic: Caveat.
+await call("update_elements", { updates: [{ id: "bi3", fontFamily: "Caveat" }] });
+await call("select", { ids: ["bi3"] });
+await page.waitForSelector(`${TS}[aria-label="Bold"]:not([disabled])`);
+assert.ok(await page.locator(`${TS}[aria-label="Italic"]`).isDisabled(), "Caveat: bold yes, italic no");
+await page.screenshot({ path: path.join(shots, "bold-italic.png") });
+// Back to the drawing with the embedded font: the Fonts dialog step below starts from it.
+await call("activate_drawing", { drawing: foreignFile });
 
 step("Fonts dialog: Fun / Professional / Mono previews, download from the catalog, remove, keep a drawing's font");
 await t((x) => x.command({ type: "fonts" }));

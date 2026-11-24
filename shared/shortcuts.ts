@@ -27,6 +27,8 @@ export const SHORTCUTS = {
   stencils: "⇧⌘Y",
   quickSaveStencil: "⌥⌘S",
   align: "⇧⌘←/→/↑/↓",
+  bold: "⌘B",
+  italic: "⌘I",
 } as const;
 
 export type ShortcutId = keyof typeof SHORTCUTS;

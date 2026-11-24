@@ -1524,6 +1524,30 @@ body.md-panel-arrange .md-canvas .panelColumn [data-md-key] > legend::before {
   font-size: 0.68rem;
   color: var(--color-gray-50, #888);
 }
+/* Pin button in the Colors & styles header (web/src/panelPin.ts) */
+.md-style .md-legend-text {
+  flex: 1;
+}
+.md-pin-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--border-radius-md, 6px);
+  background: transparent;
+  color: var(--color-gray-50, #888);
+  cursor: pointer;
+}
+.md-pin-btn:hover {
+  background: var(--button-hover-bg, rgba(127, 127, 127, 0.2));
+  color: var(--text-primary-color, inherit);
+}
+.md-pin-btn.on {
+  color: var(--text-primary-color, #1b1b1f);
+}
 .md-collapse-btn {
   display: inline-flex;
   align-items: center;
@@ -2922,6 +2946,40 @@ body.md-panel-dragging * {
   border-radius: 6px;
   background: rgba(224, 138, 30, 0.15);
   font-size: 11.5px;
+}
+
+/* Bold / italic buttons under the Font family picker (web/src/TextStyle.tsx) */
+.md-ts-host {
+  margin-top: 0.4rem;
+}
+.md-ts {
+  display: flex;
+  gap: 0.35rem;
+}
+.md-ts-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--default-button-size, 2rem);
+  height: var(--default-button-size, 2rem);
+  padding: 0;
+  border: none;
+  border-radius: var(--border-radius-lg, 8px);
+  background: var(--button-bg, var(--color-surface-mid, #f1f0ff));
+  color: var(--button-color, var(--text-primary-color, inherit));
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.md-ts-btn:hover:not(:disabled) {
+  background: var(--button-hover-bg, var(--color-surface-high, #e0dfff));
+}
+.md-ts-btn.active {
+  background: var(--color-surface-primary-container, #e0dfff);
+  color: var(--color-on-primary-container, inherit);
+}
+.md-ts-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* Fine-tune buttons (end of Stroke width / Sloppiness / Edges rows) and their slider popover

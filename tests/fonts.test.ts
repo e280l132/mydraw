@@ -3,9 +3,11 @@ import { historyIdFromContent, readMeta, withMeta } from "../shared/drawingMeta"
 import {
   CUSTOM_FONT_MIN,
   FONTS_KEY,
+  canStyle,
   charsPerCustomFont,
   cssSafeFamily,
   faceFamilyName,
+  faceFor,
   filesToEmbed,
   fontIdFor,
   lineHeightFor,
@@ -33,7 +35,10 @@ describe("font ids", () => {
   });
 
   it("don't collide across the built-in set", () => {
-    const names = BUILTIN_FONTS.flatMap((f) => f.weights.map((w) => faceFamilyName(f.typeface, w, "normal")));
+    const names = BUILTIN_FONTS.flatMap((f) => [
+      ...f.weights.map((w) => faceFamilyName(f.typeface, w, "normal")),
+      ...(f.category === "fun" ? [] : f.weights.map((w) => faceFamilyName(f.typeface, w, "italic"))),
+    ]);
     expect(new Set(names.map(fontIdFor)).size).toBe(names.length);
   });
 });
@@ -172,5 +177,50 @@ describe("woff2 metrics", () => {
     // Values as reported by fontkit for this file.
     expect(woff2Metrics(bytes, (b) => brotliDecompressSync(b))).toEqual({ unitsPerEm: 2048, ascender: 1984, descender: -494 });
     expect(() => woff2Metrics(new Uint8Array(100), (b) => b)).toThrow(/woff2/);
+  });
+});
+
+describe("bold / italic faces", () => {
+  const mk = (typeface: string, weight: number, style: "normal" | "italic" = "normal") => ({
+    typeface,
+    weight,
+    style,
+    family: faceFamilyName(typeface, weight, style),
+  });
+  const inter = [mk("Inter", 400), mk("Inter", 600), mk("Inter", 700), mk("Inter", 400, "italic"), mk("Inter", 700, "italic")];
+  const caveat = [mk("Caveat", 400), mk("Caveat", 700)];
+  const marker = [mk("Permanent Marker", 400)];
+  const all = [...inter, ...caveat, ...marker];
+
+  it("names the faces", () => {
+    expect(inter.map((f) => f.family)).toEqual(["Inter", "Inter SemiBold", "Inter Bold", "Inter Italic", "Inter Bold Italic"]);
+  });
+
+  it("switches weight and keeps the other property", () => {
+    expect(faceFor(inter[0], all, { bold: true })?.family).toBe("Inter Bold");
+    expect(faceFor(inter[2], all, { bold: false })?.family).toBe("Inter");
+    expect(faceFor(inter[0], all, { italic: true })?.family).toBe("Inter Italic");
+    expect(faceFor(inter[4], all, { italic: false })?.family).toBe("Inter Bold");
+    expect(faceFor(inter[3], all, { bold: true })?.family).toBe("Inter Bold Italic");
+    expect(faceFor(inter[4], all, { bold: false })?.family).toBe("Inter Italic");
+  });
+
+  it("treats SemiBold as bold and leaves it bold when italic changes", () => {
+    expect(faceFor(inter[1], all, { bold: false })?.family).toBe("Inter");
+    // no SemiBold Italic: a SemiBold text made italic becomes Bold Italic
+    expect(faceFor(inter[1], all, { italic: true })?.family).toBe("Inter Bold Italic");
+  });
+
+  it("is case-insensitive about the typeface and null when a face is missing", () => {
+    expect(faceFor({ typeface: "inter", weight: 400, style: "normal" }, all, { bold: true })?.family).toBe("Inter Bold");
+    expect(faceFor(caveat[0], all, { italic: true })).toBeNull();
+    expect(faceFor(marker[0], all, { bold: true })).toBeNull();
+  });
+
+  it("says which buttons can work", () => {
+    expect(canStyle(inter[0], all)).toEqual({ bold: true, italic: true });
+    expect(canStyle(caveat[0], all)).toEqual({ bold: true, italic: false });
+    expect(canStyle(marker[0], all)).toEqual({ bold: false, italic: false });
+    expect(canStyle({ typeface: "Unknown", weight: 400, style: "normal" }, all)).toEqual({ bold: false, italic: false });
   });
 });

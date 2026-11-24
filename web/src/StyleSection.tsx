@@ -43,6 +43,9 @@ interface Props {
   icons: IconSelection;
   /** Recolor the selected icons; null restores their original colors. `preview` = live drag update. */
   onIconColor(color: string | null, preview?: boolean): void;
+  /** Pin: keep this panel on screen with nothing selected (View > Pin style panel). */
+  pinned: boolean;
+  onTogglePin(): void;
 }
 
 type Tab = "colors" | "presets" | "themes";
@@ -422,7 +425,7 @@ function Well({ color }: { color: string | null }) {
   );
 }
 
-export function StyleSection({ api, tick, changeTick, onToast, custom: customColor, palette, onCustomChange, onPick, picking, icons, onIconColor }: Props) {
+export function StyleSection({ api, tick, changeTick, onToast, custom: customColor, palette, onCustomChange, onPick, picking, icons, onIconColor, pinned, onTogglePin }: Props) {
   useStyleLibrary();
   const [tab, setTab] = useState<Tab>("colors");
   // Stroke/Fill: one app-wide choice that sticks from item to item and across restarts.
@@ -447,7 +450,14 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
   const [, rerender] = useState(0); // tool defaults (no selection) live in app state: re-read after a change
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const selected = useMemo(() => (api ? api.getSceneElements().filter((e) => api.getAppState().selectedElementIds[e.id]) : []), [api, tick, changeTick]);
+  // The text being edited counts as selected: while typing, Excalidraw can have an empty selection
+  // (the same rule as its own color and font pickers).
+  const selected = useMemo(() => {
+    if (!api) return [];
+    const st = api.getAppState();
+    const editing = st.editingTextElement?.id;
+    return api.getSceneElements().filter((e) => st.selectedElementIds[e.id] || e.id === editing);
+  }, [api, tick, changeTick]);
   const styleable = selected.filter((e) => e.type !== "image");
   const first = styleable[0];
   // Icons are recolored, not stroked: with only icons selected the Icon target is the only one that
@@ -507,7 +517,12 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
       }
       const scene = a.getSceneElements();
       const r = styleElements(withGroupsAndLabels(styleable.map((e) => e.id), scene, { contents: false }), style, scene, a.getAppState(), { inks: allThemes() });
-      commit(a, r);
+      // Like Excalidraw's own picker, a color picked for the selection is also the default for the
+      // next shapes and stencil labels; otherwise the next drop keeps using an older color.
+      const defaults: Record<string, unknown> = {};
+      if (style.strokeColor) defaults.currentItemStrokeColor = resolveColor(style.strokeColor);
+      if (style.backgroundColor) defaults.currentItemBackgroundColor = resolveColor(style.backgroundColor);
+      commit(a, r, Object.keys(defaults).length ? (defaults as Partial<AppState>) : undefined);
     });
 
   /** The other of Stroke/Fill, for ⌥-click on a swatch (null when it can't apply). */
@@ -874,7 +889,21 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
 
   return (
     <fieldset className="md-style" data-md-section="colors" onMouseDown={(e) => e.stopPropagation()}>
-      <legend>Colors &amp; styles</legend>
+      <legend>
+        <span className="md-legend-text">Colors &amp; styles</span>
+        <button
+          type="button"
+          className={`md-pin-btn${pinned ? " on" : ""}`}
+          aria-pressed={pinned}
+          aria-label={pinned ? "Unpin style panel" : "Pin style panel"}
+          title={pinned ? "Pinned: this panel stays open with nothing selected. Click to unpin." : "Pin: keep this panel open with nothing selected"}
+          onClick={onTogglePin}
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <path d="M9.5 1.5 14.5 6.5 12.6 7.1 10.4 9.3 10.9 12.1 9.8 13.2 6.9 10.3 3.3 13.9 2.1 12.7 5.7 9.1 2.8 6.2 3.9 5.1 6.7 5.6 8.9 3.4Z" fill={pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+          </svg>
+        </button>
+      </legend>
       <div className="md-iconcolor-actions md-seg md-tabs" role="tablist">
         {(["colors", "presets", "themes"] as Tab[]).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} className={`md-chip${tab === t ? " on" : ""}`} onClick={() => setTab(t)}>

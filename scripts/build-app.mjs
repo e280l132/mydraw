@@ -53,11 +53,16 @@ export function copyExtraFonts(dest) {
     const license = meta.license?.type ?? "";
     if (!ALLOWED_LICENSES.test(license)) throw new Error(`${font.pkg}: licence ${license} is not allowed`);
     cpSync(path.join(pkgDir, "LICENSE"), path.join(dest, "LICENSES", `${font.pkg}.txt`));
-    for (const weight of font.weights) {
+    // Italic faces ship for professional and mono typefaces (the fun ones are hand-drawn; they
+    // have no real italic). Same weights as upright; a missing file is skipped, not an error.
+    const variants = [];
+    for (const weight of font.weights) variants.push({ weight, style: "normal" });
+    if (font.category !== "fun") for (const weight of font.weights) variants.push({ weight, style: "italic" });
+    for (const { weight, style } of variants) {
       const files = [];
       let metrics = null;
       for (const subset of BUILTIN_SUBSETS) {
-        const name = `${font.pkg}-${subset}-${weight}-normal.woff2`;
+        const name = `${font.pkg}-${subset}-${weight}-${style}.woff2`;
         const file = path.join(pkgDir, "files", name);
         if (!existsSync(file)) continue;
         cpSync(file, path.join(dest, name));
@@ -67,14 +72,17 @@ export function copyExtraFonts(dest) {
           metrics = { ...m, lineHeight: lineHeightFor(m) };
         }
       }
-      if (!files.length) throw new Error(`${font.pkg} ${weight}: no font files found`);
-      const family = faceFamilyName(font.typeface, weight, "normal");
+      if (!files.length) {
+        if (style === "italic") continue;
+        throw new Error(`${font.pkg} ${weight}: no font files found`);
+      }
+      const family = faceFamilyName(font.typeface, weight, style);
       faces.push({
         id: fontIdFor(family),
         family,
         typeface: cssSafeFamily(font.typeface),
         weight,
-        style: "normal",
+        style,
         category: font.category,
         source: "builtin",
         metrics,

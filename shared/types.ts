@@ -130,11 +130,14 @@ export type MenuCommand =
   | { type: "findReplace" }
   | { type: "togglePages" }
   | { type: "toggleLint" }
+  | { type: "togglePinPanel" }
   | { type: "inventory" }
   | { type: "help" }
   | { type: "importText" }
   | { type: "quickConnectSettings" }
   | { type: "fonts" }
+  | { type: "toggleBold" }
+  | { type: "toggleItalic" }
   | { type: "toggleGrid" }
   | { type: "gridSettings" }
   | { type: "snapToGrid" }

@@ -151,6 +151,7 @@ export interface MenuPanels {
   stencils: boolean;
   pages: boolean;
   lint: boolean;
+  pinned: boolean;
 }
 
 interface Props {
@@ -224,6 +225,9 @@ export function AppMenu({ settings, panels, onCommand, onSettings }: Props) {
         </CheckItem>
         <CheckItem checked={panels.lint} shortcut={sc("lint")} onToggle={run({ type: "toggleLint" })}>
           Diagram lint
+        </CheckItem>
+        <CheckItem checked={panels.pinned} onToggle={run({ type: "togglePinPanel" })}>
+          Pin style panel
         </CheckItem>
         <CheckItem checked={!!settings?.grid.enabled} shortcut={sc("grid")} onToggle={run({ type: "toggleGrid" })}>
           Grid
