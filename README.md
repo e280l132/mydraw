@@ -38,7 +38,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 - Icon packs download from the Stencils panel menu: AWS, Azure, Google Cloud, Kubernetes, network devices (Carbon), 2,300 product logos, ~2,700 self-hosted app icons (Dashboard Icons: Proxmox, Portainer, Pi-hole…), and infrastructure picks from Material Design Icons, Tabler and Lucide, Devicon dev logos and Simple Icons brand marks. Use the **Icon packs…** button next to the panel title to search and sort packs, download the ones you tick (none are ticked by default) and remove installed ones.
 - Save a selection as a stencil (⌥⌘S saves it to My Stencils without asking for a name); import SVG, PNG and `.excalidrawlib` files.
 - Stencils is the only library: Excalidraw's own Library button is hidden.
-- Recolor icons (with undo), an eyedropper that copies the real color of any shape or icon, and icons that keep their real colors in dark mode.
+- Recolor icons (with undo), an eyedropper that copies the real color of any shape, icon or text (a label's own color, bold and large text, thick lines), and icons that keep their real colors in dark mode.
 
 **Fonts** (Preferences → Fonts…)
 - 21 extra fonts on top of Excalidraw's own, in Excalidraw's font list (searchable, each shown in its own font, with a pen icon for fun fonts and "Aa" for professional ones). Each weight is its own entry ("Inter Bold"), so labels can be bold.
