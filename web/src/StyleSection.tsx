@@ -553,6 +553,12 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
 
   // ----- colors tab -----
   const basics = useMemo(() => Object.entries(paletteById("basic")!.colors).map(([name, color]) => ({ name, color })), []);
+  // Colors saved in this drawing that the grid doesn't already offer (the last one has its own slot).
+  // A picked color that equals a basic swatch is not "a color of this drawing": it is already there.
+  const extraColors = useMemo(() => {
+    const builtin = new Set(basics.map((b) => b.color.toLowerCase()));
+    return palette.slice(1).filter((c) => !builtin.has(c.toLowerCase()));
+  }, [palette, basics]);
   const current =
     target === "icon"
       ? icons.color && icons.color !== "original"
@@ -632,11 +638,11 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
           }}
         />
       </div>
-      {palette.length > 1 && (
+      {extraColors.length > 0 && (
         <>
           <div className="md-iconcolor-note md-shades-label">Colors in this drawing (saved with the file)</div>
           <div className="md-drawing-palette" role="group" aria-label="Colors in this drawing">
-            {palette.slice(1).map((c) => (
+            {extraColors.map((c) => (
               <button
                 key={c}
                 className={`md-swatch md-palette-swatch${current === c ? " on" : ""}`}
@@ -700,7 +706,7 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
           {icons.raster} PNG/JPG image{icons.raster > 1 ? "s" : ""} in the selection can't be recolored.
         </div>
       )}
-      {picking && <div className="md-iconcolor-note">Click an icon or shape to copy its color · Esc to cancel</div>}
+      {picking && <div className="md-iconcolor-note">Click an icon, shape or text to copy its color · Esc to cancel</div>}
       {custom && (
         <ColorPicker
           value={customColor ?? pickerValue}

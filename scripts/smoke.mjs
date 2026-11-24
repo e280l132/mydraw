@@ -2699,6 +2699,127 @@ await page.screenshot({ path: path.join(shots, "bold-italic.png") });
 // Back to the drawing with the embedded font: the Fonts dialog step below starts from it.
 await call("activate_drawing", { drawing: foreignFile });
 
+step("Eyedropper picks the color of text: free text and a label (the label's own color, not its shape's)");
+await call("new_drawing", { title: "Pick text color" });
+await call("add_elements", {
+  elements: [
+    { type: "text", id: "pt1", x: 300, y: 330, text: "Free text", fontFamily: "Inter Bold", fontSize: 28, strokeColor: "#e03131" },
+    { type: "rectangle", id: "pt2", x: 300, y: 430, width: 220, height: 90, strokeColor: "#1971c2", backgroundColor: "#e7f5ff", label: { text: "Label", strokeColor: "#2f9e44" } },
+  ],
+});
+const TXT_SEC = SECTION;
+const txtSlotTitle = () => page.$eval(`${TXT_SEC} .md-swatch-slot`, (el) => el.title);
+// Nothing selected: pin the panel so the eyedropper is reachable.
+await call("select", { ids: [] });
+await t((x) => x.command({ type: "togglePinPanel" }));
+await page.waitForSelector(`${TXT_SEC} .md-chip-pick`);
+await page.click(`${TXT_SEC} .md-chip-pick`);
+const freeAt = await t((x) => x.screenCenter("text", 0));
+await page.mouse.click(freeAt.x, freeAt.y);
+await waitFor(async () => (await txtSlotTitle()).includes("#e03131"), "free text color picked");
+await page.click(`${TXT_SEC} .md-chip-pick`);
+const labelAt = await t((x) => x.screenCenter("text", 1));
+await page.mouse.click(labelAt.x, labelAt.y);
+await waitFor(async () => (await txtSlotTitle()).includes("#2f9e44"), "the label's own color picked (not its shape's blue or fill)");
+// #2f9e44 is the basic "green" swatch: it must not also be listed as "a color of this drawing".
+assert.equal(await page.locator(`${TXT_SEC} .md-drawing-palette [aria-label="#2f9e44"]`).count(), 0, "a picked color that is a built-in swatch is not repeated under 'Colors in this drawing'");
+// A shape's body, away from its label, still gives the shape's color.
+await page.click(`${TXT_SEC} .md-chip-pick`);
+const boxAt = await t((x) => x.toScreen(310, 440));
+await page.mouse.click(boxAt.x, boxAt.y);
+await waitFor(async () => (await txtSlotTitle()).includes("#e7f5ff") || (await txtSlotTitle()).includes("#1971c2"), "a click on the shape (not its label) still picks the shape");
+// Bold / big text, in the middle of a glyph and just outside its box, and a thick horizontal arrow.
+await call("add_elements", {
+  elements: [
+    { type: "text", id: "pt4", x: 300, y: 560, text: "Heavy", fontFamily: "Inter Bold", fontSize: 72, strokeColor: "#c2255c" },
+    { type: "text", id: "pt5", x: 300, y: 680, text: "Marker", fontFamily: "Permanent Marker", fontSize: 72, strokeColor: "#7048e8" },
+    { type: "arrow", id: "pt6", x: 600, y: 600, points: [[0, 0], [260, 0]], strokeColor: "#099268", strokeWidth: 16 },
+  ],
+});
+const pickAt = async (sceneX, sceneY, hex, what) => {
+  await page.click(`${TXT_SEC} .md-chip-pick`);
+  const p = await t((x, a, b) => x.toScreen(a, b), sceneX, sceneY);
+  await page.mouse.click(p.x, p.y);
+  await waitFor(async () => (await txtSlotTitle()).includes(hex), what);
+};
+const textBox = (id) => t((x, id) => { const e = x.api().getSceneElements().find((el) => el.id === id); return { x: e.x, y: e.y, w: e.width, h: e.height }; }, id);
+const heavy = await textBox("pt4");
+const marker = await textBox("pt5");
+// Each pick follows one of a different color, so a leftover value can't satisfy the check.
+await pickAt(heavy.x + heavy.w / 2, heavy.y + heavy.h / 2, "#c2255c", "bold 72px text picked in the middle");
+await pickAt(marker.x + marker.w / 2, marker.y + marker.h / 2, "#7048e8", "thick marker text picked");
+await pickAt(heavy.x + 2, heavy.y + heavy.h - 2, "#c2255c", "bold text picked near the corner of its box");
+await pickAt(730, 600 + 6, "#099268", "the outer half of a 16px arrow picked (6 units off its path)");
+await pickAt(marker.x - 3, marker.y + marker.h / 2, "#7048e8", "text picked a little outside its box (heavy glyphs overshoot)");
+await pickAt(730, 600 - 6, "#099268", "the other side of the thick arrow picked");
+// Cases the first round did not cover: a freehand stroke, a label on a thick-outlined shape, and empty space.
+await call("raw_update", {
+  elements: [
+    {
+      id: "pt7", type: "freedraw", x: 300, y: 820, width: 240, height: 40,
+      points: [[0, 0], [60, 20], [120, 0], [180, 20], [240, 0]], pressures: [], simulatePressure: true,
+      strokeColor: "#e67700", strokeWidth: 12, backgroundColor: "transparent", fillStyle: "solid", strokeStyle: "solid",
+      roughness: 0, opacity: 100, angle: 0, groupIds: [], frameId: null, boundElements: null, roundness: null, seed: 7, version: 1, versionNonce: 7, isDeleted: false, locked: false, link: null, updated: 1,
+    },
+  ],
+});
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "pt8", x: 600, y: 830, width: 300, height: 120, strokeColor: "#1971c2", strokeWidth: 14, backgroundColor: "#d3f9d8", label: { text: "Thick box", strokeColor: "#ae3ec9", fontFamily: "Inter Bold", fontSize: 28 } },
+  ],
+});
+// These shapes sit below the first screenful: scroll them into view (zoom 1).
+await page.evaluate(() => window.__mydrawTest.api().updateScene({ appState: { scrollX: 0, scrollY: -700 } }));
+await page.waitForTimeout(200);
+// Along the pen stroke (a segment from (0,0) to (60,20): its midpoint is (30,10)) and 5 units off it.
+await pickAt(330, 830, "#e67700", "freehand stroke picked on its path");
+await pickAt(330, 830 + 5, "#e67700", "freehand stroke picked 5 units off its path (stroke is 12 wide)");
+// The label of a thick-outlined, filled shape gives the LABEL's color; the body gives the fill; the thick edge gives the outline or fill.
+const thickLabel = await t((x) => { const e = x.api().getSceneElements().find((el) => el.type === "text" && el.containerId === "pt8"); return { x: e.x, y: e.y, w: e.width, h: e.height }; });
+await pickAt(thickLabel.x + thickLabel.w / 2, thickLabel.y + thickLabel.h / 2, "#ae3ec9", "the label of a thick-outlined shape gives the label's own color");
+await pickAt(610, 840, "#d3f9d8", "the filled body of a thick-outlined shape gives its fill, not the label's color");
+// Empty space far from any letter: nothing is picked and the user is told.
+await page.click(`${TXT_SEC} .md-chip-pick`);
+const farAt = await t((x) => x.toScreen(900, 1080));
+const slotBefore = await txtSlotTitle();
+await page.mouse.click(farAt.x, farAt.y);
+await page.waitForSelector(".md-toast.error", { timeout: 5000 });
+assert.ok((await page.textContent(".md-toast.error")).includes("Nothing there"), "empty canvas says 'Nothing there'");
+assert.equal(await txtSlotTitle(), slotBefore, "an empty click leaves the custom swatch alone");
+// A wide text box with the letters at its left: the empty right part of the box. Picked or not, it must not crash.
+await call("add_elements", { elements: [{ type: "text", id: "pt9", x: 300, y: 1000, text: "A\\nBBBBBBBBBBBBBBBBBBBB", fontFamily: "Inter Bold", fontSize: 40, strokeColor: "#0c8599" }] });
+const wide = await textBox("pt9");
+await page.click(`${TXT_SEC} .md-chip-pick`);
+const gap = await t((x, a, b) => x.toScreen(a, b), wide.x + wide.w - 4, wide.y + 10);
+await page.mouse.click(gap.x, gap.y);
+await waitFor(async () => (await txtSlotTitle()).includes("#0c8599") || !!(await page.$(".md-toast.error")), "a click in a text box's empty corner either picks the text or says Nothing there");
+// Thick, sketchy, hollow shape at a high zoom in dark mode: picking its outline must still hit.
+await page.evaluate(() => window.mydraw.updateSettings({ theme: "dark" }));
+await call("add_elements", {
+  elements: [{ type: "rectangle", id: "pt3", x: 600, y: 330, width: 240, height: 140, strokeColor: "#0b2e6f", strokeWidth: 8, roughness: 1 }],
+});
+// Zoom 2.5 with the shape in the middle of the view (scroll = viewport centre in scene units).
+await page.evaluate(() => {
+  const api = window.__mydrawTest.api();
+  const st = api.getAppState();
+  const zoom = 2.5;
+  api.updateScene({ appState: { zoom: { value: zoom }, scrollX: st.width / 2 / zoom - 720, scrollY: st.height / 2 / zoom - 400 } });
+});
+await page.waitForTimeout(300);
+await call("select", { ids: [] });
+await page.click(`${TXT_SEC} .md-chip-pick`);
+// The box's left edge is x=600; the 8-unit stroke covers 596..604, so x=598 is on its outer half
+// (outside the box). Only a hit test that counts the whole stroke finds it.
+const thickAt = await t((x) => x.toScreen(598, 400));
+await page.mouse.click(thickAt.x, thickAt.y);
+await waitFor(async () => (await txtSlotTitle()).includes("#0b2e6f"), "outer half of a thick sketchy outline picked in dark mode at zoom 2.5");
+await page.evaluate(() => {
+  window.__mydrawTest.api().updateScene({ appState: { zoom: { value: 1 } } });
+  return window.mydraw.updateSettings({ theme: "light" });
+});
+await t((x) => x.command({ type: "togglePinPanel" }));
+await call("activate_drawing", { drawing: foreignFile });
+
 step("Fonts dialog: Fun / Professional / Mono previews, download from the catalog, remove, keep a drawing's font");
 await t((x) => x.command({ type: "fonts" }));
 await page.waitForSelector(".md-fonts");

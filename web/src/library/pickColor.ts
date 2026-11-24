@@ -9,8 +9,12 @@ import { isSvgDataURL } from "./trueColor";
 
 const LINEAR = new Set(["arrow", "line", "freedraw"]);
 
-/** Topmost element under a scene point. Bound text resolves to its container; lines/arrows only if nothing else is hit. */
-export function elementAt(api: ExcalidrawImperativeAPI, x: number, y: number): ExcalidrawElement | null {
+/**
+ * Topmost element under a scene point. Bound text resolves to its container; lines/arrows only if
+ * nothing else is hit. With `labels` (the eyedropper) the text itself is returned when the point is
+ * on a label, so its own color can be read (a label's color often differs from its shape's).
+ */
+export function elementAt(api: ExcalidrawImperativeAPI, x: number, y: number, opts: { labels?: boolean } = {}): ExcalidrawElement | null {
   const elements = api.getSceneElements();
   const byId = new Map(elements.map((e) => [e.id, e]));
   const inside = (el: ExcalidrawElement, pad = 0) => {
@@ -23,13 +27,16 @@ export function elementAt(api: ExcalidrawImperativeAPI, x: number, y: number): E
     const el = elements[i];
     if (el.type === "frame" || el.type === "magicframe" || el.type === "selection") continue;
     if (LINEAR.has(el.type)) {
-      if (!linear && inside(el, 4)) linear = el;
+      // Half the stroke is drawn on each side of the path: a thick arrow is wider than 4 units.
+      if (!linear && inside(el, Math.max(4, el.strokeWidth / 2 + tol))) linear = el;
       continue;
     }
-    if (!inside(el)) continue;
+    // A thick stroke is drawn half outside the box; sketchy lines wobble a little more.
+    // Text gets the same pointer slack: the box hugs the glyphs, so a click on a letter's edge can land just outside.
+    if (!inside(el, isHollowShape(el) ? el.strokeWidth / 2 + tol : el.type === "text" ? tol : 0)) continue;
     // Shapes without a fill are only "there" along their outline, like Excalidraw's own selection.
     if (isHollowShape(el) && !nearOutline(el, x, y, tol)) continue;
-    if (el.type === "text" && el.containerId && byId.has(el.containerId)) return byId.get(el.containerId)!;
+    if (el.type === "text" && el.containerId && byId.has(el.containerId) && !opts.labels) return byId.get(el.containerId)!;
     return el;
   }
   return linear;
@@ -50,7 +57,8 @@ function nearOutline(el: ExcalidrawElement, x: number, y: number, tol: number): 
   const b = Math.max(el.height / 2, 1);
   const dx = Math.abs(x - cx);
   const dy = Math.abs(y - cy);
-  const t = tol + el.strokeWidth;
+  // Half the stroke on each side of the ideal outline, plus the pointer slack.
+  const t = tol + el.strokeWidth / 2;
   if (el.type === "ellipse") {
     const r = Math.sqrt((dx / a) ** 2 + (dy / b) ** 2);
     return Math.abs(r - 1) * Math.min(a, b) <= t;
@@ -59,7 +67,8 @@ function nearOutline(el: ExcalidrawElement, x: number, y: number, tol: number): 
     const r = dx / a + dy / b;
     return Math.abs(r - 1) * Math.min(a, b) <= t;
   }
-  return Math.min(a - dx, b - dy) <= t; // rectangle: distance to the nearest edge
+  // Rectangle: distance to the nearest edge, on either side of it (absolute, so the outer half counts).
+  return Math.abs(Math.min(a - dx, b - dy)) <= t;
 }
 
 /** Most common non-white, opaque color of a raster image (quantised), as #rrggbb. */

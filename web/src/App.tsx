@@ -609,8 +609,8 @@ export function App() {
       const api = apis.current.get(activeRef.current);
       if (!api) return;
       const { x, y } = viewportCoordsToSceneCoords({ clientX: e.clientX, clientY: e.clientY }, api.getAppState());
-      const el = elementAt(api, x, y);
-      if (!el) return showToast("Nothing there. Click an icon or shape to copy its color.", true);
+      const el = elementAt(api, x, y, { labels: true });
+      if (!el) return showToast("Nothing there. Click an icon, shape or text to copy its color.", true);
       colorOfElement(api, el).then(
         (hex) => {
           if (!hex) return showToast("That item has no color to copy (it's white or transparent).", true);
