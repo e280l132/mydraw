@@ -1,6 +1,7 @@
 import { DEFAULT_GRID, normalizeGrid } from "./grid";
 import { normalizePanelOrder } from "./panelOrder";
 import { cloneQuickConnect, defaultQuickConnect, normalizeQuickConnect } from "./quickBindings";
+import { CAPTION_FONT_MODES, DEFAULT_HAND_FONT, DEFAULT_ICON_SKETCH, ICON_STYLE_SETTINGS, type CaptionFontMode, type IconStyleSetting, lookOfSetting, normalizeHandFont, normalizeIconSketch } from "./iconSketch";
 import type { DrawingStyle, Settings, ThemeSetting } from "./types";
 
 export const MAX_RECENT = 10;
@@ -15,6 +16,10 @@ export const DEFAULT_SETTINGS: Settings = {
   quickConnect: defaultQuickConnect(),
   grid: { ...DEFAULT_GRID },
   panelOrder: [],
+  iconStyle: "auto",
+  iconSketch: lookOfSetting(null),
+  captionFont: "match",
+  captionHandFont: DEFAULT_HAND_FONT,
 };
 
 const THEMES: ThemeSetting[] = ["system", "light", "dark"];
@@ -22,7 +27,7 @@ const STYLES: DrawingStyle[] = ["clean", "sketch"];
 
 /** Merge untrusted JSON (settings file or a renderer patch) onto a base, keeping only valid values. */
 export function mergeSettings(base: Settings, raw: unknown): Settings {
-  const out: Settings = { ...base, recentFiles: [...base.recentFiles], autoExport: { ...base.autoExport }, quickConnect: cloneQuickConnect(base.quickConnect), grid: { ...base.grid }, panelOrder: [...base.panelOrder] };
+  const out: Settings = { ...base, recentFiles: [...base.recentFiles], autoExport: { ...base.autoExport }, quickConnect: cloneQuickConnect(base.quickConnect), grid: { ...base.grid }, panelOrder: [...base.panelOrder], iconSketch: { ...base.iconSketch } };
   if (!raw || typeof raw !== "object") return out;
   const r = raw as Record<string, unknown>;
   if (THEMES.includes(r.theme as ThemeSetting)) out.theme = r.theme as ThemeSetting;
@@ -43,6 +48,22 @@ export function mergeSettings(base: Settings, raw: unknown): Settings {
   if (r.quickConnect !== undefined) out.quickConnect = normalizeQuickConnect(r.quickConnect);
   if (r.grid !== undefined) out.grid = normalizeGrid(r.grid, base.grid);
   if (r.panelOrder !== undefined) out.panelOrder = normalizePanelOrder(r.panelOrder);
+  if (ICON_STYLE_SETTINGS.includes(r.iconStyle as IconStyleSetting)) out.iconStyle = r.iconStyle as IconStyleSetting;
+  if (CAPTION_FONT_MODES.includes(r.captionFont as CaptionFontMode)) out.captionFont = r.captionFont as CaptionFontMode;
+  const hand = normalizeHandFont(r.captionHandFont);
+  if (hand) out.captionHandFont = hand;
+  if (r.iconSketch && typeof r.iconSketch === "object") {
+    try {
+      const s = normalizeIconSketch({ ...(r.iconSketch as object), seed: 1 }, { ...DEFAULT_ICON_SKETCH, ...base.iconSketch, seed: 1 });
+      if (s) {
+        const { seed: _seed, ...look } = s;
+        void _seed;
+        out.iconSketch = look;
+      }
+    } catch {
+      // keep the current look
+    }
+  }
   return out;
 }
 

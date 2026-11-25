@@ -106,7 +106,7 @@ export function applyFill(api: ExcalidrawImperativeAPI, fill: FillStyleId): void
 // ---------- previews ----------
 
 /** SVG paths of a small square filled with `fill`, drawn by roughjs itself (what the canvas draws). */
-function fillPreviewPaths(fill: FillStyleId): { d: string; stroke: string; strokeWidth: number; fill?: string }[] {
+export function fillPreviewPaths(fill: FillStyleId): { d: string; stroke: string; strokeWidth: number; fill?: string }[] {
   const g = new RoughGenerator();
   const shape = g.rectangle(3, 3, 26, 26, {
     seed: 7,

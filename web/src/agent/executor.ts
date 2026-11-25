@@ -16,7 +16,7 @@ import { allPresets, allThemes, deletePreset, deleteTheme, findPreset, findTheme
 import { applyThemeToScene, styleElements } from "./styles";
 import { isLintRule, LINT_RULES } from "../../../shared/lint";
 import { applyLintFixes, lintDrawing } from "../lintOps";
-import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
+import type { ExcalidrawElement, ExcalidrawImageElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState, BinaryFileData, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { isPagedFormat, type AgentCommand } from "../../../shared/agent";
 import { PDF_PAGE_SIZES } from "../../../shared/pdfLayout";
@@ -33,7 +33,8 @@ import {
   type ExportFormat,
   type ExportOptions,
 } from "../exportImage";
-import { isRecolorableIcon, recoloredIcon } from "../library/iconColor";
+import { isRecolorableIcon, isSketchableIcon, recoloredIcon, restyledIcon } from "../library/iconColor";
+import { type IconSketch, normalizeIconSketch } from "../../../shared/iconSketch";
 import { colorOfElement } from "../library/pickColor";
 import { cloneForInsert, loadStencil } from "../library/stencilContent";
 import { autoLayout, buildDiagram, buildLegend, loadIconImage, makeIconNode, makeZone, zoneTitleSize } from "./diagram";
@@ -81,6 +82,10 @@ export interface AgentHost {
   /** Save a tab, to `path` if given (else its current file). Resolves to the saved path. */
   save(tabId: string, path?: string): Promise<string>;
   markStencilUsed(id: string): void;
+  /** What a stencil inserted now looks like by default (Settings.iconStyle); null = original. */
+  insertSketch(): IconSketch | null;
+  /** Caption font for an inserted icon (Settings.captionFont): `current` = the drawing's font. */
+  captionFont(sketched: boolean, current: number): number;
 }
 
 const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
@@ -257,11 +262,15 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
 
     if (isIcon) {
       // Icon + caption as one icon node (arrows bind to the node, clear of the caption).
+      const sketch = p.iconStyle !== undefined ? normalizeIconSketch(p.iconStyle) : host.insertSketch();
       const { image, files } = await loadIconImage(item, {
         ...opts,
         size: typeof p.size === "number" && p.size > 0 ? p.size : undefined,
         color: typeof p.color === "string" ? p.color : undefined,
+        sketch,
       });
+      // The caption's font follows the icon (hand font under a hand-drawn icon), unless given.
+      opts.fontFamily = host.captionFont(!!sketch, opts.fontFamily);
       const caption = p.label === false || p.label === "" ? null : typeof p.label === "string" ? p.label : item.name;
       const build = (x: number, y: number, mask: string | null, zone: string | null) =>
         makeIconNode({
@@ -590,9 +599,38 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
 
       case "update_elements": {
         const { api } = await target(p);
-        const r = applyUpdates(objArray(p.updates, "updates"), api.getSceneElements(), api.getAppState());
-        commit(api, r.changed, r.added);
-        return { updated: r.ids };
+        // iconStyle needs new image files (async), so it is done here, not in applyUpdates.
+        const styled: { id: string; sketch: IconSketch | null }[] = [];
+        const updates = objArray(p.updates, "updates").map((u) => {
+          if (!u || typeof u !== "object" || !("iconStyle" in u)) return u;
+          const { iconStyle, ...rest } = u as Params;
+          const id = String(rest.id ?? "");
+          try {
+            styled.push({ id, sketch: normalizeIconSketch(iconStyle) });
+          } catch (e) {
+            throw new Error(`"${id}": ${e instanceof Error ? e.message : e}`);
+          }
+          return rest;
+        });
+        const r = applyUpdates(updates.filter((u) => Object.keys(u as object).length > 1), api.getSceneElements(), api.getAppState());
+        const files = api.getFiles();
+        const map = liveMap(api);
+        for (const c of r.changed) map.set(c.id, c);
+        const changed = new Map(r.changed.map((c) => [c.id, c]));
+        const newFiles: BinaryFileData[] = [];
+        for (const { id, sketch } of styled) {
+          let el = map.get(id);
+          if (!el) throw new Error(`no element with id "${id}"`);
+          if (isIconNode(el)) el = iconImageOf(el, map) ?? el;
+          if (el.type !== "image" || !isSketchableIcon(el, files)) throw new Error(`"${id}" is not an icon or icon node; iconStyle applies to icons and drawn shapes`);
+          const res = await restyledIcon(el as ExcalidrawImageElement, files[(el as ExcalidrawImageElement).fileId!], { sketch });
+          if (!res) throw new Error(`"${id}": this icon's original is too big to keep, so it can't be drawn by hand`);
+          changed.set(res.element.id, res.element);
+          if (res.file) newFiles.push(res.file);
+        }
+        commit(api, [...changed.values()], r.added);
+        if (newFiles.length) api.addFiles(newFiles);
+        return { updated: [...new Set([...r.ids, ...styled.map((s) => s.id)])] };
       }
 
       case "move": {

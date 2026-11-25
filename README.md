@@ -38,6 +38,8 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 - Icon packs download from the Stencils panel menu: AWS, Azure, Google Cloud, Kubernetes, network devices (Carbon), 2,300 product logos, ~2,700 self-hosted app icons (Dashboard Icons: Proxmox, Portainer, Pi-hole…), and infrastructure picks from Material Design Icons, Tabler and Lucide, Devicon dev logos and Simple Icons brand marks. Use the **Icon packs…** button next to the panel title to search and sort packs, download the ones you tick (none are ticked by default) and remove installed ones.
 - Save a selection as a stencil (⌥⌘S saves it to My Stencils without asking for a name); import SVG, PNG and `.excalidrawlib` files.
 - Stencils is the only library: Excalidraw's own Library button is hidden.
+- Hand-drawn icons: any icon or stencil can be drawn by hand in eight looks: **Pen** (sketchy outlines, colours kept), **Marker** (bold ink, fill a little off the lines), **Pencil** (graphite hatching), **Crayon** (scribbled fill on grainy paper), **Ink** (black pen, cross-hatching), **Line art** (outlines only), **Hatch** and **Wobble** (shaky; for detailed and PNG icons). In the Stencils panel, the small button beside the search box shows a sample icon exactly as a click would insert it; its popover has a live preview, every look as a tile (Original + the eight), **Follow drawing style** (Clean → original, Sketch → the look), and the names settings. The style panel's **Icon style** row switches selected icons (Original / Pen / Pencil, previews of the real icon); its window shows every look as a tile and adjusts fill (solid, hatch, cross-hatch, scribble, dashed, none), outline (shade, ink, same, none), sketchiness, pen weight, fill offset, hatch spacing and angle, texture (pencil, paper), single/double lines, and **Redraw**. With nothing selected it sets the look for new icons. Switching back is exact, recolors keep the sketch, one undo step each. Palette: "Icons: marker look", "Make all icons hand-drawn", "Make all icons original".
+- Names under icons (same popover): **Off · Match · ✎ Hand · Aa Plain** and **Hand font** (Excalifont, Virgil, Caveat, Kalam, Patrick Hand, … each shown in its own face). **Match** (default) writes the name in the hand font under hand-drawn icons and in the drawing's font under original ones (and follows when you switch an icon's style later). The Icon style window has the same **Names** row and **Hand font** for the selected icons. Palette: "Icon names: handwritten / drawing font / match the icon".
 - Recolor icons (with undo), an eyedropper that copies the real color of any shape, icon or text (a label's own color, bold and large text, thick lines), and icons that keep their real colors in dark mode.
 
 **Fonts** (Preferences → Fonts…)
@@ -94,7 +96,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 - **Command palette** (⇧⌘P; ⌘K when nothing is selected): fuzzy search over every command, stencil, theme, preset, template, frame, element and file action.
 
 **Appearance**
-- App theme (System, Light, Dark), drawing style (Clean or Sketch). Icons and images keep their exact colours in dark mode, on screen and in dark exports.
+- App theme (System, Light, Dark), drawing style (Clean or Sketch; always shown and switchable with the **Clean | Sketch** switch at the right of the tab bar). Icons and images keep their exact colours in dark mode, on screen and in dark exports.
 
 ## Keyboard shortcuts
 

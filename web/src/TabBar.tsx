@@ -1,3 +1,5 @@
+import type { JSX } from "react";
+import type { DrawingStyle } from "../../shared/types";
 export interface TabInfo {
   id: string;
   title: string;
@@ -13,9 +15,26 @@ interface Props {
   onNew(): void;
   panelOpen: boolean;
   onTogglePanel(): void;
+  /** The drawing style (Clean / Sketch): shown and switched here. */
+  drawingStyle: DrawingStyle;
+  onDrawingStyle(style: DrawingStyle): void;
 }
 
-export function TabBar({ tabs, activeId, onSelect, onClose, onNew, panelOpen, onTogglePanel }: Props) {
+/** Clean = a straight line, Sketch = a wobbly pencil line. */
+const STYLE_ICONS: Record<DrawingStyle, JSX.Element> = {
+  clean: (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+      <rect x="4" y="6" width="16" height="12" rx="1" />
+    </svg>
+  ),
+  sketch: (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4.5 6.6c3.2-.9 9.6-.4 15.2-.5M19.4 5.4c.4 3.8.6 8.2.3 12.6M20 17.6c-5 .6-10.4.9-15.6.3M4.8 18.4C4.1 14.4 4 10.2 4.4 6" />
+    </svg>
+  ),
+};
+
+export function TabBar({ tabs, activeId, onSelect, onClose, onNew, panelOpen, onTogglePanel, drawingStyle, onDrawingStyle }: Props) {
   return (
     <div className="md-tabbar" role="tablist">
       {tabs.map((t) => (
@@ -48,6 +67,27 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, panelOpen, on
         +
       </button>
       <div className="md-tabbar-spacer" />
+      <div className={`md-style-switch ${drawingStyle}`} role="radiogroup" aria-label="Drawing style">
+        {(["clean", "sketch"] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            role="radio"
+            aria-checked={drawingStyle === s}
+            data-drawing-style={s}
+            className={drawingStyle === s ? "on" : ""}
+            title={
+              s === "clean"
+                ? "Clean style: straight lines, Inter text, original icons (Auto). New shapes only; existing ones keep their look."
+                : "Sketch style: hand-drawn lines, Excalifont text, hand-drawn icons (Auto). New shapes only; existing ones keep their look."
+            }
+            onClick={() => onDrawingStyle(s)}
+          >
+            {STYLE_ICONS[s]}
+            {s === "clean" ? "Clean" : "Sketch"}
+          </button>
+        ))}
+      </div>
       <button
         className={`md-tabbar-btn${panelOpen ? " on" : ""}`}
         title={panelOpen ? "Hide stencils (⇧⌘Y)" : "Show stencils (⇧⌘Y)"}

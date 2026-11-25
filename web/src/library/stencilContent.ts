@@ -15,6 +15,8 @@ import type {
 } from "@excalidraw/excalidraw/types";
 import { libraryFileUrl, type LibraryItem, type StencilFile } from "../../../shared/library";
 import { ensureSvgSize } from "../../../shared/recolor";
+import { sketchKey, type IconSketch } from "../../../shared/iconSketch";
+import { restyledIcon } from "./iconColor";
 import { TRUE_COLOR_SVG_MIME, trueColorFile } from "./trueColor";
 
 export interface StencilContent {
@@ -26,6 +28,8 @@ export interface LabelOptions {
   label: boolean;
   fontFamily: number;
   strokeColor: string;
+  /** Draw the stencil by hand (shared/sketchSvg.ts); null/absent = as saved. */
+  sketch?: IconSketch | null;
 }
 
 /** Icons are inserted at this size (longest side), keeping their aspect ratio. */
@@ -149,12 +153,39 @@ async function loadUncached(item: LibraryItem, opts: LabelOptions): Promise<Sten
   }
 }
 
+/** Shapes drawn by Excalidraw itself: hand-drawn = roughness 1, like Sketch style. */
+const ROUGH_TYPES = new Set(["rectangle", "ellipse", "diamond", "line", "arrow"]);
+
+/**
+ * Stencil content drawn by hand: images (icons) are redrawn (restyledIcon keeps the original in
+ * customData, so the style panel can switch back), Excalidraw shapes get roughness 1.
+ */
+export async function sketchContent(content: StencilContent, sketch: IconSketch): Promise<StencilContent> {
+  const files = new Map(content.files.map((f) => [f.id as string, f]));
+  const elements: ExcalidrawElement[] = [];
+  for (const el of content.elements) {
+    if (el.type === "image" && el.fileId && files.has(el.fileId)) {
+      const r = await restyledIcon(el, files.get(el.fileId)!, { sketch });
+      if (r) {
+        if (r.file) files.set(r.file.id, r.file);
+        elements.push(r.element);
+        continue;
+      }
+    }
+    elements.push(ROUGH_TYPES.has(el.type) && el.roughness === 0 ? ({ ...el, roughness: 1 } as ExcalidrawElement) : el);
+  }
+  const used = new Set(elements.map((e) => (e.type === "image" ? e.fileId : null)).filter(Boolean));
+  return { elements, files: [...files.values()].filter((f) => used.has(f.id)) };
+}
+
+
 /** Load (and cache) the elements and image files for a library item. */
 export function loadStencil(item: LibraryItem, opts: LabelOptions): Promise<StencilContent> {
-  const key = `${item.id}@${item.mtime}:${opts.label ? 1 : 0}:${opts.fontFamily}:${opts.strokeColor}`;
+  const key = `${item.id}@${item.mtime}:${opts.label ? 1 : 0}:${opts.fontFamily}:${opts.strokeColor}:${sketchKey(opts.sketch)}`;
   let p = contentCache.get(key);
   if (!p) {
-    p = loadUncached(item, opts);
+    const sketch = opts.sketch;
+    p = sketch ? loadUncached(item, opts).then((c) => sketchContent(c, sketch)) : loadUncached(item, opts);
     contentCache.set(key, p);
     p.catch(() => contentCache.delete(key));
   }

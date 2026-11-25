@@ -193,7 +193,7 @@ interface PopoverProps {
    * top (a floating window stays open when the selection is cleared, so the switch must be obvious),
    * with `onClear` = a button that turns the default off.
    */
-  newShapes?: { text: string; clearLabel?: string; onClear?(): void } | null;
+  newShapes?: { text: string; clearLabel?: string; onClear?(): void; titleSuffix?: string } | null;
   children: ReactNode;
 }
 
@@ -214,7 +214,7 @@ export function MorePopover({ title, kind, anchor, onClose, newShapes, children 
       onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
     >
-      <FloatHead title={newShapes ? `${title} · new shapes` : title} f={f} onClose={onClose} />
+      <FloatHead title={newShapes ? `${title} · ${newShapes.titleSuffix ?? "new shapes"}` : title} f={f} onClose={onClose} />
       {newShapes && (
         <div className="md-new-banner" role="note">
           <span>{newShapes.text}</span>

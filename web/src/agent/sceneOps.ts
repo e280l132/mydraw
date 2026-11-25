@@ -1,6 +1,7 @@
 // Element-level helpers for agent commands: compact descriptions, building elements from skeletons,
 // binding arrows, relabeling and rerouting. Functions here never call updateScene; the executor
 // collects their results and applies each command as one scene update (= one undo step).
+import { iconSketchPreset, storedIconSketch, type IconSketch } from "../../../shared/iconSketch";
 import { requireFillStyle } from "../../../shared/fills";
 import { dashPatch, isDashId, requireStrokeStyle, strokeStyleName } from "../../../shared/dash";
 import { canGradient, gradientOf, gradientPatch, gradientPresetOf, resolveGradientInput } from "../../../shared/gradient";
@@ -17,6 +18,17 @@ import { normalizeOutline, outlineOf, withOutline, type TextOutline } from "../.
 import { canShadow, describeShadow, resolveShadowInput, shadowOf, withShadow, type Shadow } from "../../../shared/shadow";
 import { curvedPoints, ELBOW_GAP, elbowRoute, fixedPointFor, isOrthogonal, type Routing, type Side } from "../../../shared/routing";
 import { fixedSegmentsFor, nearestSide, portPoint, routeAround } from "../../../shared/avoidRoute";
+
+/** An icon's style for get_scene: "original", a preset name ("pen", "marker", …) or the full settings. */
+function iconStyleName(el: El): string | IconSketch {
+  const s = storedIconSketch(el.customData?.mydrawIconSketch);
+  if (!s) return "original";
+  const preset = iconSketchPreset(s);
+  if (preset) return preset;
+  const { preset: _p, ...rest } = s;
+  void _p;
+  return rest;
+}
 
 export type El = ExcalidrawElement;
 type Loose = Record<string, unknown>;
@@ -182,7 +194,7 @@ export function describe(el: El, map: ElMap): Loose {
     }
   }
   if (el.type === "image") {
-    o.icon = { color: (el.customData?.mydrawIconColor as string | undefined) ?? "original" };
+    o.icon = { color: (el.customData?.mydrawIconColor as string | undefined) ?? "original", style: iconStyleName(el) };
     const node = iconNodeOf(el, map);
     if (node) o.node = node.id;
   }
@@ -190,6 +202,8 @@ export function describe(el: El, map: ElMap): Loose {
     // A drawn shape (database, cloud, person, ...): one node with its label.
     o.type = "shape-node";
     o.shape = el.customData.mydrawShape;
+    const img = iconImageOf(el, map);
+    if (img && storedIconSketch(img.customData?.mydrawIconSketch)) o.iconStyle = iconStyleName(img);
     delete o.backgroundColor;
     delete o.fillStyle;
   } else if (isIconNode(el)) {
@@ -205,6 +219,7 @@ export function describe(el: El, map: ElMap): Loose {
       image: img?.id ?? null,
       stencil: stencil?.name ?? null,
       color: (img?.customData?.mydrawIconColor as string | undefined) ?? "original",
+      style: img ? iconStyleName(img) : "original",
     };
   }
   if (isZone(el)) {

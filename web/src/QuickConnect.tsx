@@ -13,10 +13,16 @@ import { libraryFileUrl, searchItems, type LibraryIndex, type LibraryItem } from
 import { QUICK_SIDES, type QuickSide } from "../../shared/quickConnect";
 import { heldKeys, onHeldKeys } from "./heldKeys";
 import { actionFor, describeBinding, IS_MAC_PLATFORM, QUICK_ACTIONS, type QuickAction, type QuickConnectSettings } from "../../shared/quickBindings";
+import type { IconSketch } from "../../shared/iconSketch";
+import type { CaptionPrefs } from "./library/captionFont";
 import { addConnectedCopy, addConnectedStencil, quickSourceAt, selectedUnit, unitById } from "./quickConnectOps";
 import { LinkMode } from "./LinkMode";
 
 interface Props {
+  /** Look of inserted icons (Settings.iconStyle resolved); null = original. */
+  insertSketch: IconSketch | null;
+  /** Caption font settings (Settings.captionFont / captionHandFont). */
+  captionPrefs: CaptionPrefs | null;
   tabId: string;
   getApi(): ExcalidrawImperativeAPI | undefined;
   library: LibraryIndex | null;
@@ -174,7 +180,7 @@ function handleLabel(action: QuickAction | null, side: QuickSide): string {
   }
 }
 
-export function QuickConnect({ tabId, getApi, library, blocked, quick, onToast }: Props) {
+export function QuickConnect({ tabId, getApi, library, blocked, quick, insertSketch, captionPrefs, onToast }: Props) {
   /** The unit the pointer has rested on (handles shown). */
   const [hoverId, setHoverId] = useState<string | null>(null);
   /** The one unit that is selected (handles shown). */
@@ -401,7 +407,7 @@ export function QuickConnect({ tabId, getApi, library, blocked, quick, onToast }
     const api = getApi();
     closeSearch();
     if (!s || !api) return;
-    addConnectedStencil(api, s.sourceId, s.side, item).then(
+    addConnectedStencil(api, s.sourceId, s.side, item, insertSketch, captionPrefs).then(
       (id) => {
         if (id) void window.mydraw.libraryMarkUsed(item.id);
         else onToast("The shape is gone; nothing was added.", true);

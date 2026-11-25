@@ -188,7 +188,7 @@ const server = new McpServer(
       "Workflow: list_drawings / new_drawing / open_drawing -> get_scene to see ids -> add_elements, place_stencil, connect -> screenshot and lint_diagram to check the result -> save / export.",
       "Coordinates are scene pixels (y grows downward). Each tool call is one undo step for the user.",
       "For a whole diagram use build_diagram (nodes, edges, zones -> automatic ELK layout, icons, elbow arrows, legend) or mermaid_to_scene / apply_template; then refine with the element tools.",
-      "Icons (AWS, Azure, GCP, Kubernetes, network, logos) come from the stencil library: search_stencils then place_stencil (or `icon` on a build_diagram node); connect arrows to the returned node id.",
+      "Icons (AWS, Azure, GCP, Kubernetes, network, logos) come from the stencil library: search_stencils then place_stencil (or `icon` on a build_diagram node); connect arrows to the returned node id. Icons can be hand-drawn: iconStyle hand-drawn on place_stencil / update_elements / build_diagram nodes (build_diagram look sketch does it for every icon).",
       "Zones (VPC, subnet, VLAN, ...) are locked tinted boxes; moving a zone moves what is inside it.",
       "Draw clean diagrams: about 40 arrows at most, one arrow to a zone instead of many to its nodes, labels only on short arrows, one colour per kind of relationship. After build_diagram read `quality` (and `advice`), run lint_diagram (it finds arrows on top of each other or through nodes, labels in the way; fix:true repairs labels and re-routes) and look at a screenshot before telling the user it is done. Save the drawing to a file when it is finished: an unsaved drawing is lost if the app quits.",
       "Styling beyond Excalidraw's own: fillStyle patterns (hachure, cross-hatch, solid, zigzag, zigzag-line, dots, dashed), gradient fills on rectangles/diamonds/ellipses (`gradient`: a preset like \"sky\" or {from, to, kind: linear|radial, angle}), extra dash styles (strokeStyle short-dash, long-dash, dash-dot, dash-dot-dot, fine-dot, sparse-dot), shadow kinds (drop, inner, layered, extrude = 3D, contact = ground; presets soft, drop, lifted, hard, glow, long, inner, elevated, neon, extrude, float) and text outlines. They work in add_elements, update_elements, build_diagram nodes/edges/zones and style presets, and show in every export.",
@@ -198,6 +198,29 @@ const server = new McpServer(
 );
 
 const drawing = z.string().optional().describe("Tab id, file path or title of an open drawing. Default: the active drawing.");
+/** Hand-drawn icons (shared/iconSketch.ts normalizeIconSketch validates in the app). */
+const ICON_LOOKS = ["pen", "marker", "pencil", "crayon", "ink", "line-art", "hatch", "wobble"] as const;
+const iconStyle = z
+  .union([
+    z.enum(["original", "hand-drawn", ...ICON_LOOKS]),
+    z.object({
+      preset: z.enum(ICON_LOOKS).optional(),
+      roughness: z.number().optional().describe("0.2-3"),
+      fill: z.enum(["solid", "hachure", "cross-hatch", "zigzag", "dashed", "none"]).optional(),
+      outline: z.enum(["shade", "ink", "same", "none"]).optional().describe("pen line around coloured areas: darker shade, near-black ink, same colour, none"),
+      weight: z.number().optional().describe("pen width multiplier 0.5-3"),
+      offset: z.number().optional().describe("fill drawn 0-4 px off its outline"),
+      hatchGap: z.number().optional().describe("2-10 px"),
+      hatchAngle: z.number().optional().describe("-90..90 degrees"),
+      doubleStroke: z.boolean().optional(),
+      texture: z.enum(["none", "pencil", "paper"]).optional(),
+      mode: z.enum(["rough", "wobble"]).optional(),
+      seed: z.number().optional(),
+    }),
+  ])
+  .describe(
+    "Icon look: original, or pen (sketchy outlines, colours kept; = hand-drawn), marker (bold ink, fill off the lines), pencil (graphite hatching), crayon (scribbled, grainy), ink (black pen, cross-hatching), line-art (outlines only), hatch, wobble (shaky; for PNG/complex icons); or {preset, ...fields to tweak}",
+  );
 const ids = z.array(z.string()).describe("Element ids");
 const loose = z.record(z.string(), z.any());
 const shadowArg = z
@@ -376,7 +399,7 @@ tool(
   [
     "Change elements: [{id, ...fields}]. Fields: x, y, dx, dy, width, height, angle, strokeColor, backgroundColor, fillStyle (solid|hachure|cross-hatch|zigzag|zigzag-line|dots|dashed), strokeWidth, strokeStyle (solid|dashed|dotted|short-dash|long-dash|dash-dot|dash-dot-dot|fine-dot|sparse-dot), roughness, opacity, roundness, text, fontSize, fontFamily, textAlign, link, locked, name (frames), startArrowhead, endArrowhead,",
     "label (shape/arrow label text, icon-node caption or zone title; null removes it), data (merged into custom properties, e.g. {ip, hostname}), routing (arrows: straight|elbow|curved), textOutline ({color, width?} = a colored outline around the letters, width 0.5-16 px, default 2, drawn at most fontSize/4; on a shape or arrow it outlines the label; null removes it),",
-    "shadow (true = soft, a preset soft|drop|lifted|hard|glow|long|inner|elevated|neon|extrude|float, or {preset?, kind drop|inner|layered|extrude|contact, color hex, opacity 0-1, blur 0-80, distance 0-80, angle degrees with 90 = down, amount 0-100}; null removes; on an icon node it goes under the icon), shadowLabel (true: the label or caption gets the same shadow; false removes it). gradient (rectangles/diamonds/ellipses: preset sky|sunset|mint|grape|slate|peach|glow|spot, or {from, to, kind linear|radial, angle}; null = flat fill).",
+    "shadow (true = soft, a preset soft|drop|lifted|hard|glow|long|inner|elevated|neon|extrude|float, or {preset?, kind drop|inner|layered|extrude|contact, color hex, opacity 0-1, blur 0-80, distance 0-80, angle degrees with 90 = down, amount 0-100}; null removes; on an icon node it goes under the icon), shadowLabel (true: the label or caption gets the same shadow; false removes it). gradient (rectangles/diamonds/ellipses: preset sky|sunset|mint|grape|slate|peach|glow|spot, or {from, to, kind linear|radial, angle}; null = flat fill). iconStyle (icons, icon nodes and drawn shapes: original | pen | marker | pencil | crayon | ink | line-art | hatch | wobble, or {preset, roughness, fill, outline, weight, offset, hatchGap, hatchAngle, doubleStroke, texture, seed}; a new seed redraws the strokes).",
     "Moved or resized shapes keep their label centred and their arrows attached.",
   ].join(" "),
   { drawing, updates: z.array(loose) },
@@ -410,6 +433,7 @@ const node = z
     label: z.string().optional().describe("Text in the shape, or the icon's caption. Default: the id. \n for line breaks"),
     icon: z.string().optional().describe('Stencil id, name or search ("Amazon EC2", "AWS:Amazon RDS", "Network:router"). Falls back to a shape if not found'),
     iconColor: z.string().optional().describe("Recolor an SVG icon (hex)"),
+    iconStyle: iconStyle.optional().describe("Hand-drawn icon or drawn shape: original, pen, marker, pencil, crayon, ink, line-art, hatch, wobble, or {preset, ...tweaks}. Default: pen when look is sketch, else original"),
     shape: z
       .enum(["rectangle", "ellipse", "diamond", "cylinder", "cloud", "document", "queue", "actor", "server", "hexagon", "folder"])
       .optional()
@@ -583,7 +607,7 @@ tool(
   [
     "Insert a stencil by id (from search_stencils). Icons become an icon node: icon + caption (item name, custom text, or false for none); arrows connect to the node so they never cross the caption.",
     "Position: x/y (centre of the icon), or right_of/left_of/above/below an element id (gap default 80, icon centres aligned), or inside a frame/zone id. Default: right of everything.",
-    "Optional color (hex, recolors SVG icons) and size (icon's longest side, default 64). A node placed across a zone border gets a canvas-colored backing so the border line doesn't cross it (mask:false to turn off).",
+    "Optional color (hex, recolors SVG icons) and size (icon's longest side, default 64). iconStyle: \"original\" or a hand-drawn look (pen, marker, pencil, crayon, ink, line-art, hatch, wobble) or {preset, ...tweaks}; default follows the user's icon setting (hand-drawn in Sketch style). The caption's font follows the user's names setting (by default handwritten, Excalifont, under hand-drawn icons). A node placed across a zone border gets a canvas-colored backing so the border line doesn't cross it (mask:false to turn off).",
     "Returns `node` (connect arrows to it), `icon` (the image) and `label`.",
   ].join(" "),
   {
@@ -601,6 +625,7 @@ tool(
     color: z.string().optional(),
     size: z.number().optional(),
     mask: z.boolean().optional(),
+    iconStyle: iconStyle.optional(),
   },
   call("place_stencil"),
 );

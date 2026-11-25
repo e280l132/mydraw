@@ -129,5 +129,6 @@ renders in a fallback font, and saved files keep the fonts they carry.
 | `process.env.IS_PREACT` must be defined as `"false"` | `vite.config.ts` | build |
 | `serializeAsJSON` / `loadFromBlob` / `exportToCanvas` / `exportToSvg` / `exportToBlob` signatures and the saved `appState` keys | `web/src/scene.ts`, `exportImage.ts` | typecheck + smoke |
 | Saved files get Excalidraw's default grid state, not the app's (`FILE_GRID_STATE`) | `web/src/scene.ts` | smoke |
+| Excalifont's Latin subset file name (`fonts/Excalifont/Excalifont-Regular-a88b72a24fb54c9f94e3b5fdaa7481c9.woff2`, the entry with `U+20-7e` in Excalidraw's font table) and `fonts/Virgil/Virgil-Regular.woff2`, used by the `md-preview-*` `@font-face` rules that show hand fonts in the Stencils panel / Icon style menus | `web/src/styles.css` (top), `web/src/library/captionFont.ts` `fontCss` | smoke screenshot `stencil-font-menu.png` (Excalifont row in its own face) |
 
 If you find a new dependency on Excalidraw internals while working on mydraw, add it to this file.

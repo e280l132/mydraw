@@ -1,7 +1,24 @@
 import { exportToSvg } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement, NonDeleted } from "@excalidraw/excalidraw/element/types";
 import type { BinaryFiles } from "@excalidraw/excalidraw/types";
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  ICON_STYLE_PRESET_IDS,
+  ICON_STYLE_PRESETS,
+  iconSketchPreset,
+  lookOfSetting,
+  presetSketch,
+  sketchKey,
+  type IconSketch,
+  type IconSketchLook,
+  type IconStylePreset,
+  type IconStyleSetting,
+  type CaptionFontMode,
+  captionFontName,
+  insertSketchOf,
+} from "../../../shared/iconSketch";
+import { fontCss, handFonts } from "./captionFont";
+import { SAMPLE_ICON, useIconPreviews } from "./iconPreview";
 import {
   MY_STENCILS,
   libraryFileUrl,
@@ -22,6 +39,20 @@ interface Props {
   index: LibraryIndex | null;
   addLabels: boolean;
   onAddLabelsChange(v: boolean): void;
+  /** Insert default for icons (Settings.iconStyle). */
+  iconStyle: IconStyleSetting;
+  onIconStyleChange(v: IconStyleSetting): void;
+  /** What new stencils get under the current settings (previews show it); null = original. */
+  insertSketch: IconSketch | null;
+  /** The hand-drawn look inserts get (Settings.iconSketch). */
+  insertLook: IconSketchLook;
+  onInsertLookChange(look: IconSketchLook): void;
+  /** Font of names under inserted icons (Settings.captionFont / captionHandFont). */
+  captionFont: CaptionFontMode;
+  captionHandFont: string;
+  onCaptionChange(patch: { captionFont?: CaptionFontMode; captionHandFont?: string }): void;
+  /** The drawing style (Auto resolves against it). */
+  drawingStyle: "clean" | "sketch";
   onInsert(item: LibraryItem): void;
   onSaveSelection(): void;
   onOpenPacks(): void;
@@ -52,12 +83,20 @@ function useStoredSet(key: string, initial: string[]): [Set<string>, (k: string)
 // ---------- previews ----------
 
 const previewCache = new Map<string, Promise<string>>();
+const PREVIEW_CACHE_MAX = 1500;
 
-function renderedPreview(item: LibraryItem): Promise<string> {
-  const key = `${item.id}@${item.mtime}`;
+/** The sketch tiles are drawn with (the insert default), so the panel shows what a click inserts. */
+const PreviewSketch = createContext<IconSketch | null>(null);
+
+function renderedPreview(item: LibraryItem, sketch: IconSketch | null): Promise<string> {
+  const key = `${item.id}@${item.mtime}:${sketchKey(sketch)}`;
   let p = previewCache.get(key);
   if (!p) {
-    p = loadStencil(item, { label: false, fontFamily: 6, strokeColor: "#1e1e1e" }).then(async (c) => {
+    p = loadStencil(item, { label: false, fontFamily: 6, strokeColor: "#1e1e1e", sketch }).then(async (c) => {
+      // A single icon: show its (hand-drawn) file as is.
+      const image = c.elements.length === 1 && c.elements[0].type === "image" ? c.elements[0] : null;
+      const file = image ? c.files.find((f) => f.id === image.fileId) : undefined;
+      if (file) return file.dataURL;
       const files: BinaryFiles = Object.fromEntries(c.files.map((f) => [f.id, f]));
       const svg = await exportToSvg({
         elements: c.elements.filter((e) => !e.isDeleted) as NonDeleted<ExcalidrawElement>[],
@@ -70,14 +109,24 @@ function renderedPreview(item: LibraryItem): Promise<string> {
     });
     previewCache.set(key, p);
     p.catch(() => previewCache.delete(key));
+    if (previewCache.size > PREVIEW_CACHE_MAX) {
+      const [oldKey, old] = previewCache.entries().next().value!;
+      previewCache.delete(oldKey);
+      void old.then((u) => u.startsWith("blob:") && URL.revokeObjectURL(u), () => undefined);
+    }
   }
   return p;
 }
 
 function Preview({ item }: { item: LibraryItem }) {
+  const sketch = useContext(PreviewSketch);
+  return <PreviewImage key={sketchKey(sketch)} item={item} sketch={sketch} />;
+}
+
+function PreviewImage({ item, sketch }: { item: LibraryItem; sketch: IconSketch | null }) {
   const ref = useRef<HTMLDivElement>(null);
   const [src, setSrc] = useState<string | null>(
-    item.kind === "svg" || item.kind === "png" ? `${libraryFileUrl(item.file)}?v=${item.mtime}` : null,
+    !sketch && (item.kind === "svg" || item.kind === "png") ? `${libraryFileUrl(item.file)}?v=${item.mtime}` : null,
   );
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -86,15 +135,201 @@ function Preview({ item }: { item: LibraryItem }) {
     const io = new IntersectionObserver((entries) => {
       if (!entries.some((e) => e.isIntersecting)) return;
       io.disconnect();
-      renderedPreview(item).then(setSrc, () => setFailed(true));
+      renderedPreview(item, sketch).then(setSrc, () => setFailed(true));
     });
     io.observe(el);
     return () => io.disconnect();
-  }, [item, src]);
+  }, [item, src, sketch]);
   return (
     <div className="md-tile-preview" ref={ref}>
       {src ? <img src={src} alt="" loading="lazy" draggable={false} onError={() => setFailed(true)} /> : null}
       {failed && <span className="md-tile-missing">?</span>}
+    </div>
+  );
+}
+
+// ---------- insert options ----------
+
+const PRESET_SKETCHES = Object.fromEntries(ICON_STYLE_PRESET_IDS.map((id) => [id, presetSketch(id)])) as Record<string, IconSketch>;
+
+type Menu = "look" | "font" | null;
+
+/** Close a popup menu on an outside press or Escape. */
+function useMenuClose(menu: Menu, box: React.RefObject<HTMLDivElement | null>, close: () => void) {
+  useEffect(() => {
+    if (!menu) return;
+    const down = (e: PointerEvent) => {
+      if (!box.current?.contains(e.target as Node)) close();
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("keydown", esc, true);
+    return () => {
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("keydown", esc, true);
+    };
+  }, [menu, box, close]);
+}
+
+/**
+ * How inserted stencils come out, in one button beside the search box. The button shows a sample
+ * icon exactly as a click would insert it (look + name font); its popover holds everything:
+ * a live preview, the looks (Original + 8 hand-drawn ones, with previews), "Follow drawing style"
+ * (Settings.iconStyle auto), and the names (Off · Match · Hand · Plain + the handwriting font).
+ */
+function InsertStyle(p: {
+  addLabels: boolean;
+  onAddLabelsChange(v: boolean): void;
+  iconStyle: IconStyleSetting;
+  onIconStyleChange(v: IconStyleSetting): void;
+  look: IconSketchLook;
+  onLookChange(look: IconSketchLook): void;
+  captionFont: CaptionFontMode;
+  captionHandFont: string;
+  onCaptionChange(patch: { captionFont?: CaptionFontMode; captionHandFont?: string }): void;
+  drawingStyle: "clean" | "sketch";
+}) {
+  const [open, setOpen] = useState(false);
+  const [fontMenu, setFontMenu] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => {
+    setOpen(false);
+    setFontMenu(false);
+  }, []);
+  useMenuClose(open ? "look" : null, box, close);
+
+  const preset = iconSketchPreset({ ...p.look, seed: 1 });
+  const lookLabel = preset ? ICON_STYLE_PRESETS[preset].label : "Custom";
+  // What a click inserts right now (Auto resolved against the drawing style).
+  const now = insertSketchOf({ iconStyle: p.iconStyle, drawingStyle: p.drawingStyle, iconSketch: p.look });
+  const drawingFont = p.drawingStyle === "sketch" ? "Excalifont" : "Inter";
+  const nameFont = captionFontName(p.captionFont, !!now, p.captionHandFont) ?? drawingFont;
+  const styles = useMemo(() => ({ now, ...PRESET_SKETCHES, original: null }), [sketchKey(now)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const previews = useIconPreviews(SAMPLE_ICON, open ? styles : { now });
+  const fonts = fontMenu ? handFonts() : [];
+
+  const tileOn = (id: IconStylePreset | "original") => (id === "original" ? p.iconStyle === "original" : p.iconStyle !== "original" && preset === id);
+  const chooseLook = (id: IconStylePreset | "original") => {
+    if (id === "original") return p.onIconStyleChange("original");
+    p.onLookChange(lookOfSetting(presetSketch(id)));
+    if (p.iconStyle === "original") p.onIconStyleChange("hand-drawn");
+  };
+  const follow = p.iconStyle === "auto";
+  const names = (mode: CaptionFontMode | "off") => {
+    if (mode === "off") return p.onAddLabelsChange(false);
+    if (!p.addLabels) p.onAddLabelsChange(true);
+    p.onCaptionChange({ captionFont: mode });
+  };
+  const nameOn = (m: CaptionFontMode | "off") => (m === "off" ? !p.addLabels : p.addLabels && p.captionFont === m);
+  const chooseFont = (f: string) => {
+    if (!p.addLabels) p.onAddLabelsChange(true);
+    p.onCaptionChange({ captionHandFont: f, ...(p.captionFont === "drawing" ? { captionFont: "hand" as const } : {}) });
+    setFontMenu(false);
+  };
+
+  const iconWord = p.iconStyle === "original" ? "Original" : follow ? (now ? `${lookLabel} (Sketch style)` : `Original (Clean style)`) : lookLabel;
+  const summary = `Inserts: ${iconWord} icons, ${p.addLabels ? `names in ${nameFont}` : "no names"}. Click to change.`;
+  const lookTile = (id: IconStylePreset | "original") => {
+    const label = id === "original" ? "Original" : ICON_STYLE_PRESETS[id].label;
+    return (
+      <button
+        type="button"
+        key={id}
+        data-look={id}
+        className={`md-is-tile${tileOn(id) ? " on" : ""}`}
+        title={id === "original" ? "The icon as designed" : ICON_STYLE_PRESETS[id].hint}
+        onClick={() => chooseLook(id)}
+      >
+        <span className="md-is-tile-img">{previews[id] ? <img src={previews[id]} alt="" draggable={false} /> : <span className="md-is-tile-wait" />}</span>
+        <span className="md-is-tile-label">{label}</span>
+      </button>
+    );
+  };
+
+  return (
+    <div className="md-ins" ref={box}>
+      <button
+        type="button"
+        className={`md-ins-btn${open ? " open" : ""}`}
+        aria-label="How inserted stencils look"
+        aria-expanded={open}
+        title={summary}
+        onClick={() => (open ? close() : setOpen(true))}
+      >
+        <span className="md-ins-thumb">{previews.now ? <img src={previews.now} alt="" draggable={false} /> : null}</span>
+        <span className="md-ins-aa" style={{ fontFamily: fontCss(nameFont), opacity: p.addLabels ? 1 : 0.35 }}>
+          Aa
+        </span>
+        <span className="md-ins-caret" aria-hidden="true">
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div className="md-ins-pop" role="dialog" aria-label="Insert stencils as">
+          <div className="md-ins-preview">
+            <span className="md-ins-preview-img">{previews.now ? <img src={previews.now} alt="" draggable={false} /> : null}</span>
+            {p.addLabels && (
+              <span className="md-ins-preview-name" style={{ fontFamily: fontCss(nameFont) }}>
+                Amazon EC2
+              </span>
+            )}
+            <span className="md-ins-preview-note">{iconWord}</span>
+          </div>
+
+          <div className="md-ins-head">Icons</div>
+          <div className="md-ins-tiles" role="group" aria-label="Icon look">
+            {lookTile("original")}
+            {ICON_STYLE_PRESET_IDS.map(lookTile)}
+          </div>
+          <label className={`md-ins-follow${p.iconStyle === "original" ? " dim" : ""}`} title="Original icons while the drawing style is Clean, this look while it is Sketch">
+            <input
+              type="checkbox"
+              data-icon-style="auto"
+              checked={follow}
+              onChange={(e) => p.onIconStyleChange(e.target.checked ? "auto" : "hand-drawn")}
+            />
+            Follow drawing style <span>(Clean → original)</span>
+          </label>
+
+          <div className="md-ins-head">Names</div>
+          <div className="md-seg md-seg-compact md-panel-names" role="group" aria-label="Names under inserted icons">
+            <button type="button" data-names="off" className={nameOn("off") ? "on" : ""} title="No name under icons" onClick={() => names("off")}>
+              Off
+            </button>
+            <button type="button" data-names="match" className={nameOn("match") ? "on" : ""} title="Handwritten under hand-drawn icons, the drawing's font under original ones" onClick={() => names("match")}>
+              Match
+            </button>
+            <button type="button" data-names="hand" className={nameOn("hand") ? "on" : ""} title={`Always handwritten (${p.captionHandFont})`} onClick={() => names("hand")}>
+              ✎ Hand
+            </button>
+            <button type="button" data-names="drawing" className={nameOn("drawing") ? "on" : ""} title={`Always the drawing's font (${drawingFont})`} onClick={() => names("drawing")}>
+              Aa Plain
+            </button>
+          </div>
+          <div className="md-ins-font">
+            <span>Hand font</span>
+            <button type="button" className={`md-ins-fontbtn${fontMenu ? " on" : ""}`} aria-expanded={fontMenu} aria-label="Choose the handwriting font" onClick={() => setFontMenu((v) => !v)}>
+              <span className="md-names-hand" style={{ fontFamily: fontCss(p.captionHandFont) }}>
+                {p.captionHandFont}
+              </span>
+              <span aria-hidden="true">▾</span>
+            </button>
+          </div>
+          {fontMenu && (
+            <div className="md-font-menu" role="menu" aria-label="Handwriting fonts">
+              {fonts.map((f) => (
+                <button type="button" role="menuitemradio" aria-checked={p.captionHandFont === f} key={f} data-hand-font={f} className={p.captionHandFont === f ? "on" : ""} onClick={() => chooseFont(f)}>
+                  <span style={{ fontFamily: fontCss(f) }}>Amazon EC2</span>
+                  <small>{f}</small>
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="md-look-hint">Change placed icons in the style panel → Icon style.</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -325,6 +560,7 @@ export function StencilPanel(props: Props) {
   }
 
   return (
+    <PreviewSketch.Provider value={props.insertSketch}>
     <aside
       className={`md-panel${dropActive ? " drop" : ""}`}
       aria-label="Stencils"
@@ -400,11 +636,20 @@ export function StencilPanel(props: Props) {
             if (e.key === "Enter" && results[0]) onInsert(results[0]);
           }}
         />
+        <InsertStyle
+          addLabels={props.addLabels}
+          onAddLabelsChange={props.onAddLabelsChange}
+          iconStyle={props.iconStyle}
+          onIconStyleChange={props.onIconStyleChange}
+          look={props.insertLook}
+          onLookChange={props.onInsertLookChange}
+          captionFont={props.captionFont}
+          captionHandFont={props.captionHandFont}
+          onCaptionChange={props.onCaptionChange}
+          drawingStyle={props.drawingStyle}
+        />
       </div>
-      <label className="md-panel-labels" title="Put the icon's name under it when you insert it">
-        <input type="checkbox" checked={props.addLabels} onChange={(e) => props.onAddLabelsChange(e.target.checked)} />
-        Add name under icons
-      </label>
+
       {!query.trim() && (
         <div className="md-seg md-seg-compact md-panel-filter">
           {(["all", "favorites", "recent"] as Filter[]).map((f) => (
@@ -450,5 +695,6 @@ export function StencilPanel(props: Props) {
         </div>
       )}
     </aside>
+    </PreviewSketch.Provider>
   );
 }

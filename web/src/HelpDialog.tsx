@@ -42,6 +42,8 @@ export function helpSections(): Section[] {
         { keys: sc("quickSaveStencil"), text: "Save the selection as a stencil (no name prompt)" },
         { text: "Icon packs (AWS, Azure, Google Cloud, Kubernetes, network, logos, self-hosted apps…): Icon packs… next to the panel title" },
         { text: "Recolor icons (with undo) and use the eyedropper to copy any color; icons keep their colors in dark mode" },
+        { text: "Hand-drawn icons in eight looks (Pen, Marker, Pencil, Crayon, Ink, Line art, Hatch, Wobble): the button beside the Stencils search box for inserts, the Icon style section and window for selected icons (fill, outline, pen, offset, texture, Redraw)" },
+        { text: "Names under icons (Off · Match · Hand · Plain, hand font) in the same popover; Match writes them by hand under hand-drawn icons (Excalifont by default) and follows style changes" },
       ],
     },
     {

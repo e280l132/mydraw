@@ -21,6 +21,9 @@ import { safeFileName, titleFromPath } from "../../shared/names";
 import type { DrawingStyle, MenuCommand, OpenedFile, Settings } from "../../shared/types";
 import { AppMenu, type MenuPanels } from "./AppMenu";
 import { drawingStyleAppState } from "./drawingStyle";
+import { insertSketchOf, lookOfSetting, storedIconSketch } from "../../shared/iconSketch";
+import { captionFontId, captionsOf } from "./library/captionFont";
+import { fontNameById } from "./fontRegistry";
 import { ExportDialog, loadExportOptions } from "./ExportDialog";
 import { CommandPalette } from "./CommandPalette";
 import { FindReplace } from "./FindReplace";
@@ -58,6 +61,7 @@ import { StyleSection } from "./StyleSection";
 import { PropertiesSection } from "./PropertiesSection";
 import { followZones, type Positions } from "./zoneFollow";
 import { ShadowSection } from "./ShadowSection";
+import { IconStyleSection } from "./IconStyleSection";
 import { newTracker, stampNewShadows, type NewShadowTracker } from "./shadowOps";
 import { colorOfElement, elementAt } from "./library/pickColor";
 import { IconRecolorSession, NO_ICONS, iconSelection, recolorSelectedIcons, type IconSelection } from "./library/iconColor";
@@ -528,12 +532,19 @@ export function App() {
 
   // ---------- stencils ----------
 
+  const insertSketchKey = settings ? JSON.stringify(insertSketchOf(settings)) : "null";
+  /** What a stencil inserted now looks like (null = original); the panel previews follow it. */
+  const insertSketch = useMemo(() => JSON.parse(insertSketchKey) as ReturnType<typeof insertSketchOf>, [insertSketchKey]);
+
   const labelOptions = () => {
     const st = apis.current.get(activeRef.current)?.getAppState();
+    const sketch = settingsRef.current ? insertSketchOf(settingsRef.current) : null;
     return {
       label: addLabelsRef.current,
-      fontFamily: (st?.currentItemFontFamily as number | undefined) ?? 6,
+      // The caption follows the icon: a hand font under hand-drawn icons (Settings.captionFont).
+      fontFamily: captionFontId(settingsRef.current, !!sketch, (st?.currentItemFontFamily as number | undefined) ?? 6),
       strokeColor: st?.currentItemStrokeColor ?? "#1e1e1e",
+      sketch,
     };
   };
 
@@ -1469,6 +1480,8 @@ export function App() {
           return path;
         },
         markStencilUsed: (id) => void bridge.libraryMarkUsed(id),
+        insertSketch: () => (settingsRef.current ? insertSketchOf(settingsRef.current) : null),
+        captionFont: (sketched, current) => captionFontId(settingsRef.current, sketched, current),
       },
       (r) => bridge.agentReply(r as AgentReply),
     );
@@ -1627,6 +1640,36 @@ export function App() {
           .getSceneElements()
           .filter((e) => e.type === "image")
           .map((e) => e.customData?.mydrawIconColor ?? "original"),
+      /** Per image: its hand-drawn preset, "custom", or "original". */
+      imagePresets: () =>
+        api()
+          .getSceneElements()
+          .filter((e) => e.type === "image")
+          .map((e) => {
+            const s = storedIconSketch(e.customData?.mydrawIconSketch);
+            return s ? (s.preset ?? "custom") : "original";
+          }),
+      /** Per image with a caption: the caption's font name. */
+      captionFonts: () => {
+        const scene = api().getSceneElements();
+        const ids = scene.filter((e) => e.type === "image").map((e) => e.id);
+        return [...captionsOf(ids, scene as never).values()].map(({ text }) => fontNameById((text as { fontFamily: number }).fontFamily) ?? String((text as { fontFamily: number }).fontFamily));
+      },
+      /** Per image: the pen weight of its sketch (0 = original). */
+      imageWeights: () =>
+        api()
+          .getSceneElements()
+          .filter((e) => e.type === "image")
+          .map((e) => storedIconSketch(e.customData?.mydrawIconSketch)?.weight ?? 0),
+      /** Per image: "original" or "<mode>/<fill>/<seed>|<fileId>" (hand-drawn icons). */
+      imageSketches: () =>
+        api()
+          .getSceneElements()
+          .filter((e) => e.type === "image")
+          .map((e) => {
+            const s = e.customData?.mydrawIconSketch as { mode: string; fill: string; seed: number } | undefined;
+            return `${s ? `${s.mode}/${s.fill}/${s.seed}` : "original"}|${(e as { fileId?: string }).fileId}`;
+          }),
     };
   }, [insertItem, newTab, patchTab, save]);
 
@@ -1642,6 +1685,8 @@ export function App() {
         onNew={() => void newTab()}
         panelOpen={panelOpen}
         onTogglePanel={togglePanel}
+        drawingStyle={settings?.drawingStyle ?? "clean"}
+        onDrawingStyle={(drawingStyle) => onSettings({ drawingStyle })}
       />
       <div className="md-main">
       {pagesOpen && <PagesPanel api={activeApi} onClose={togglePages} />}
@@ -1664,7 +1709,7 @@ export function App() {
             onGridHealth={onGridHealth}
           />
         ))}
-        {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} changeTick={tuneTick} onToast={showToast} custom={customColor} palette={palette} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} pinned={panelPinned} onTogglePin={togglePinPanel} /><ShadowSection key={`shadow-${activeId}`} api={apis.current.get(activeId)} tick={tuneTick + selTick} palette={palette} onToast={showToast} /><PropertiesSection api={apis.current.get(activeId)} tick={tuneTick} /></>, styleHost)}
+        {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} changeTick={tuneTick} onToast={showToast} custom={customColor} palette={palette} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} pinned={panelPinned} onTogglePin={togglePinPanel} /><IconStyleSection key={`iconstyle-${activeId}`} api={apis.current.get(activeId)} tick={tuneTick + selTick} settings={settings} onSettings={onSettings} onToast={showToast} /><ShadowSection key={`shadow-${activeId}`} api={apis.current.get(activeId)} tick={tuneTick + selTick} palette={palette} onToast={showToast} /><PropertiesSection api={apis.current.get(activeId)} tick={tuneTick} /></>, styleHost)}
         <FineTune api={apis.current.get(activeId)} tick={tuneTick} hosts={ftHosts} />
         <StyleMore api={apis.current.get(activeId)} tick={tuneTick} hosts={moreHosts} />
         <TextStyle api={apis.current.get(activeId)} tick={tuneTick} host={textStyleHost} onToast={showToast} />
@@ -1698,6 +1743,15 @@ export function App() {
             localStorage.setItem("mydraw.addLabels", v ? "1" : "0");
             setAddLabels(v);
           }}
+          iconStyle={settings?.iconStyle ?? "auto"}
+          onIconStyleChange={(iconStyle) => onSettings({ iconStyle })}
+          insertSketch={insertSketch}
+          insertLook={lookOfSetting(settings?.iconSketch)}
+          onInsertLookChange={(iconSketch) => onSettings({ iconSketch })}
+          captionFont={settings?.captionFont ?? "match"}
+          captionHandFont={settings?.captionHandFont ?? "Excalifont"}
+          onCaptionChange={(patch) => onSettings(patch)}
+          drawingStyle={settings?.drawingStyle ?? "clean"}
           onInsert={(item) => void insertItem(item)}
           onSaveSelection={openSaveStencil}
           onOpenPacks={() => setPacksOpen(true)}
@@ -1737,6 +1791,8 @@ export function App() {
           getApi={getActiveApi}
           library={libraryIndex}
           quick={settings?.quickConnect ?? DEFAULT_QUICK_CONNECT}
+          insertSketch={insertSketch}
+          captionPrefs={settings}
           blocked={shortcutsOpen || fontsOpen || helpOpen || inventoryOpen || importOpen || historyOpen || exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
           onToast={showToast}
         />

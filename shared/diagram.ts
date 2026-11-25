@@ -1,6 +1,7 @@
 // The diagram description used by build_diagram (and produced by the Mermaid parser and the
 // templates): nodes, edges, zones. Validation and defaults live here; layout in layout.ts; the
 // renderer turns a laid-out diagram into Excalidraw elements (web/src/agent/diagram.ts).
+import { normalizeIconSketch, type IconSketch } from "./iconSketch";
 import { resolveShadowInput, type Shadow } from "./shadow";
 import { STROKE_STYLE_NAMES, type StrokeStyleName } from "./dash";
 import { resolveGradientInput, type Gradient } from "./gradient";
@@ -14,6 +15,16 @@ import type { Routing } from "./routing";
 import { SVG_SHAPES, type SvgShape } from "./shapeSvgs";
 
 /** Excalidraw's own shapes, plus the drawn ones of shared/shapeSvgs.ts (cylinder for a database, ...). */
+/** A node's iconStyle (agent input), validated; undefined = the look decides. */
+function iconStyleOf(v: unknown, id: string): IconSketch | null | undefined {
+  if (v === undefined) return undefined;
+  try {
+    return normalizeIconSketch(v);
+  } catch (e) {
+    throw new Error(`node ${id} ${e instanceof Error ? e.message : e}`);
+  }
+}
+
 export type NodeShape = "rectangle" | "ellipse" | "diamond" | SvgShape;
 /** Excalidraw's solid / dashed / dotted plus the extra dash styles (shared/dash.ts). */
 export type LineStyle = StrokeStyleName;
@@ -26,6 +37,8 @@ export interface DiagramNode {
   icon?: string;
   /** Recolor an SVG icon (hex). */
   iconColor?: string;
+  /** Hand-drawn icon / drawn shape (null = original). Default: hand-drawn with look "sketch". */
+  iconStyle?: IconSketch | null;
   zone?: string;
   /** Stroke (and label) color, hex. */
   color?: string;
@@ -244,6 +257,7 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
       shape: oneOf(n.shape, SHAPES, `node ${id} shape`),
       icon: str(n.icon ?? n.stencil, `node ${id} icon`),
       iconColor: color(n.iconColor, `node ${id} iconColor`),
+      iconStyle: iconStyleOf(n.iconStyle, id),
       zone: str(n.zone, `node ${id} zone`),
       color: color(n.color, `node ${id} color`),
       fill: color(n.fill, `node ${id} fill`),

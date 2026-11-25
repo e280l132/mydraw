@@ -3,6 +3,8 @@
 // QuickConnect.tsx; placement and anchors are the pure shared/quickConnect.ts. (Not
 // "quickConnect.ts": on a case-insensitive disk "./QuickConnect" would resolve to it instead of the
 // component.)
+import type { IconSketch } from "../../shared/iconSketch";
+import { captionFontId, type CaptionPrefs } from "./library/captionFont";
 import { getCommonBounds, newElementWith } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { Box } from "../../shared/geometry";
@@ -301,11 +303,18 @@ export function addConnectedCopy(api: ExcalidrawImperativeAPI, unitId: string, s
 }
 
 /** Add `item` (an SVG/PNG stencil) as an icon node on `side` of `unitId`, connected by an arrow. */
-export async function addConnectedStencil(api: ExcalidrawImperativeAPI, unitId: string, side: QuickSide, item: LibraryItem): Promise<string | null> {
+export async function addConnectedStencil(
+  api: ExcalidrawImperativeAPI,
+  unitId: string,
+  side: QuickSide,
+  item: LibraryItem,
+  sketch: IconSketch | null = null,
+  captionPrefs: CaptionPrefs | null = null,
+): Promise<string | null> {
   if (item.kind !== "svg" && item.kind !== "png") throw new Error(`“${item.name}” is not an icon`);
   const st = api.getAppState();
-  const opts = { fontFamily: st.currentItemFontFamily as number, strokeColor: st.currentItemStrokeColor };
-  const { image, files } = await loadIconImage(item, opts);
+  const opts = { fontFamily: captionFontId(captionPrefs, !!sketch, st.currentItemFontFamily as number), strokeColor: st.currentItemStrokeColor };
+  const { image, files } = await loadIconImage(item, { ...opts, sketch });
   // The scene may have changed while the icon loaded.
   const unit = unitById(api, unitId);
   if (!unit) return null;

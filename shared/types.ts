@@ -3,6 +3,7 @@ import type { EmbeddedFonts, FontCategory, FontEntry } from "./fonts";
 import type { LibraryIndex } from "./library";
 import type { GridSettings } from "./grid";
 import type { QuickConnectSettings } from "./quickBindings";
+import type { CaptionFontMode, IconSketchLook, IconStyleSetting } from "./iconSketch";
 
 // Types shared by the Electron main process, the preload bridge and the renderer.
 
@@ -27,6 +28,14 @@ export interface Settings {
   grid: GridSettings;
   /** Order of the properties panel sections, top first (see shared/panelOrder.ts). Empty = native order. */
   panelOrder: string[];
+  /** New stencils/icons: hand-drawn in Sketch ("auto"), always original, or always hand-drawn. */
+  iconStyle: IconStyleSetting;
+  /** How new hand-drawn icons are drawn (seed fixed at 1, so an icon looks the same every time). */
+  iconSketch: IconSketchLook;
+  /** Font of the name under inserted icons (see shared/iconSketch.ts captionFontName). */
+  captionFont: CaptionFontMode;
+  /** The hand font captions use ("Excalifont", "Caveat", ...). */
+  captionHandFont: string;
 }
 
 /** What an import built (see shared/importers.ts). */

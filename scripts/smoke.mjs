@@ -205,6 +205,14 @@ await page.waitForSelector(".excalidraw.theme--dark");
 await openMenu();
 await page.click(`${MENU} [role=radiogroup][aria-label="Drawing style"] >> text=Sketch`);
 await waitFor(async () => (await t((x) => x.currentItemRoughness())) === 1, "sketch style applied");
+// The tab bar shows the drawing style and switches it.
+await page.keyboard.press("Escape");
+await waitFor(async () => (await page.locator(".md-style-switch [data-drawing-style='sketch']").getAttribute("aria-checked")) === "true", "tab bar shows Sketch");
+await page.click(".md-style-switch [data-drawing-style='clean']");
+await waitFor(async () => (await t((x) => x.currentItemRoughness())) === 0, "tab bar switch applies Clean");
+await page.screenshot({ path: path.join(shots, "tabbar-style-switch.png") });
+await page.click(".md-style-switch [data-drawing-style='sketch']");
+await waitFor(async () => (await t((x) => x.currentItemRoughness())) === 1, "tab bar switch applies Sketch");
 
 await openMenu();
 await page.click(`${MENU} >> text=Autosave saved files`);
@@ -320,6 +328,106 @@ await waitFor(async () => (await page.$eval(`${SECTION} .md-swatch-slot`, (el) =
 await page.screenshot({ path: path.join(shots, "eyedropper.png") });
 await page.click(`${SECTION} >> text=Original`);
 await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "original"), "back to original colors");
+
+step("icon style: hand-drawn / original per icon (style panel), recolor keeps the sketch, redraw is one undo step, panel switch sets inserts");
+{
+  const ICONSTYLE = ".md-drawing:not([style*='none']) .App-menu__left .md-iconstyle";
+  await page.waitForSelector(`${ICONSTYLE}[data-mode='selection']`);
+  const origFiles = (await t((x) => x.imageSketches())).map((v) => v.split("|")[1]);
+  await page.click(`${ICONSTYLE} [data-icon-style='pen']`);
+  await waitFor(async () => (await t((x) => x.imageSketches())).every((v, i) => v.startsWith("rough/solid/1|") && v.split("|")[1] !== origFiles[i]), "icons hand-drawn (new files)");
+  await waitFor(async () => (await page.locator(`${ICONSTYLE} .md-iconstyle-pick img`).count()) === 3, "row buttons show the icon in each look");
+  // Names follow the icon ("Match", the default): handwritten under hand-drawn icons, in the same undo step.
+  await waitFor(async () => (await t((x) => x.captionFonts())).every((f) => f === "Excalifont"), "captions handwritten with the icons");
+  const sketchFiles = (await t((x) => x.imageSketches())).map((v) => v.split("|")[1]);
+  await page.screenshot({ path: path.join(shots, "icons-hand-drawn.png") });
+  // Recolor a hand-drawn icon: still hand-drawn, same strokes, new colour.
+  await page.click(`${SECTION} .md-iconcolor-grid [aria-label="blue"]`);
+  await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "#1971c2"), "sketched icons recolored");
+  assert.ok((await t((x) => x.imageSketches())).every((v) => v.startsWith("rough/solid/1|")), "recolor keeps the hand-drawn style");
+  await page.click(`${SECTION} >> text=Original colors`);
+  await waitFor(async () => (await t((x) => x.imageColors())).every((c) => c === "original"), "colors back, still sketched");
+  await waitFor(async () => (await t((x) => x.imageSketches())).every((v, i) => v === `rough/solid/1|${sketchFiles[i]}`), "same sketch file as before the recolor");
+  // Redraw (new seed per icon) from the popover; undo is one step.
+  await page.click(`${ICONSTYLE} .md-iconstyle-open`);
+  await page.click(".md-iconstyle-redraw");
+  await waitFor(async () => (await t((x) => x.imageSketches())).every((v) => v.startsWith("rough/solid/") && !v.startsWith("rough/solid/1|")), "redrawn with new seeds");
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => document.querySelector(".md-drawing:not([style*='none']) .excalidraw-container")?.focus());
+  await page.keyboard.press("Meta+Z");
+  await waitFor(async () => (await t((x) => x.imageSketches())).every((v) => v.startsWith("rough/solid/1|")), "redraw undone in one step");
+  // The window: every look as a tile (previews of the selected icon), adjustments, one undo step per slider drag.
+  await page.click(`${ICONSTYLE} .md-iconstyle-open`);
+  const POP = ".md-more-pop[data-more-pop='iconStyle']";
+  await waitFor(async () => (await page.locator(`${POP} .md-is-tile img`).count()) === 9, "9 look tiles with previews");
+  await page.click(`${POP} [data-style-tile='marker']`);
+  await waitFor(async () => (await t((x) => x.imagePresets())).every((p) => p === "marker"), "marker look applied");
+  await waitFor(async () => (await page.locator(`${POP} [data-outline='ink']`).getAttribute("class"))?.includes("on"), "outline shows ink");
+  await page.click(`${POP} [data-outline='shade']`);
+  await waitFor(async () => (await t((x) => x.imagePresets())).every((p) => p === "custom"), "tweaked look is custom");
+  const range = await page.waitForSelector(`${POP} .md-is-range[data-field='weight']`);
+  const rb = await range.boundingBox();
+  await page.mouse.move(rb.x + 4, rb.y + rb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(rb.x + rb.width * 0.6, rb.y + rb.height / 2, { steps: 4 });
+  await page.mouse.move(rb.x + rb.width * 0.9, rb.y + rb.height / 2, { steps: 4 });
+  await page.mouse.up();
+  await waitFor(async () => (await t((x) => x.imageWeights())).every((w) => w > 2), "pen weight dragged up");
+  await page.screenshot({ path: path.join(shots, "icon-style-window.png") });
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => document.querySelector(".md-drawing:not([style*='none']) .excalidraw-container")?.focus());
+  await page.keyboard.press("Meta+Z");
+  await waitFor(async () => (await t((x) => x.imageWeights())).every((w) => w === 1.7), "the whole drag is one undo step");
+  // Names row: plain names under hand-drawn icons, then back to matching.
+  await page.click(`${ICONSTYLE} .md-iconstyle-open`);
+  await page.click(`${POP} [data-caption='drawing']`);
+  await waitFor(async () => (await t((x) => x.captionFonts())).every((f) => f !== "Excalifont"), "captions in the drawing font");
+  await waitFor(async () => (await page.locator(`${POP} .md-is-names`).getAttribute("data-caption-state")) === "plain", "names row shows plain");
+  await page.click(`${POP} [data-caption='match']`);
+  await waitFor(async () => (await t((x) => x.captionFonts())).every((f) => f === "Excalifont"), "captions match again");
+  await page.keyboard.press("Escape");
+  await page.click(`${ICONSTYLE} [data-icon-style='original']`);
+  await waitFor(async () => (await t((x) => x.imageSketches())).every((v, i) => v === `original|${origFiles[i]}`), "original files restored exactly");
+  await waitFor(async () => (await t((x) => x.captionFonts())).every((f) => f !== "Excalifont"), "captions back in the drawing font");
+  // Stencils panel: one button beside the search box; its popover sets how inserts look (then undo the insert and go back to Auto).
+  const INS = ".md-ins-pop";
+  await page.click(".md-ins-btn");
+  await page.click(`${INS} [data-look='pen']`);
+  await page.click(`${INS} input[data-icon-style='auto']`); // stop following the drawing style: always hand-drawn
+  await waitFor(async () => !(await page.locator(`${INS} input[data-icon-style='auto']`).isChecked()), "follow drawing style off");
+  await page.keyboard.press("Escape");
+  await waitFor(async () => (await page.locator(INS).count()) === 0, "popover closes on Escape");
+  const n0 = (await t((x) => x.imageSketches())).length;
+  await t((x, id) => x.insertStencil(id), routerId);
+  await waitFor(async () => (await t((x) => x.imageSketches())).length === n0 + 1, "stencil inserted");
+  assert.ok((await t((x) => x.imageSketches())).at(-1).startsWith("rough/solid/1|"), "inserted icon is hand-drawn");
+  assert.equal((await t((x) => x.captionFonts())).at(-1), "Excalifont", "its name is handwritten");
+  await page.evaluate(() => document.querySelector(".md-drawing:not([style*='none']) .excalidraw-container")?.focus());
+  await page.keyboard.press("Meta+Z");
+  await waitFor(async () => (await t((x) => x.imageSketches())).length === n0, "insert undone");
+  // Looks with previews, the preview note follows the pick.
+  await page.click(".md-ins-btn");
+  await waitFor(async () => (await page.locator(`${INS} .md-is-tile img`).count()) === 9, "9 look tiles with previews");
+  await page.screenshot({ path: path.join(shots, "stencil-insert-style.png") });
+  await page.click(`${INS} [data-look='pencil']`);
+  await waitFor(async () => (await page.locator(`${INS} .md-ins-preview-note`).innerText()).includes("Pencil"), "preview shows the chosen look");
+  await page.click(`${INS} [data-look='pen']`);
+  // Names: handwriting font list, Off, back to Match + Excalifont + Auto.
+  await page.click(`${INS} .md-ins-fontbtn`);
+  await page.waitForSelector(`${INS} .md-font-menu [data-hand-font='Caveat']`);
+  await page.screenshot({ path: path.join(shots, "stencil-font-menu.png") });
+  await page.click(`${INS} .md-font-menu [data-hand-font='Caveat']`);
+  await waitFor(async () => (await page.locator(`${INS} .md-ins-fontbtn`).innerText()).includes("Caveat"), "hand font chosen");
+  await page.click(`${INS} [data-names='off']`);
+  await waitFor(async () => (await page.locator(`${INS} [data-names='off']`).getAttribute("class"))?.includes("on"), "names off");
+  assert.equal(await page.locator(`${INS} .md-ins-preview-name`).count(), 0, "preview shows no name when names are off");
+  await page.click(`${INS} [data-names='match']`);
+  await page.click(`${INS} .md-ins-fontbtn`);
+  await page.click(`${INS} .md-font-menu [data-hand-font='Excalifont']`);
+  await page.click(`${INS} input[data-icon-style='auto']`);
+  await page.keyboard.press("Escape");
+  await t((x) => x.selectImages());
+}
 
 step("properties panel: palette swatch, style preset and theme act on the selection");
 await t((x) => x.addSample("Styled"));
@@ -642,7 +750,7 @@ const fakePack = path.join(libraryDir, "Network");
 fs.mkdirSync(path.join(fakePack, "Devices"), { recursive: true });
 fs.writeFileSync(path.join(fakePack, "collection.json"), JSON.stringify({ managedBy: "mydraw-packs", pack: "network", items: {} }));
 fs.writeFileSync(path.join(fakePack, "Devices", "Router.svg"), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" width="16" height="16"><rect width="8" height="8"/></svg>');
-assert.equal(await page.locator(".md-panel-labels input").isVisible(), true, "name-under-icons checkbox is on the panel");
+assert.equal(await page.locator(".md-panel-search .md-ins-btn").isVisible(), true, "insert style button is beside the search box");
 assert.equal(await page.locator(".md-panel-head .md-packs-btn").isVisible(), true, "Icon packs button beside the title");
 assert.equal(await page.locator(".md-panel-head", { hasText: "Browse" }).count(), 0, "no Browse libraries button");
 await page.click(".md-panel-head .md-packs-btn");

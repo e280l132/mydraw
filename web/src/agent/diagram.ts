@@ -16,8 +16,10 @@ import { distToPolyline } from "../../../shared/labelGuard";
 import type { LibraryItem } from "../../../shared/library";
 import { resolveColor } from "../../../shared/palettes";
 import type { Routing } from "../../../shared/routing";
-import { isRecolorableIcon, recoloredIcon } from "../library/iconColor";
+import { isRecolorableIcon, recoloredIcon, restyledIcon } from "../library/iconColor";
+import { DEFAULT_ICON_SKETCH } from "../../../shared/iconSketch";
 import { loadStencil } from "../library/stencilContent";
+import type { IconSketch } from "../../../shared/iconSketch";
 import { TRUE_COLOR_SVG_MIME, trueColorFile } from "../library/trueColor";
 import { svgToDataURL } from "../../../shared/recolor";
 import { CAPTION_SHAPES, CAPTION_SHAPE_SIZE, isSvgShape, SHAPE_PADDING, shapeSvg, type ShapeSvgOptions, type SvgShape } from "../../../shared/shapeSvgs";
@@ -69,10 +71,10 @@ const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 /** Load a stencil icon as an image element (at 0,0) and its file, sized and optionally recolored. */
 export async function loadIconImage(
   item: LibraryItem,
-  opts: { size?: number; color?: string; fontFamily: number; strokeColor: string },
+  opts: { size?: number; color?: string; fontFamily: number; strokeColor: string; sketch?: IconSketch | null },
 ): Promise<{ image: ExcalidrawImageElement; files: BinaryFileData[] }> {
   if (item.kind !== "svg" && item.kind !== "png") throw new Error(`"${item.name}" is not an icon`);
-  const content = await loadStencil(item, { label: false, fontFamily: opts.fontFamily, strokeColor: opts.strokeColor });
+  const content = await loadStencil(item, { label: false, fontFamily: opts.fontFamily, strokeColor: opts.strokeColor, sketch: opts.sketch });
   let image = content.elements.find((e) => e.type === "image") as ExcalidrawImageElement | undefined;
   if (!image) throw new Error(`stencil "${item.name}" has no image`);
   const files = new Map<string, BinaryFileData>(content.files.map((f) => [f.id, trueColorFile(f)]));
@@ -192,6 +194,13 @@ async function sha1Text(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** A drawn shape, hand-drawn when `sketch` is given (the original stays in customData, like icons). */
+async function sketchedShape(drawn: { image: El; file: BinaryFileData }, sketch: IconSketch | null): Promise<{ image: El; file: BinaryFileData }> {
+  if (!sketch) return drawn;
+  const r = await restyledIcon(drawn.image as ExcalidrawImageElement, drawn.file, { sketch });
+  return r ? { image: r.element as El, file: r.file ?? drawn.file } : drawn;
+}
+
 /** A drawn shape (shared/shapeSvgs.ts) as an image element at (0,0) and its file. */
 export async function shapeImage(kind: SvgShape, o: ShapeSvgOptions): Promise<{ image: El; file: BinaryFileData }> {
   const svg = shapeSvg(kind, o);
@@ -304,6 +313,8 @@ export async function buildDiagram(
 ): Promise<DiagramBuild> {
   // The look (professional by default, or sketch) sets fonts, sizes, strokes and roughness.
   const look = lookOf(spec.look);
+  /** Icons and drawn shapes: the node's iconStyle, else hand-drawn when the look is rough (sketch). */
+  const sketchOf = (n: DiagramNode): IconSketch | null => (n.iconStyle !== undefined ? n.iconStyle : look.roughness > 0 ? { ...DEFAULT_ICON_SKETCH } : null);
   const fontFor = (t: TextStyle): number => fontIdByName(t.font) ?? fontIdByName(t.fallback) ?? (st.currentItemFontFamily as number);
   const fonts = {
     title: fontFor(look.title),
@@ -356,7 +367,7 @@ export async function buildDiagram(
     if (item) {
       try {
         const c = captionText(n);
-        const icon = await loadIconImage(item, { size: spec.iconSize ?? DEFAULT_ICON_SIZE, color: n.iconColor, fontFamily: c.f, strokeColor: ink });
+        const icon = await loadIconImage(item, { size: spec.iconSize ?? DEFAULT_ICON_SIZE, color: n.iconColor, fontFamily: c.f, strokeColor: ink, sketch: sketchOf(n) });
         const cap = label ? measureText(label, c.size, c.f) : null;
         const size = iconNodeSize(icon.image.width, icon.image.height, cap);
         // A subtitle goes under the caption, inside the node's layout box.
@@ -519,7 +530,7 @@ export async function buildDiagram(
         files.push(...plan.icon.files);
       } else {
         const size = CAPTION_SHAPE_SIZE[plan.shape!.kind as "actor" | "server"];
-        const drawn = await shapeImage(plan.shape!.kind, { ...size, stroke, fill: n.fill ?? "#ffffff", strokeWidth: look.nodeStroke[n.emphasis ?? "normal"] });
+        const drawn = await sketchedShape(await shapeImage(plan.shape!.kind, { ...size, stroke, fill: n.fill ?? "#ffffff", strokeWidth: look.nodeStroke[n.emphasis ?? "normal"] }), sketchOf(n));
         image = drawn.image;
         files.push(drawn.file);
         data.mydrawShape = plan.shape!.kind;
@@ -546,7 +557,7 @@ export async function buildDiagram(
     } else if (plan.shape) {
       // A drawn shape with its label inside (database, cloud, queue, ...).
       data.mydrawShape = plan.shape.kind;
-      const drawn = await shapeImage(plan.shape.kind, { width: box.width, height: box.height, stroke, fill: n.fill ?? "#ffffff", strokeWidth: look.nodeStroke[n.emphasis ?? "normal"] });
+      const drawn = await sketchedShape(await shapeImage(plan.shape.kind, { width: box.width, height: box.height, stroke, fill: n.fill ?? "#ffffff", strokeWidth: look.nodeStroke[n.emphasis ?? "normal"] }), sketchOf(n));
       files.push(drawn.file);
       const t = labelText(n);
       const els = makeIconNode({

@@ -19,6 +19,10 @@ import { applyPresetTo, applyThemeTo, selectedIds } from "./uiActions";
 import { routeArrowsAround } from "./linkOps";
 import { ARRANGE_ACTIONS, runArrange } from "./arrange";
 import { applyShadow, shadowTargets, type ShadowChange } from "./shadowOps";
+import { ICON_STYLE_PRESET_IDS, ICON_STYLE_PRESETS, ICON_STYLE_SETTINGS, lookOfSetting, newSketchSeed, presetSketch, type CaptionFontMode, type IconSketch, type IconStylePreset } from "../../shared/iconSketch";
+import { iconSketchOf, isSketchableIcon, restyleIcons, type IconPatchFor } from "./library/iconColor";
+import { restyleCaptions } from "./library/captionFont";
+import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import { DEFAULT_SHADOW, SHADOW_PRESET_IDS, SHADOW_PRESETS, shadowAmount, withAmount } from "../../shared/shadow";
 
 export interface PaletteContext {
@@ -116,6 +120,13 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
     for (const drawingStyle of ["clean", "sketch"] as const) {
       if (s.drawingStyle !== drawingStyle) add("Preferences", `Drawing style: ${drawingStyle}`, () => c.onSettings({ drawingStyle }), { keywords: "rough hand-drawn" });
     }
+    for (const iconStyle of ICON_STYLE_SETTINGS) {
+      const label = iconStyle === "auto" ? "follow drawing style" : iconStyle;
+      if (s.iconStyle !== iconStyle) add("Preferences", `New icons: ${label}`, () => c.onSettings({ iconStyle }), { keywords: "stencil icon insert sketch rough hand-drawn original" });
+    }
+    for (const [captionFont, label] of [["match", "match the icon"], ["hand", "handwritten"], ["drawing", "drawing font"]] as const) {
+      if (s.captionFont !== captionFont) add("Preferences", `New icon names: ${label}`, () => c.onSettings({ captionFont }), { keywords: "caption label font excalifont stencil" });
+    }
     add("Preferences", s.autosave ? "Turn autosave off" : "Turn autosave on", () => c.onSettings({ autosave: !s.autosave }));
   }
 
@@ -168,6 +179,39 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
     add("Shadow", "Remove shadow", shadowOn(() => null, "remove their shadow"), { keywords: "drop shadow none clear" });
     add("Shadow", "Stronger shadow", shadowOn((cur) => withAmount(cur ?? DEFAULT_SHADOW, shadowAmount(cur ?? DEFAULT_SHADOW) + 10), "make the shadow stronger"), { keywords: "shadow amount more bigger" });
     add("Shadow", "Weaker shadow", shadowOn((cur) => (cur ? withAmount(cur, shadowAmount(cur) - 10) : null), "make the shadow weaker"), { keywords: "shadow amount less smaller" });
+    // ----- icon style (the Icon style section of the style panel has the full controls) -----
+    const iconBase: IconSketch = { ...lookOfSetting(c.settings?.iconSketch), seed: 1 };
+    const iconsDo = (patch: IconPatchFor, all: boolean, what: string) => async () => {
+      const files = api.getFiles();
+      const ids = all ? new Set(api.getSceneElements().filter((e) => isSketchableIcon(e, files)).map((e) => e.id)) : undefined;
+      if (all && !ids!.size) return c.toast("This drawing has no icons.", true);
+      const files0 = api.getFiles();
+      const touched = ids ?? new Set(api.getSceneElements().filter((e) => api.getAppState().selectedElementIds[e.id] && isSketchableIcon(e, files0)).map((e) => e.id));
+      const n = await restyleIcons(api, patch, false, ids);
+      if (!n) return c.toast(all ? "Nothing to change." : `Select icons first, then ${what}.`, true);
+      // Names under the icons follow their look (same undo step).
+      if (c.settings?.captionFont === "match") restyleCaptions(api, touched, c.settings);
+    };
+    const captionsTo = (captionFont: CaptionFontMode) => () => {
+      const files = api.getFiles();
+      const sel = api.getAppState().selectedElementIds;
+      const ids = api.getSceneElements().filter((e) => sel[e.id] && isSketchableIcon(e, files)).map((e) => e.id);
+      if (!ids.length) return c.toast("Select icons first, then change the font of their names.", true);
+      const n = restyleCaptions(api, ids, { captionFont, captionHandFont: c.settings?.captionHandFont }, CaptureUpdateAction.IMMEDIATELY);
+      if (!n) c.toast("Their names already use that font (or they have none).");
+    };
+    add("Icons", "Icon names: handwritten", captionsTo("hand"), { keywords: "caption label font excalifont hand-drawn" });
+    add("Icons", "Icon names: drawing font", captionsTo("drawing"), { keywords: "caption label font plain normal" });
+    add("Icons", "Icon names: match the icon", captionsTo("match"), { keywords: "caption label font hand-drawn" });
+    const asPreset = (id: IconStylePreset) => (el: ExcalidrawElement) => ({ sketch: presetSketch(id, iconSketchOf(el)?.seed ?? 1) });
+    for (const id of ICON_STYLE_PRESET_IDS) {
+      const p = ICON_STYLE_PRESETS[id];
+      add("Icons", `Icons: ${p.label.toLowerCase()} look`, iconsDo(asPreset(id), false, `draw them as ${p.label.toLowerCase()}`), { keywords: `hand-drawn sketch rough stencil icon style ${p.hint}` });
+    }
+    add("Icons", "Icons: original", iconsDo({ sketch: null }, false, "restore them"), { keywords: "crisp clean stencil icon style restore" });
+    add("Icons", "Icons: redraw sketch", iconsDo((el) => ({ sketch: { ...(iconSketchOf(el) ?? iconBase), seed: newSketchSeed() } }), false, "redraw them"), { keywords: "sketch again shuffle stencil icon" });
+    add("Icons", "Make all icons hand-drawn", iconsDo((el) => ({ sketch: { ...(iconSketchOf(el) ?? iconBase) } }), true, ""), { keywords: "sketch rough every whole drawing stencil" });
+    add("Icons", "Make all icons original", iconsDo({ sketch: null }, true, ""), { keywords: "crisp clean every whole drawing stencil restore" });
     // ----- fills, gradients and stroke styles (the Fill / Stroke style "more" popovers) -----
     for (const f of EXTRA_FILLS) {
       add("Style", `Fill: ${f.label}`, () => applyFill(api, f.id), { keywords: `fill pattern ${f.id} ${f.hint}` });

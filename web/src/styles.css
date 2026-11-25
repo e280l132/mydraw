@@ -1,3 +1,17 @@
+/* Previews of Excalidraw's own hand fonts in menus (web/src/library/captionFont.ts fontCss). Excalidraw
+   adds its fonts to the page only once a drawing uses them, so menus point at the files directly.
+   The Excalifont file is its Latin subset, pinned to Excalidraw 0.18.1 (see EXCALIDRAW-UPGRADE.md). */
+@font-face {
+  font-family: "md-preview-Excalifont";
+  src: url("/fonts/Excalifont/Excalifont-Regular-a88b72a24fb54c9f94e3b5fdaa7481c9.woff2") format("woff2");
+  font-display: swap;
+}
+@font-face {
+  font-family: "md-preview-Virgil";
+  src: url("/fonts/Virgil/Virgil-Regular.woff2") format("woff2");
+  font-display: swap;
+}
+
 html,
 body,
 #root {
@@ -149,6 +163,45 @@ body {
   color: var(--md-muted);
   cursor: pointer;
   flex: none;
+}
+
+/* Drawing style switch (Clean | Sketch) in the tab bar: always visible, one click to change. */
+.md-style-switch {
+  align-self: center;
+  display: flex;
+  flex: none;
+  margin-right: 8px;
+  padding: 2px;
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  background: var(--md-bg);
+}
+.md-style-switch button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--md-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.md-style-switch button:hover {
+  color: var(--md-fg);
+}
+.md-style-switch button.on {
+  background: var(--md-tab-active);
+  color: var(--md-accent);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.md-style-switch button[data-drawing-style="sketch"] {
+  font-family: "Excalifont", "md-preview-Excalifont", -apple-system, sans-serif;
+  font-size: 14px;
 }
 
 .md-tabbar-btn.on {
@@ -539,14 +592,228 @@ li[data-testid="addToLibrary"] {
   background: var(--md-tab);
 }
 
-.md-panel-labels {
+/* Stencils panel: icon style for inserts (Auto / Original / Hand-drawn). */
+/* Stencils panel: how inserted stencils come out. One button beside the search box (a sample icon
+   as a click would insert it + the name font), its popover holds every option. */
+.md-panel-search {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 12px 8px;
+}
+.md-panel-search input {
+  flex: 1;
+  min-width: 0;
+}
+.md-ins-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 32px;
+  padding: 0 5px 0 6px;
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  background: var(--md-bg);
+  color: var(--md-fg);
+  font: inherit;
+  cursor: pointer;
+}
+.md-ins-btn:hover,
+.md-ins-btn.open {
+  border-color: var(--md-accent);
+}
+.md-ins-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+.md-ins-thumb img {
+  max-width: 20px;
+  max-height: 20px;
+}
+.md-ins-aa {
+  font-size: 14px;
+  line-height: 1;
+}
+.md-ins-caret {
+  font-size: 9px;
+  color: var(--md-muted);
+}
+.md-ins-pop {
+  position: absolute;
+  z-index: 30;
+  top: 38px;
+  left: 10px;
+  right: 10px;
+  max-height: calc(100vh - 170px);
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid var(--md-border);
+  border-radius: 12px;
+  background: var(--md-panel);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+.md-ins-preview {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid var(--md-border);
+}
+.md-ins-preview-img {
+  grid-row: 1 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
+}
+.md-ins-preview-img img {
+  max-width: 64px;
+  max-height: 48px;
+}
+.md-ins-preview-name {
+  align-self: end;
+  font-size: 16px;
+  color: #1e1e1e;
+}
+.md-ins-preview-note {
+  grid-column: 2;
+  align-self: start;
+  margin-top: 1px;
+  font-size: 11px;
+  color: #6b6b75;
+}
+.md-ins-head {
+  margin: 10px 0 5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--md-muted);
+}
+.md-ins-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+}
+.md-ins-follow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.md-ins-follow span {
+  color: var(--md-muted);
+}
+.md-ins-follow.dim {
+  opacity: 0.55;
+}
+.md-panel-names {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+.md-seg.md-seg-compact.md-panel-names button {
+  height: 28px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.md-ins-font {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 7px;
   font-size: 12px;
   color: var(--md-muted);
+}
+.md-ins-fontbtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--md-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--md-fg);
+  font: inherit;
+  font-size: 10px;
   cursor: pointer;
+}
+.md-ins-fontbtn.on,
+.md-ins-fontbtn:hover {
+  border-color: var(--md-accent);
+}
+.md-ins-fontbtn .md-names-hand {
+  font-size: 16px;
+}
+.md-font-menu {
+  display: flex;
+  margin-top: 6px;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  background: var(--md-bg);
+}
+.md-font-menu button {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--md-fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.md-font-menu button:hover {
+  background: var(--md-tab);
+}
+.md-font-menu button.on {
+  border-color: var(--md-accent);
+}
+.md-font-menu button span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 17px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.md-font-menu button small {
+  flex: none;
+  font-size: 11px;
+  color: var(--md-muted);
+}
+/* The popover lives outside Excalidraw: use the app's colours. */
+.md-ins-pop .md-is-tile {
+  background: var(--md-tab);
+  color: var(--md-fg);
+}
+.md-ins-pop .md-is-tile:hover {
+  border-color: var(--md-border);
+}
+.md-ins-pop .md-is-tile.on {
+  border-color: var(--md-accent);
+  background: var(--md-tab);
+}
+.md-look-hint {
+  margin: 10px 2px 0;
+  font-size: 11px;
+  color: var(--md-muted);
 }
 
 .md-panel-actions {
@@ -3587,6 +3854,250 @@ body.md-panel-dragging * {
 .md-outline-width .md-outline-range:focus:not(:focus-visible) {
   outline: none;
   box-shadow: none;
+}
+
+/* ---------- Icon style section (web/src/IconStyleSection.tsx) ---------- */
+.md-iconstyle .md-legend-text {
+  flex: 1;
+}
+.md-iconstyle-row {
+  width: 100%;
+}
+.excalidraw .buttonList button.md-iconstyle-pick.on {
+  background-color: var(--button-selected-bg, var(--color-surface-primary-container));
+  border-color: var(--button-selected-border, var(--color-surface-primary-container));
+}
+/* Row buttons show the selected icon in that look. */
+.md-iconstyle-thumb {
+  display: block;
+  width: 1.3rem;
+  height: 1.3rem;
+  object-fit: contain;
+}
+/* The window: looks first, then the adjustments in a label | control | value grid. */
+.md-more-pop[data-more-pop="iconStyle"] {
+  width: 18.5rem;
+}
+.md-is-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+}
+.md-is-tiles.new {
+  grid-template-columns: repeat(4, 1fr);
+}
+.md-is-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.35rem 0.2rem 0.3rem;
+  border: 1px solid transparent;
+  border-radius: var(--border-radius-lg, 8px);
+  background: var(--button-bg, var(--color-surface-mid, #f1f0ff));
+  color: var(--button-color, var(--text-primary-color, inherit));
+  font: inherit;
+  font-size: 0.7rem;
+  line-height: 1.1;
+  cursor: pointer;
+}
+.md-is-tile:hover {
+  background: var(--button-hover-bg, var(--color-surface-high, #e0dfff));
+}
+.md-is-tile.on {
+  border-color: var(--color-primary, #6965db);
+  background: var(--color-surface-primary-container, #e0dfff);
+}
+.md-is-tile-img {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 2.6rem;
+  border-radius: 6px;
+  background: #fff;
+}
+.md-is-tile-img img {
+  max-width: 2.3rem;
+  max-height: 2.3rem;
+}
+.md-is-tile-wait {
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 50%;
+  background: var(--color-surface-mid, rgba(127, 127, 127, 0.15));
+}
+.md-is-tile-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-is-namebox {
+  margin-top: 0.55rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.1));
+}
+.md-is-names.off {
+  opacity: 0.45;
+}
+.md-is-font {
+  width: 100%;
+  height: 1.75rem;
+  padding: 0 0.4rem;
+  border: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.15));
+  border-radius: 6px;
+  background: var(--input-bg-color, transparent);
+  color: var(--text-primary-color, inherit);
+  font-size: 0.95rem;
+}
+.md-is-adjust {
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.1));
+}
+.md-is-adjust.off {
+  opacity: 0.45;
+}
+.md-is-heading {
+  margin-bottom: 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-gray-60, #777);
+}
+.md-is-heading span {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.md-is-field {
+  display: grid;
+  grid-template-columns: 4.2rem 1fr auto;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 1.9rem;
+  font-size: 0.78rem;
+}
+.md-is-field > :nth-child(2):last-child {
+  grid-column: 2 / 4;
+}
+.md-is-label {
+  color: var(--color-gray-60, #666);
+  white-space: nowrap;
+}
+.md-is-value {
+  min-width: 2.6rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary, #6965db);
+  font-size: 0.72rem;
+}
+/* Plain slider: Excalidraw's input styling would draw a box around it. */
+.excalidraw input.md-is-range,
+input.md-is-range {
+  width: 100%;
+  height: 1rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  accent-color: var(--color-primary, #6965db);
+}
+.md-is-icons {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.2rem;
+}
+.md-is-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.75rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--button-bg, var(--color-surface-mid, #f1f0ff));
+  color: var(--text-primary-color, inherit);
+  cursor: pointer;
+}
+.md-is-icon.on,
+.md-is-chip.on {
+  border-color: var(--color-primary, #6965db);
+  background: var(--color-surface-primary-container, #e0dfff);
+  color: var(--color-primary-darker, #5b57d1);
+}
+.md-is-chips {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.2rem;
+}
+.md-is-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  height: 1.75rem;
+  padding: 0 0.2rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--button-bg, var(--color-surface-mid, #f1f0ff));
+  color: var(--text-primary-color, inherit);
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.md-is-dot {
+  flex: none;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  border: 1.5px solid #1e1e1e;
+}
+.md-is-dot.shade {
+  border-color: #b35900;
+  background: #f08c00;
+}
+.md-is-dot.ink {
+  border-color: #1e1e1e;
+  background: #f08c00;
+}
+.md-is-dot.same {
+  border-color: #f08c00;
+  background: #f08c00;
+}
+.md-is-dot.none {
+  border-color: transparent;
+  background: #f08c00;
+}
+.md-is-seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+}
+.md-is-seg button {
+  white-space: nowrap;
+}
+.md-is-icon:disabled,
+.md-is-chip:disabled,
+.md-is-seg button:disabled {
+  cursor: default;
+}
+.md-is-insert {
+  margin-bottom: 0.45rem;
+}
+.md-is-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 0.65rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.1));
 }
 
 /* ---------- Shadow section (web/src/ShadowSection.tsx) ---------- */
