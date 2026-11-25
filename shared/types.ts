@@ -150,6 +150,8 @@ export type MenuCommand =
   | { type: "toggleGrid" }
   | { type: "gridSettings" }
   | { type: "snapToGrid" }
+  | { type: "tidyLayout" }
+  | { type: "relayout" }
   | { type: "versionHistory" }
   | { type: "present" };
 

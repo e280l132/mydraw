@@ -853,6 +853,13 @@ const call = async (name, args = {}) => {
   return JSON.parse(r.content[0].text);
 };
 assert.ok((await client.listTools()).tools.length >= 30, "MCP tools listed");
+{
+  const prompts = (await client.listPrompts()).prompts.map((p) => p.name);
+  assert.ok(prompts.includes("tidy_diagram"), "MCP tidy_diagram prompt listed");
+  const got = await client.getPrompt({ name: "tidy_diagram", arguments: { keep: "yes", focus: "the request path" } });
+  const text = got.messages[0].content.text;
+  assert.ok(/screenshot/.test(text) && /lint_diagram/.test(text) && /do NOT run auto_layout/.test(text) && /request path/.test(text), "tidy_diagram recipe honours its arguments");
+}
 
 const drawing = await call("new_drawing", { title: "MCP test" });
 assert.equal(drawing.active, true);
@@ -1262,6 +1269,31 @@ const g = await call("group", { ids: ["web", "db"] });
 scene = await call("get_scene");
 assert.ok(el("web").groupIds.includes(g.groupId) && el("db").groupIds.includes(g.groupId));
 await call("ungroup", { groupId: g.groupId });
+
+// align / distribute move whole units (an icon node with its caption) and undo as one step.
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "al1", x: 900, y: 300, width: 80, height: 40, label: "a1" },
+    { type: "rectangle", id: "al2", x: 1010, y: 340, width: 60, height: 60, label: "a2" },
+    { type: "rectangle", id: "al3", x: 1300, y: 320, width: 100, height: 30 },
+  ],
+});
+await call("align", { ids: ["al1", "al2", "al3", placed.node], edge: "top" });
+scene = await call("get_scene");
+assert.ok([el("al1"), el("al2"), el("al3"), el(placed.node)].every((e) => Math.abs(e.y - el("al1").y) < 0.5), "align top lines up every unit");
+await call("distribute", { ids: ["al1", "al2", "al3"], axis: "horizontal" });
+scene = await call("get_scene");
+const gapA = el("al2").x - (el("al1").x + el("al1").width);
+const gapB = el("al3").x - (el("al2").x + el("al2").width);
+assert.ok(Math.abs(gapA - gapB) < 0.5 && el("al1").x === 900 && el("al3").x === 1300, "distribute evens the gaps, ends stay");
+await call("align", { ids: ["al2"], edge: "left", to: "al1" });
+scene = await call("get_scene");
+assert.equal(el("al2").x, el("al1").x, "align to a reference element");
+await call("undo");
+scene = await call("get_scene");
+assert.notEqual(el("al2").x, el("al1").x, "align undoes as one step");
+await call("delete_elements", { ids: ["al1", "al2", "al3"] });
+
 await call("select", { ids: ["web"] });
 assert.deepEqual((await call("get_selection")).map((e) => e.id), ["web"]);
 await call("zoom_to_fit");
@@ -3010,6 +3042,73 @@ await arrangeRun("distribute horizontally");
 await waitFor(async () => JSON.stringify((await arrangeBoxes()).map((b) => b[0])) === "[300,640,980]", "equal gaps after distribute");
 await arrangeRun("align top");
 await waitFor(async () => (await arrangeBoxes()).every((b) => b[1] === 317), "aligned to the top edge");
+
+step("Re-layout: palette command lays out the selection with its arrows, follows the drawing's flow, one undo step");
+await call("new_drawing", { title: "Tidy" });
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "td1", x: 300, y: 600, width: 120, height: 60, label: "a" },
+    { type: "rectangle", id: "td2", x: 900, y: 320, width: 120, height: 60, label: "b" },
+    { type: "rectangle", id: "td3", x: 360, y: 900, width: 120, height: 60, label: "c" },
+    { type: "rectangle", id: "tdOut", x: 1400, y: 1400, width: 80, height: 40 },
+    { type: "arrow", id: "tdA", from: "td1", to: "td2" },
+    { type: "arrow", id: "tdB", from: "td2", to: "td3" },
+  ],
+});
+const tidyBox = (id) => t((x, i) => { const e = x.api().getSceneElements().find((el) => el.id === i); return [Math.round(e.x), Math.round(e.y)]; }, id);
+const tidyBefore = { td2: await tidyBox("td2"), out: await tidyBox("tdOut") };
+await call("select", { ids: ["td1", "td2", "td3"] });
+await arrangeRun("re-layout");
+await waitFor(async () => JSON.stringify(await tidyBox("td2")) !== JSON.stringify(tidyBefore.td2), "re-layout moved the selection");
+assert.deepEqual(await tidyBox("tdOut"), tidyBefore.out, "re-layout leaves unselected shapes alone");
+const tidyScene = await call("get_scene");
+const tdArrow = tidyScene.elements.find((e) => e.id === "tdA");
+assert.ok(tdArrow.from === "td1" && tdArrow.to === "td2", "arrows stay bound after re-layout");
+await call("undo");
+assert.deepEqual(await tidyBox("td2"), tidyBefore.td2, "re-layout undoes as one step");
+// A clean layout is left alone when asked (the Re-layout command always asks).
+await call("auto_layout", { ids: ["td1", "td2", "td3"] });
+const relayoutAgain = await call("auto_layout", { ids: ["td1", "td2", "td3"], onlyIfBetter: true });
+assert.equal(relayoutAgain.unchanged, true, "onlyIfBetter keeps a layout that is already clean");
+// A top-down drawing is laid out top-down.
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "vd1", x: 300, y: 1700, width: 100, height: 50 },
+    { type: "rectangle", id: "vd2", x: 330, y: 1900, width: 100, height: 50 },
+    { type: "rectangle", id: "vd3", x: 280, y: 2150, width: 100, height: 50 },
+    { type: "arrow", id: "vdA", from: "vd1", to: "vd2" },
+    { type: "arrow", id: "vdB", from: "vd2", to: "vd3" },
+  ],
+});
+const vd = await call("auto_layout", { ids: ["vd1", "vd2", "vd3"] });
+assert.equal(vd.direction, "down", "re-layout reads a top-down flow");
+
+step("Tidy: keeps the arrangement, lines up a ragged row, fixes an overlap, one undo step; MCP tidy");
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "tg1", x: 1700, y: 400, width: 120, height: 60, label: "r1" },
+    { type: "rectangle", id: "tg2", x: 1900, y: 409, width: 120, height: 60, label: "r2" },
+    { type: "rectangle", id: "tg3", x: 2100, y: 394, width: 120, height: 60, label: "r3" },
+    { type: "rectangle", id: "tg4", x: 2150, y: 420, width: 120, height: 60, label: "on top" },
+    { type: "arrow", id: "tgA", from: "tg1", to: "tg2" },
+  ],
+});
+const tg1Before = await tidyBox("tg1");
+await call("select", { ids: ["tg1", "tg2", "tg3", "tg4"] });
+await arrangeRun("tidy keep");
+await waitFor(async () => (await tidyBox("tg2"))[1] !== 409, "tidy lined up the row");
+const tgScene = await call("get_scene");
+const tgEls = ["tg1", "tg2", "tg3", "tg4"].map((id) => tgScene.elements.find((e) => e.id === id));
+const tgOverlap = (a, b) => Math.min(a.x + a.width, b.x + b.width) > Math.max(a.x, b.x) && Math.min(a.y + a.height, b.y + b.height) > Math.max(a.y, b.y);
+assert.ok(!tgOverlap(tgEls[2], tgEls[3]), "tidy pushed the overlapping shape away");
+assert.ok(Math.abs(tgEls[0].x - tg1Before[0]) < 30, "tidy keeps the arrangement (small moves)");
+assert.equal(tgScene.elements.find((e) => e.id === "tgA").from, "tg1", "arrows stay bound after tidy");
+await call("undo");
+assert.equal((await tidyBox("tg2"))[1], 409, "tidy undoes as one step");
+const viaMcp = await call("tidy", { ids: ["tg1", "tg2", "tg3", "tg4"] });
+assert.ok(viaMcp.overlaps >= 1 && viaMcp.rows >= 1, `MCP tidy reports what it did (${JSON.stringify(viaMcp)})`);
+const second = await call("tidy", { ids: ["tg1", "tg2", "tg3", "tg4"] });
+assert.equal(second.unchanged, true, "tidying a tidy drawing changes nothing");
 
 step("Dark mode: icons keep their exact colours on screen (in-canvas theme), shapes look as before, fallback = Excalidraw's own filter");
 // If this step fails after an Excalidraw upgrade, read EXCALIDRAW-UPGRADE.md.

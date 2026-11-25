@@ -37,7 +37,8 @@ import { isRecolorableIcon, isSketchableIcon, recoloredIcon, restyledIcon } from
 import { type IconSketch, normalizeIconSketch } from "../../../shared/iconSketch";
 import { colorOfElement } from "../library/pickColor";
 import { cloneForInsert, loadStencil } from "../library/stencilContent";
-import { autoLayout, buildDiagram, buildLegend, loadIconImage, makeIconNode, makeZone, zoneTitleSize } from "./diagram";
+import { ALIGN_EDGES, alignMoves, distributeMoves, isAlignEdge, type UnitMove } from "../../../shared/arrange";
+import { autoLayout, tidyDrawing, buildDiagram, buildLegend, loadIconImage, makeIconNode, makeZone, zoneTitleSize } from "./diagram";
 import { trueColorFile } from "../library/trueColor";
 import { prepareSerialize, serializeScene } from "../scene";
 import {
@@ -653,6 +654,49 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
         return { moved: movable.map((e) => e.id), dx, dy };
       }
 
+      case "align":
+      case "distribute": {
+        const { api } = await target(p);
+        const scene = api.getSceneElements();
+        const idList = strArray(p.ids, "ids");
+        const toId = method === "align" && typeof p.to === "string" ? p.to : null;
+        // One unit per id (its group, label, zone contents); ids of the same unit count once.
+        const units = new Map<string, El[]>();
+        const covered = new Set<string>();
+        for (const id of idList) {
+          if (id === toId || covered.has(id)) continue;
+          const els = withGroupsAndLabels([id], scene);
+          for (const e of els) covered.add(e.id);
+          units.set(id, els);
+        }
+        const boxes = [...units].map(([key, els]) => ({ key, box: boundsOf(els) }));
+        let moves: UnitMove[];
+        if (method === "align") {
+          if (!isAlignEdge(p.edge)) throw new Error(`edge must be one of ${ALIGN_EDGES.join(", ")}`);
+          const ref = toId ? boundsOf(withGroupsAndLabels([toId], scene)) : undefined;
+          if (!ref && boxes.length < 2) throw new Error("align needs at least two elements (or `to`)");
+          moves = alignMoves(boxes, p.edge, ref);
+        } else {
+          if (p.axis !== "horizontal" && p.axis !== "vertical") throw new Error("axis must be horizontal or vertical");
+          const gap = typeof p.gap === "number" ? p.gap : undefined;
+          if (boxes.length < (gap === undefined ? 3 : 2)) throw new Error(`distribute needs at least ${gap === undefined ? "three elements (or a gap)" : "two elements"}`);
+          moves = distributeMoves(boxes, p.axis, gap);
+        }
+        const updates = moves
+          .filter((m) => Math.abs(m.dx) > 0.01 || Math.abs(m.dy) > 0.01)
+          .flatMap((m) =>
+            units
+              .get(m.key)!
+              .filter((e) => !(e.type === "text" && (e as El & { containerId?: string }).containerId))
+              .map((e) => ({ id: e.id, dx: m.dx, dy: m.dy })),
+          );
+        if (updates.length) {
+          const r = applyUpdates(updates, scene, api.getAppState());
+          commit(api, r.changed, r.added);
+        }
+        return { moved: moves.filter((m) => m.dx || m.dy).map((m) => ({ id: m.key, dx: Math.round(m.dx * 10) / 10, dy: Math.round(m.dy * 10) / 10 })) };
+      }
+
       case "delete_elements": {
         const { api } = await target(p);
         const out = deleteElements(strArray(p.ids, "ids"), api.getSceneElements());
@@ -1030,8 +1074,17 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
           algorithm: p.algorithm as never,
           spacing: typeof p.spacing === "number" ? p.spacing : undefined,
           routing: p.routing === undefined ? undefined : parseRouting(p.routing, "elbow"),
+          onlyIfBetter: p.onlyIfBetter === true,
+          makeRoom: p.makeRoom !== false,
         });
-        commit(api, r.changed, r.added);
+        if (r.changed.length || r.added.length) commit(api, r.changed, r.added);
+        return r.result;
+      }
+
+      case "tidy": {
+        const { api } = await target(p);
+        const r = tidyDrawing(api.getSceneElements(), api.getAppState(), { ids: Array.isArray(p.ids) ? strArray(p.ids, "ids") : undefined });
+        if (r.changed.length || r.added.length) commit(api, r.changed, r.added);
         return r.result;
       }
 

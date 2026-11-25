@@ -1,15 +1,15 @@
 # mydraw: local Excalidraw desktop app, stencils, full Claude Code control
 
 ## Context
-Brian wants a standalone draw.io-style desktop app built on the latest Excalidraw, with network/cloud stencils (AWS, GCP, Azure, network gear), full color choice, broad export formats (JPG and more), and full control by Claude Code over MCP so Claude can build diagrams on request. Plus features that make it easy to use and powerful. Stencil library must be one persistent global library that Brian builds over time and that every drawing can use. Plan lives at `~/Projects/mydraw/plan.md` (committed `a5eef1b`); this revision adds export formats and power/usability features.
+Brian wants a standalone draw.io-style desktop app built on the latest Excalidraw, with network/cloud stencils (AWS, GCP, Azure, network gear), full color choice, broad export formats (JPG and more), and full control by Claude Code over MCP so Claude can build diagrams on request. Plus features that make it easy to use and powerful. Stencil library must be one persistent global library that Brian builds over time and that every drawing can use. Phases 1–8 are done (see Phases); Phase 9 (package) is next. Feature details live in `CLAUDE.md`, user docs in `README.md`.
 
 ## Decisions
 - **Canvas:** `@excalidraw/excalidraw@0.18.1` (npm `latest`) + `@excalidraw/mermaid-to-excalidraw@3.6.0`. MIT package only; no ExcaliDash code (LGPL).
 - **Shell:** Electron + Vite + React + TypeScript, single npm workspace. Node v26 installed.
 - **Agent control:** stdio MCP server bridging to a local control server in the app (WordCraft pattern).
-- **Stencils:** SVG icon packs in an app-owned catalog, inserted as image elements. draw.io drawings import (Phase 8); draw.io stencil XML is still open (§3).
+- **Stencils:** SVG icon packs in an app-owned catalog, inserted as image elements. draw.io drawings import (Phase 8).
 - **Colors:** custom color panel (Excalidraw's `palette` prop is internal, not public).
-- **Default look:** "Clean" theme (roughness 0, sharp edges, Nunito/Helvetica-style font) for professional network diagrams; "Sketch" theme one click away.
+- **Default look:** "Clean" drawing style (roughness 0, sharp edges, new text in Inter) for professional network diagrams; "Sketch" one click away (tab-bar switch). Generated diagrams have their own `look` (professional / sketch).
 
 ## Architecture
 ```
@@ -17,12 +17,13 @@ Claude Code --MCP stdio--> mcp/ --HTTP 127.0.0.1:<port> + key--> app/ (Electron 
                                                         CLI (mydraw export ...) --^
 ```
 - `web/` renderer: `<Excalidraw>`, `excalidrawAPI`, side panels (stencils, colors, properties, inventory), command palette, command executor (`updateScene` / `addFiles`). Single source of truth for the scene.
-- `app/` main: window + tabs, menus, file dialogs, `.excalidraw` association, autosave, recent files, file watcher, export pipeline (offscreen window for PDF), control server. `{port, key}` in `~/Library/Application Support/mydraw/control.json` (chmod 600). Loopback only, key required, context isolation on, no remote content.
+- `app/` main: window, menus, file dialogs, `.excalidraw` association, autosave, recent files, file watcher, PDF printing (hidden window), version snapshots, fonts store, control server. Tabs live in the renderer. `{port, key}` in `~/Library/Application Support/mydraw/control.json` (chmod 600). Loopback only, key required, context isolation on, no remote content.
 - `mcp/`: `@modelcontextprotocol/sdk` stdio server; reads `control.json`; launches app if not running.
 - `bin/mydraw.mjs` + `app/src/cli.ts`: `mydraw` command (export/convert), reuses the app's export pipeline headless. No `open` subcommand.
 - Stencil library is stored outside the repo in `~/Documents/mydraw/Library/` (see §3). The repo holds only the downloader and index builder.
 - `scripts/`: `fetch-packs.mjs` (icon pack downloader), `build-app.mjs`, `build-mcp.mjs`, `dev.mjs`, `smoke.mjs`. The library index, `.excalidrawlib` import and draw.io import live in the app (`app/src/library.ts`, `web/src/drawioImport.ts`), not in a tools folder.
 - Templates are code, not files: `shared/templates.ts` (3-tier web app, AWS VPC, GCP project, home network, k8s cluster, homelab rack).
+- Excalidraw internals mydraw depends on (renderer patches in `scripts/excalidrawPatch.mjs`, font registry, canvas hook): `EXCALIDRAW-UPGRADE.md`.
 - `CLAUDE.md`: project notes + "how to drive mydraw" + diagram workflows (below).
 
 ## Features
@@ -36,14 +37,14 @@ New/Open/Save/Save As, autosave + crash recovery, recent files, multiple open fi
 | PNG | `exportToBlob` | scale 1–4x, transparent bg, embed scene (re-openable PNG) |
 | JPG | `exportToCanvas` → `toBlob('image/jpeg')` | quality, background color (no transparency) |
 | WebP | canvas `toBlob('image/webp')` | quality, transparent |
-| SVG | `exportToSvg` | embed scene, embed fonts, dark mode |
+| SVG | `exportToSvg` | embed scene, dark mode (fonts always inlined) |
 | PDF | SVG → offscreen BrowserWindow `printToPDF` | vector; fit to page / A4 / Letter / actual size; one page per frame |
 | PPTX | `pptxgenjs`, one slide per frame (image) | 16:9 / 4:3 |
 | draw.io `.drawio` | own mxGraph XML writer (shapes, text, edges, embedded icons) | for draw.io / Confluence users |
 | Mermaid | graph → `flowchart` text (nodes + edges) | for Markdown docs |
 | CSV / Markdown table | inventory of nodes with properties (name, type, IP, hostname, notes) | |
 | HTML | single file viewer (embedded SVG, pan/zoom, clickable links) | |
-| `.excalidraw` / `.excalidrawlib` | native | |
+| `.excalidraw` / `.excalidrawlib` | native (`.excalidrawlib` = one library item, images dropped) | |
 | Clipboard | copy as PNG / SVG / Mermaid | |
 
 Common options: whole canvas / selection / single frame / every frame (batch), padding, scale, dark mode, include background.
@@ -64,58 +65,58 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
   ```
 - **Two kinds of item, one panel:** single icons (SVG/PNG) and saved shape groups (any selection of shapes, icons, labels, arrows, saved as `.stencil.json` — recolorable when made of native shapes).
 - **Building the library:**
-  - Select shapes → **Save selection as stencil…** (name, collection, tags) or ⌥⌘S for a quick save to My Stencils. (Excalidraw's built-in Library panel was removed on 2026-11-22; Stencils is the only library. `.excalidrawlib` is import-only.)
+  - Select shapes → **Save selection as stencil…** (name, collection, tags) or ⌥⌘S for a quick save to My Stencils. (Excalidraw's built-in Library panel was hidden on 2026-11-22; Stencils is the only library. `.excalidrawlib` files import as collections; the Export dialog can also write one.)
   - Drag SVG/PNG files (or a folder) onto the panel → copied into the library.
-  - Import `.excalidrawlib` (libraries.excalidraw.com) or, later, draw.io stencil XML → becomes a collection.
-  - Rename, retag, move between collections, delete, edit a saved group (opens it on its own canvas).
-- **Vendor packs:** first-run script downloads AWS, GCP, Azure, Cisco/network, Kubernetes icons and `@iconify-json/logos` into the library folder and builds `library.json` (not redistributed; licenses in `Library/LICENSES.md`).
+  - Import `.excalidrawlib` (libraries.excalidraw.com) → becomes a collection.
+  - Rename, delete, favorite.
+- **Vendor packs:** the **Icon packs…** dialog (or `scripts/fetch-packs.mjs`) downloads AWS, GCP, Azure, Kubernetes, network (Carbon), logos, Dashboard Icons, MDI/Tabler/Lucide picks, Devicon and Simple Icons into the library folder (not redistributed; the downloader writes `Library/LICENSES.md`). Installed packs can be removed.
 - **Panel:** collections tree, fuzzy search over names + tags, favorites, recently used, drag-to-canvas.
 - **Live:** folder watcher, so files added outside the app (by Brian or by Claude) show up without restart; changes appear in every open tab.
-- **Share/backup:** export a collection as `.zip` or `.excalidrawlib`; import the same.
-- **Insert:** icon → image element (fileId = content hash, `addFiles`) + bound label, grouped; shape group → its elements with fresh ids. Same path for the agent.
+- **Share/backup:** the library is a plain folder (sync or back it up as is).
+- **Insert:** icon → image element (fileId = content hash, `addFiles`) + caption, grouped (the agent makes an icon node: container + image); shape group → its elements with fresh ids. Optional hand-drawn look and caption font.
 
 ### 4. Colors
-- Color panel: HSV/hex/RGB picker (`react-colorful`), eyedropper (`EyeDropper` API), opacity.
-- Palettes: full ramp (~22 hues × 10 shades), AWS/GCP/Azure brand palettes, document palette, saved swatches.
-- Applies to stroke/background/text of selection; sets `currentItem*Color`. Agent uses names (`aws.orange`, `blue-600`) or hex.
+- Colors tab in the style panel: own HSV/hex picker (`ColorPicker`, no library), canvas eyedropper (`web/src/library/pickColor.ts`, reads real icon colors), Excalidraw's own Opacity row.
+- Palettes: Basic (~45 named) and ramp (22 hues × 10 shades); custom colors picked in a drawing are saved in that drawing (up to 12).
+- Targets Stroke / Fill / Icon / Outline of the selection; also sets `currentItem*Color` for new shapes. Agent uses names (`navy`, `blue-600`) or hex.
 
 ### 5. Ease of use
-- **Command palette (Cmd+K):** fuzzy search every action, stencil, color, template, export.
+- **Command palette (⇧⌘P, or ⌘K with nothing selected):** fuzzy search every action, stencil, theme, preset, template, frame, element, export.
 - **Quick connect:** hover or select a shape → 4 "+" handles; click adds a copy (no arrow), Option-click a connected copy, Shift-click stencil search, ⌘-click draws an arrow routed around shapes. Done in Phase 7.
-- **Themes:** Clean / Sketch / Blueprint / Dark; apply to whole diagram in one click (fonts, roughness, stroke widths, colors).
-- **Style presets:** saved styles ("Prod zone", "DMZ", "Critical link"); format painter (Excalidraw copy/paste styles).
-- **Snap, grid, alignment guides:** toggles in toolbar (Excalidraw built-ins); align/distribute buttons.
-- **Zones:** draw a VPC/subnet/VLAN as a frame with title and tint; contents move with it; lock zones so they're not dragged by accident.
-- **Find & replace** text; jump to element by name.
-- **Pages:** frames act as pages, with a page navigator sidebar.
+- **Themes:** 19 built-in (incl. Blueprint, dark ones) + user themes; apply to the whole diagram in one click (fonts, roughness, stroke widths, colors).
+- **Style presets:** ~40 built-in ("Prod zone", "DMZ", "Critical link", shadows, gradients) + user presets; format painter = Excalidraw's copy/paste styles.
+- **Grid and snapping:** mydraw layout grid (⌘', lines/dots, snap) drawn behind shapes; Excalidraw object snapping; align/distribute in the panel.
+- **Zones:** a VPC/subnet/VLAN is a locked tinted rectangle with a title (not a frame); contents move with it.
+- **Find & replace** text (step through, replace one/all); jump to element by text from the palette.
+- **Pages:** frames act as pages, with a page navigator sidebar and previews.
 - **Drill-down links:** link a shape to another drawing or URL (e.g. click "Core switch" → opens rack diagram).
-- **Keyboard shortcuts cheat sheet** (?).
+- **Help:** "mydraw features and shortcuts" dialog, linked with Excalidraw's own help (?).
 
 ### 6. Power features
 - **Properties panel:** per-shape fields (hostname, IP, VLAN, role, owner, notes, URL) stored in `customData`; shown on hover.
 - **Inventory table:** all nodes in an editable grid; sort/filter; edits update the diagram; export CSV.
 - **CSV / YAML import → diagram:** list of hosts/links (or the YAML DSL) → laid-out diagram via `build_diagram`.
 - **Diagram-as-code:** Mermaid or YAML paste box; round-trip to Mermaid export.
-- **Auto layout:** ELK (layered, tree, radial, grid), respects zones; "tidy selection".
+- **Auto layout:** ELK (layered, tree, radial, force, grid), respects zones, picks the cleanest of several variants; **Tidy** keeps the arrangement (line up, even gaps, fix overlaps); **Re-layout** = fresh layout that follows the drawing, applied only if cleaner (Diagram menu, palette; agent `tidy`, `auto_layout {onlyIfBetter}`); judgment via the MCP prompt `tidy_diagram`.
 - **Diagram lint:** flags overlaps, unconnected arrows, unlabeled nodes, missing IPs, off-palette colors; one-click fix where possible.
 - **Auto legend:** legend of stencils/line styles used.
 - **Version snapshots:** timestamped on save; preview + restore.
 - **Presentation mode:** frames as slides, full screen.
-- **Import:** `.drawio` diagrams, Mermaid, CSV, images (paste/drop).
+- **Import:** `.drawio` diagrams, Mermaid, CSV, YAML, images (paste/drop, Excalidraw built-in).
 - **Ask Claude box (Phase 10):** prompt field in app that runs `claude -p` with the mydraw MCP, so Brian can ask for edits without switching to the terminal.
 
 ### 7. MCP tools (full control)
-- **App/files:** `list_drawings`, `new_drawing`, `open_drawing` (also `.drawio`, imported as a new unsaved drawing), `save`, `export` (any format above + options), `screenshot` (PNG back to Claude), `copy_to_clipboard` (PNG/SVG/Mermaid onto the system clipboard), `import_diagram` (csv/yaml/mermaid text or file → diagram; built).
-- **Read:** `get_scene` (compact: id, type, label, geometry, colors, zone, bindings, properties), `get_selection`, `get_element`, `get_inventory` (built: one row per node with ip, hostname, vlan, role, owner, url, notes).
-- **Library:** `search_stencils`, `list_collections`, `save_as_stencil` (selection or element ids → library item), `add_stencil_file` (SVG/PNG path → library), `delete_stencil`.
-- **Colors/styles:** `list_palettes`, `list_themes`, `apply_theme`, `apply_style_preset`.
-- **Build:** `place_stencil` (absolute or `right_of`/`below`/inside zone), `add_elements` (skeletons via `convertToExcalidrawElements`), `connect` (bound arrow, label, style, elbow/curved), `update_elements`, `set_properties`, `delete_elements`, `group`/`ungroup`, `create_zone`, `add_link`.
-- **Generate:** `build_diagram` (nodes, edges, zones, direction → laid-out diagram; the main "draw me X" tool), `mermaid_to_scene`, `apply_template`, `add_legend`.
-- **Layout/quality:** `auto_layout`, `route_around` (built: re-route arrows around shapes), `lint_diagram` (built; `fix: true` = safe fixes in one undo step). `connect {avoid: true}` routes one arrow around shapes. `align` and `distribute` are not built.
+56 tools and 1 prompt (all built; source of truth `mcp/src/index.ts`):
+- **App/files:** `list_drawings`, `new_drawing`, `open_drawing` (also `.drawio`, imported as a new unsaved drawing), `activate_drawing`, `save`, `export` (any format above + options), `screenshot` (PNG back to Claude), `copy_to_clipboard` (PNG/SVG/Mermaid), `import_diagram` (csv/yaml/mermaid text or file).
+- **Read:** `get_scene`, `get_selection`, `get_element`, `get_inventory`, `get_color`.
+- **Library:** `search_stencils`, `list_collections`, `place_stencil` (absolute or relative, color, size, `iconStyle`), `save_as_stencil`, `add_stencil_file`, `delete_stencil`.
+- **Colors/styles/fonts:** `recolor`, `list_palettes`, `list_themes`, `apply_theme`, `apply_style_preset`, `save_style_preset`, `delete_style_preset`, `save_theme`, `delete_theme`, `list_fonts`.
+- **Build/edit:** `add_elements`, `connect` (bound arrow, label, elbow/curved, `avoid`), `update_elements` (incl. `link`, effects, `iconStyle`), `move`, `set_properties` (not undoable), `delete_elements`, `group`/`ungroup`, `create_zone`.
+- **Generate:** `build_diagram`, `mermaid_to_scene`, `list_templates`, `apply_template`, `add_legend`.
+- **Layout/quality:** `tidy` (keep arrangement), `auto_layout` (`onlyIfBetter`), `align` (left/center/right/top/middle/bottom, optional `to` reference), `distribute` (equal gaps or fixed `gap`), `route_around`, `lint_diagram` (`fix: true` = safe fixes in one undo step).
 - **View/history:** `zoom_to_fit`, `select`, `undo`, `redo` (each agent call = one undo step).
-- **Properties:** `set_properties` (built: text sets, null or "" removes; not undoable).
 - **Escape hatch:** `set_scene` / `raw_update` with full element JSON.
-- Register: `claude mcp add mydraw -- node ~/Projects/mydraw/mcp/dist/index.js`; allow `mcp__mydraw__*`.
+- Register: `claude mcp add --scope user mydraw -- node ~/Projects/mydraw/mcp/dist/index.js`; allow `mcp__mydraw__*`.
 
 ### 8. Claude workflows (documented in `CLAUDE.md`, no extra code)
 - Diagram from a Terraform dir / `docker-compose.yml` / k8s manifests.
@@ -126,8 +127,8 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
 ## Phases
 1. ✅ **Core app** (done 2026-11-19): scaffold, Excalidraw in Electron, file ops, autosave, crash recovery, file watcher, tabs, Clean theme default, PNG/SVG/JPG export. `npm run dev`. Smoke test: `npm run smoke`.
 2. ✅ **MCP + control server** (done 2026-11-20): loopback control server (key in chmod-600 `control.json`, browser requests refused), main dispatcher + serial renderer executor (one MCP call = one undo step, merges by id with user edits), stdio MCP server that auto-launches the app. 31 tools: drawings (`list/new/open/activate_drawing`, `save`, `export` png/jpg/svg/excalidraw, `screenshot`), read (`get_scene`, `get_selection`, `get_element`), build (`add_elements` with bound `from`/`to` arrows, `connect`, `update_elements` incl. labels + custom data, `move`, `delete_elements`, `group`, `ungroup`, `select`, `zoom_to_fit`, `undo`, `redo`), stencils (`search_stencils`, `list_collections`, `place_stencil` with relative placement/color/size, `save_as_stencil`, `add_stencil_file`, `delete_stencil`), colors (`recolor`, `get_color`), escape hatches (`set_scene`, `raw_update`). Smoke test drives the app end to end over MCP. Not yet: elbow/curved connectors (Phase 5 with layout), palette color names and themes (Phase 4).
-3. ✅ **Stencil library** (done 2026-11-20, before Phase 2 at Brian's request): library folder + index, pack downloader (AWS, Azure, GCP, Kubernetes, Network via IBM Carbon, Logos), Stencils panel (search, favorites, recent, drag/click insert, rename/trash), save selection as stencil, file/folder drop import, Excalidraw Library panel persisted + shared across tabs, folder watcher. Verified: images persist in saved files; library survives restart. MCP stencil tools move to Phase 2.
-4. ✅ **Colors + styles** (done 2026-11-21, reworked same day): two palettes (Basic ~45 swatches, Color ramp 22 hues x 10 shades) plus an any-color HSV picker; `resolveColor` accepts hex, names (`navy`, `blue-600`) and `transparent`. 19 built-in themes and ~37 built-in style presets in categories; users can add, edit, override and delete their own presets and themes (Manage mode, editors, "from selection"/"from drawing"). They are global: stored in `<userData>/styles.json`, same in every drawing and after restart. Properties-panel section with Colors/Presets/Themes tabs and collapsible groups. MCP: `list_palettes`, `list_themes`, `apply_theme`, `apply_style_preset`, `save_style_preset`, `delete_style_preset`, `save_theme`, `delete_theme`; color names work in `recolor`, `add_elements`, `update_elements`, `place_stencil`, `build_diagram`. Earlier (2026-11-20): SVG icon recolor in the properties panel. Not done at the time: opacity slider (Excalidraw's own panel has it) and swatches saved inside the drawing file (both resolved in the gap round below).
+3. ✅ **Stencil library** (done 2026-11-20, before Phase 2 at Brian's request): library folder + index, pack downloader (AWS, Azure, GCP, Kubernetes, Network via IBM Carbon, Logos; more packs and the Icon packs dialog later), Stencils panel (search, favorites, recent, drag/click insert, rename/trash), save selection as stencil, file/folder drop import, folder watcher. (Excalidraw's own Library panel was later hidden: Stencils is the only library.) Verified: images persist in saved files; library survives restart. MCP stencil tools move to Phase 2.
+4. ✅ **Colors + styles** (done 2026-11-21, reworked same day): two palettes (Basic ~45 swatches, Color ramp 22 hues x 10 shades) plus an any-color HSV picker; `resolveColor` accepts hex, names (`navy`, `blue-600`) and `transparent`. 19 built-in themes and ~37 built-in style presets (~40 after the effects round) in categories; users can add, edit, override and delete their own presets and themes (Manage mode, editors, "from selection"/"from drawing"). They are global: stored in `<userData>/styles.json`, same in every drawing and after restart. Properties-panel section with Colors/Presets/Themes tabs and collapsible groups. MCP: `list_palettes`, `list_themes`, `apply_theme`, `apply_style_preset`, `save_style_preset`, `delete_style_preset`, `save_theme`, `delete_theme`; color names work in `recolor`, `add_elements`, `update_elements`, `place_stencil`, `build_diagram`. Earlier (2026-11-20): SVG icon recolor in the properties panel. Not done at the time: opacity slider (Excalidraw's own panel has it) and swatches saved inside the drawing file (both resolved in the gap round below).
 5. ✅ **Diagram generation** (done 2026-11-20): ELK layout (`elkjs`: layered, tree, radial, force, grid; nested zones as compound nodes), MCP `build_diagram` (nodes as shapes or library icons, edges, nested zones, title, legend; warnings for icons not found), `mermaid_to_scene` (own flowchart parser with subgraphs → zones and style/classDef colors; other Mermaid types via `@excalidraw/mermaid-to-excalidraw`), `list_templates`/`apply_template` (3-tier web, AWS VPC, GCP project, home network, k8s cluster, homelab; missing icon packs fall back to shapes), `create_zone`, `add_legend`, `auto_layout` (re-layout existing shapes/icon nodes/groups/zones). Connectors: elbow (Excalidraw elbow arrows with fixed-point bindings, so they re-route themselves when dragged), curved, straight; `routing` on `connect`, `add_elements` arrows and `update_elements`. Phase 2 example fixes: stencils are now icon nodes (caption is the bound text of a borderless container; arrows bind to the node and stop clear of the caption), and an icon placed across a zone border gets a canvas-colored backing so the border line doesn't cross it. Tests: layout/routing/Mermaid/spec/template unit tests; smoke test builds, edits, lays out and saves generated diagrams over MCP. Follow-up fixes (2026-11-21): zone contents follow a moved zone, `auto_layout` re-places an existing legend, and edges are kept out of zone title strips.
    - **Diagram quality** (done 2026-11-24): `layoutBest` runs up to 6 ELK option sets and keeps the layout with the fewest overlaps, crossings, label collisions and through-node arrows (`shared/diagramQuality.ts`, `shared/layoutBest.ts`); `tidyRoutes` separates parallel arrows and places labels on free stretches (`shared/edgeTidy.ts`); lint rules `edge-overlap`, `label-collision`, `edge-through-node` with safe fixes; `quality` summary returned by `build_diagram`/`auto_layout`. Fixtures pin the result (homelab 1257 → 447, aws 3286 → 958).
    - **Generated diagram looks** (done 2026-11-24): `look: "professional"` (default) or `"sketch"`; arrow weights, heads and kinds; drawn shapes (cylinder, cloud, document, queue, actor, server, hexagon, folder); node emphasis and subtitles; equal node widths per zone and type.
@@ -157,11 +158,13 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
    - **Style panel polish** (done 2026-11-24): pin the style panel (patch of Excalidraw's `showSelectedShapeActions`, `scripts/excalidrawPatch.mjs`), a pin button in its header, picked colors become the defaults for new shapes and stencil labels, bold / italic buttons and ⌘B / ⌘I (italic faces for professional + mono fonts), colors and B / I work while a text is being edited. Details in CLAUDE.md "Pin style panel" and "Bold / italic".
    - **Effects round** (done 2026-11-25): text outlines and shadows (kinds drop, inner, layered, 3D extrude, ground contact; 11 presets), more fills (roughjs Scribble / Zigzag / Dots / Dashes, gradients linear or radial on rectangles, diamonds and ellipses), more stroke styles (short / long dash, dash-dot, dash-dot-dot, dense / sparse dots), "…" buttons on Excalidraw's Fill and Stroke style rows, a panel consistency pass (Shadow as one Excalidraw-style row + popover, after Edges; one "custom value" marker; "New shapes" badge; Presets/Themes toolbars), and floating sub-windows (drag a popover's title bar; it stays open and reopens there). All usable by Claude: add_elements / update_elements / build_diagram nodes, edges and zones / style presets; draw.io keeps dashes and gradients.
    - **Extra fonts** (done 2026-11-23): 21 built-in typefaces (11 fun: hand-drawn, cartoon, whiteboard; 10 professional/mono), each weight its own entry, registered in Excalidraw's own font registry so its picker, canvas and exports use them; Google Fonts catalog downloads (Fontsource) in Preferences → Fonts…; drawings embed the font files their text uses (`mydrawFonts` key), so they render the same anywhere, CLI included. MCP `list_fonts`, font names in agent input, themes and presets. Clean style writes new text in Inter. Details in CLAUDE.md "Fonts".
+   - **Tidy and Re-layout** (done 2026-11-25, reworked same day): two commands. Tidy keeps the arrangement (rows/columns, even gaps, overlaps, zones grow; `shared/tidy.ts`), applied only if no worse. Re-layout follows the drawing (inferred direction, reading order, notes stay with their shape), tries every variant, applies only if clearly cleaner, makes room around a grown selection. MCP `tidy`, `auto_layout {onlyIfBetter, makeRoom}` and prompt `tidy_diagram` (Claude tidies by meaning). In-app "Tidy with Claude" button = Phase 10, reusing `TIDY_RECIPE`.
+   - **MCP `align` / `distribute`** (done 2026-11-25): the last unbuilt planned tools; units (groups, labels, icon nodes, zones) move as one, one undo step (`shared/arrange.ts`, `tests/arrange.test.ts`, smoke step).
    - **Hand-drawn icons** (done 2026-11-25): any icon or stencil drawn by hand in eight looks (pen, marker, pencil, crayon, ink, line art, hatch, wobble) plus original; per-icon style in the style panel (Original / Pen / Pencil row and a window with fill, outline, sketchiness, weight, offset, hatch, texture, double lines, Redraw), insert look in the Stencils panel (follows the drawing style or fixed). Hand-font names under icons (Match / Hand / Plain). Recolor and restyle keep each other; one undo step each. MCP: `iconStyle` on `place_stencil`, `update_elements`, `build_diagram` nodes. Details in CLAUDE.md "Hand-drawn icons" and "Caption fonts".
 9. **Package** (next, not started): `electron-builder` → unsigned macOS `.app`/DMG; `mydraw` CLI that uses the installed `.app`. 
-10. **Ask Claude box** (not started): prompt field in the app that runs `claude -p` with the mydraw MCP server, so edits can be asked for without switching to the terminal. Depends on Phase 9 (the installed `.app` must find the `claude` CLI). Default model Sonnet 5.5, selectable in Preferences. Each request uses Claude usage: needs a running state and cancel.
+10. **Ask Claude box** (not started): prompt field in the app that runs `claude -p` with the mydraw MCP server, so edits can be asked for without switching to the terminal. First use: a **Tidy with Claude** button that runs the `tidy_diagram` recipe (`TIDY_RECIPE`) on the drawing or selection. Depends on Phase 9 (the installed `.app` must find the `claude` CLI). Default model Sonnet 5.5, selectable in Preferences. Each request uses Claude usage: needs a running state and cancel.
 
-Tests: vitest for catalog builder, exporters (format headers/dimensions), drawio/Mermaid writers, `build_diagram` layout, control-server auth; Playwright-Electron smoke test.
+Tests: vitest (`tests/`, 44 files: exporters, draw.io, Mermaid, layout/quality, tidy, align/distribute, routing, lint, styles/effects, fonts, sketch icons, agent input validation) and the Playwright-Electron smoke test (`scripts/smoke.mjs`, drives the app and the MCP server end to end). Control-server auth has no dedicated test.
 
 ## Models per phase
 
@@ -195,11 +198,11 @@ Haiku 5.5 $0.10 / $0.50 · Sonnet 5.5 $2 / $10 · Opus 5.5 $4 / $20 · Fable 5.2
 
 ## Risks
 - Image elements + `files` must persist in saves and every export format (verify phase 3).
-- PDF/PPTX fidelity of hand-drawn fonts; embed fonts in SVG before printing.
+- PDF/PPTX fidelity of hand-drawn fonts: handled (SVG/PDF exports inline whole font files; PPTX is pictures).
 - drawio export is approximate (Excalidraw styles don't map 1:1); keep icons as embedded images.
-- Vendor icon licenses; record in `stencils/LICENSES.md`, don't redistribute packs publicly. (File does not exist yet; packs download at runtime.)
+- Vendor icon licenses: packs download at runtime into the user's library and the downloader writes `Library/LICENSES.md`; never redistribute packs.
 - User + agent editing at once: agent commands applied serially by element id against the latest scene.
-- Check Excalidraw 0.18 setup (CSS import, asset path, ESM) against its docs.
+- Excalidraw upgrades: mydraw patches and relies on internals; follow `EXCALIDRAW-UPGRADE.md`.
 
 ## Verification
 Status checked against the code and the smoke test (`scripts/smoke.mjs`, run 2026-11-25) and `claude mcp list`.
@@ -209,7 +212,7 @@ Status checked against the code and the smoke test (`scripts/smoke.mjs`, run 202
 4. ⚠️ Stencil search, drag, save/reopen: smoke inserts by click and drag and checks images persist in the saved file, using a fake pack and the query "testrouter". Real searches ("ec2", "cloud run") with the real packs not checked.
 4b. ⚠️ Library persistence: "Add to library" / save selection as stencil and survival across restart are in smoke. Not checked: relaunch-then-New-tab, a second tab, reinstall, deleted stencil still rendering in old drawings.
 5. ⚠️ Color panel: custom hex applied and Clean ↔ Sketch switch are in smoke. Swatch surviving restart not checked.
-6. ✅ `claude mcp list` shows `mydraw` connected.
+6. ⚠️ `claude mcp list`: `mydraw` is NOT registered on this machine (checked 2026-11-25). Run the register command in §7, then `npm run build`.
 7. ⚠️ Ask Claude AWS 3-tier build: smoke drives the MCP tools end to end (build_diagram with zones, icons, elbow arrows, legend; export JPG and PDF). A live Claude Code conversation with that prompt not run.
 8. ⚠️ Undo removes Claude's last call as one step: covered (smoke, `undo` after `update_elements`). Hand edits kept while Claude adds shapes: not in smoke.
 9. ✅ CSV hosts → diagram; inventory table edits update labels (smoke Phase 8 steps).

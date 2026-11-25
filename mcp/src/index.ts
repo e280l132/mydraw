@@ -14,7 +14,7 @@ import { z } from "zod";
 import { AGENT_EXPORT_FORMATS, CONTROL_FILE, type ControlInfo, type RpcResponse } from "../../shared/agent";
 import { buildId } from "../../shared/buildId";
 
-const VERSION = "0.5.0";
+const VERSION = "0.8.0";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..");
 const userData = process.env.MYDRAW_USER_DATA || path.join(os.homedir(), "Library", "Application Support", "mydraw");
@@ -190,8 +190,10 @@ const server = new McpServer(
       "For a whole diagram use build_diagram (nodes, edges, zones -> automatic ELK layout, icons, elbow arrows, legend) or mermaid_to_scene / apply_template; then refine with the element tools.",
       "Icons (AWS, Azure, GCP, Kubernetes, network, logos) come from the stencil library: search_stencils then place_stencil (or `icon` on a build_diagram node); connect arrows to the returned node id. Icons can be hand-drawn: iconStyle hand-drawn on place_stencil / update_elements / build_diagram nodes (build_diagram look sketch does it for every icon).",
       "Zones (VPC, subnet, VLAN, ...) are locked tinted boxes; moving a zone moves what is inside it.",
+      "Tidying: `tidy` keeps the arrangement (lines up rows/columns, evens gaps, fixes overlaps); auto_layout re-lays out (onlyIfBetter: true keeps a drawing that is already good); align (edge left|center|right|top|middle|bottom, optional `to`) and distribute (axis, optional gap) for peers. Each id moves with its group, label or zone contents. Judge by meaning too (entry points first, data stores last, peers in a row): the tidy_diagram prompt has the full recipe.",
       "Draw clean diagrams: about 40 arrows at most, one arrow to a zone instead of many to its nodes, labels only on short arrows, one colour per kind of relationship. After build_diagram read `quality` (and `advice`), run lint_diagram (it finds arrows on top of each other or through nodes, labels in the way; fix:true repairs labels and re-routes) and look at a screenshot before telling the user it is done. Save the drawing to a file when it is finished: an unsaved drawing is lost if the app quits.",
       "Styling beyond Excalidraw's own: fillStyle patterns (hachure, cross-hatch, solid, zigzag, zigzag-line, dots, dashed), gradient fills on rectangles/diamonds/ellipses (`gradient`: a preset like \"sky\" or {from, to, kind: linear|radial, angle}), extra dash styles (strokeStyle short-dash, long-dash, dash-dot, dash-dot-dot, fine-dot, sparse-dot), shadow kinds (drop, inner, layered, extrude = 3D, contact = ground; presets soft, drop, lifted, hard, glow, long, inner, elevated, neon, extrude, float) and text outlines. They work in add_elements, update_elements, build_diagram nodes/edges/zones and style presets, and show in every export.",
+      "Fonts: list_fonts, then fontFamily by name (\"Inter Bold\", \"Caveat\") on text, labels, update_elements and style presets. Node data (ip, hostname, vlan, role, owner, url, notes): set_properties / build_diagram `data`; review with get_inventory.",
       "Every tool takes an optional `drawing` (tab id, file path or title); default is the active drawing.",
     ].join("\n"),
   },
@@ -328,7 +330,7 @@ tool(
 // reading
 tool(
   "get_scene",
-  "Describe a drawing's elements compactly: id, type, geometry, label/text, colors, arrow from/to ids, groups, frame, custom data. Labels inside shapes are folded into their shape. `full` returns raw Excalidraw JSON.",
+  "Describe a drawing's elements compactly: id, type, geometry, label/text, colors, arrow from/to ids, routing, groups, frame, zone, custom data. Labels inside shapes are folded into their shape. Generated parts show as one thing: type icon-node (icon: {image, stencil, color, style}), shape-node (shape, iconStyle), zone (label = title). Effects when set: shadow / labelShadow, gradient, textOutline / labelOutline, strokeStyle by dash name, kind, subtitle (preset names when they match one). `full` returns raw Excalidraw JSON.",
   { drawing, ids: ids.optional(), type: z.string().optional().describe("Only elements of this type"), full: z.boolean().optional() },
   call("get_scene"),
   { readOnlyHint: true },
@@ -410,6 +412,28 @@ tool(
   "Move elements together with their groups and labels: by dx/dy, or so their top-left corner is at x/y. Bound arrows follow.",
   { drawing, ids, dx: z.number().optional(), dy: z.number().optional(), x: z.number().optional(), y: z.number().optional() },
   call("move"),
+);
+tool(
+  "align",
+  "Line elements up (one undo step). Each id moves as a unit with its group, label, icon caption or zone contents; bound arrows follow. edge: left | center | right (horizontal line-up) or top | middle | bottom (vertical). Aligns on the elements' common box, or on the element `to` (which stays put). Returns how far each moved.",
+  {
+    drawing,
+    ids,
+    edge: z.enum(["left", "center", "right", "top", "middle", "bottom"]),
+    to: z.string().optional().describe("Id of an element to align to; it does not move"),
+  },
+  call("align"),
+);
+tool(
+  "distribute",
+  "Space elements evenly in their current order (one undo step; units and arrows as in align). axis horizontal (left to right) or vertical. Without gap: the first and last stay, the gaps between neighbours become equal (3+ elements). With gap: the first stays and each next one starts `gap` px after the previous one ends (2+ elements).",
+  {
+    drawing,
+    ids,
+    axis: z.enum(["horizontal", "vertical"]),
+    gap: z.number().optional().describe("Fixed space in px between neighbours"),
+  },
+  call("distribute"),
 );
 tool(
   "delete_elements",
@@ -588,9 +612,21 @@ tool(
 );
 tool(
   "auto_layout",
-  "Re-arrange existing shapes, icon nodes, groups and zones with ELK, using their arrows as edges (keeps the top-left corner). Like build_diagram it picks the cleanest of several layouts and returns `quality` (score, arrows on top of each other or through nodes, colliding labels, advice). Optional ids limit it to part of the drawing; routing switches all affected arrows.",
-  { drawing, ids: ids.optional(), ...layoutOpts },
+  "Re-arrange existing shapes, icon nodes, groups and zones with ELK, using their arrows as edges (keeps the top-left corner). Follows the drawing: flow direction read from the arrows when clear, nodes kept in their reading order, notes next to a shape travel with it. Like build_diagram it picks the cleanest of several layouts and returns `quality` (score, arrows on top of each other or through nodes, colliding labels, advice). Optional ids limit it to part of the drawing; routing switches all affected arrows.",
+  {
+    drawing,
+    ids: ids.optional(),
+    ...layoutOpts,
+    onlyIfBetter: z.boolean().optional().describe("Leave the drawing as it is unless the new layout scores clearly better than the current one (result has unchanged: true, scoreBefore)"),
+    makeRoom: z.boolean().optional().describe("With ids: push the shapes around a selection that grew out of its way (default true)"),
+  },
   call("auto_layout"),
+);
+tool(
+  "tidy",
+  "Tidy a drawing WITHOUT re-laying it out (one undo step): keeps the arrangement, lines up rows and columns that nearly line up, evens nearly even gaps, pushes overlapping nodes apart, grows zones to fit, re-routes the arrows of moved shapes. Applied only if it measures no worse (overlap fixes always apply). Returns counts (rows, columns, evened, overlaps), scoreBefore/score, or unchanged: true. Use it after hand edits or small agent edits; use auto_layout for a full re-layout.",
+  { drawing, ids: ids.optional().describe("Only these (with their groups, labels, zone contents); default the whole drawing") },
+  call("tidy"),
 );
 
 // stencils
@@ -763,6 +799,46 @@ tool(
   "Patch elements with raw Excalidraw JSON by id (new ids are added as full elements). For fields update_elements doesn't cover.",
   { drawing, elements: z.array(loose), files: z.record(z.string(), loose).optional() },
   call("raw_update"),
+);
+
+// ---------- prompts ----------
+// Recipes Claude Code shows as /mcp__mydraw__<name>. TIDY_RECIPE is exported so a future in-app
+// "Tidy with Claude" (Phase 10) can run the same steps through `claude -p`.
+
+export const TIDY_RECIPE = (target: string, focus: string, keep: boolean) =>
+  [
+    `Tidy the mydraw drawing ${target} so it reads clearly${focus}. Work with the mydraw MCP tools.`,
+    "",
+    "1. Look first: list_drawings, then get_scene (ids, zones, arrows, kinds, properties) and screenshot. Say in one or two sentences what the diagram shows and what makes it hard to read.",
+    "2. Understand the roles: entry points (users, internet, DNS, load balancers), the main path, services, data stores (databases, queues, storage), management/monitoring, external systems. Note which nodes are peers (web-1, web-2...) and which zones hold what.",
+    keep
+      ? "3. Keep the user's arrangement: do NOT run auto_layout on the whole drawing. Start with `tidy` (small moves only), then fix specific problems by hand."
+      : "3. Decide the flow: entry points at the start (top or left), data stores at the end, management off to the side. If the arrangement is far from that or messy, run auto_layout (with onlyIfBetter: true first; with a direction if the flow is clear); otherwise start with `tidy`.",
+    "4. Refine by meaning, which the automatic layout can't know: peers in a row with align + distribute (equal gaps), related nodes next to each other, a node into the zone it belongs to (update_elements or move, then tidy), labels only on short arrows, one arrow to a zone instead of many to its nodes, arrows `routing: \"elbow\"` or `route_around` where they cut through shapes.",
+    "5. Check: lint_diagram (fix: true for the safe fixes), then screenshot again. Repeat 4-5 at most twice; stop when lint has no warnings and the screenshot reads cleanly.",
+    "6. Never delete nodes, rename labels, or change colours or properties unless the user asked; only move, align, resize zones and re-route. Each tool call is one undo step, so the user can step back.",
+    "7. Finish with zoom_to_fit and a short report: what you changed and why, the lint result, and anything only the user can decide (e.g. a diagram with too many arrows to split).",
+  ].join("\n");
+
+server.registerPrompt(
+  "tidy_diagram",
+  {
+    title: "Tidy a diagram with judgment",
+    description: "Claude reads the drawing (scene + screenshot), works out roles and flow, then tidies it with tidy / auto_layout / align / distribute / route_around and checks with lint and a screenshot.",
+    argsSchema: {
+      drawing: z.string().optional().describe("Tab id, file path or title (default: the active drawing)"),
+      focus: z.string().optional().describe("What matters most, e.g. 'the request path' or 'keep the zones where they are'"),
+      keep: z.enum(["yes", "no"]).optional().describe("yes = keep the current arrangement (small moves only)"),
+    },
+  },
+  ({ drawing: d, focus, keep }) => ({
+    messages: [
+      {
+        role: "user" as const,
+        content: { type: "text" as const, text: TIDY_RECIPE(d ? `"${d}"` : "(the active one)", focus ? `, with the focus on: ${focus}` : "", keep === "yes") },
+      },
+    ],
+  }),
 );
 
 await server.connect(new StdioServerTransport());

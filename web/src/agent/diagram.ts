@@ -10,7 +10,10 @@ import type { AppState, BinaryFileData, BinaryFiles, DataURL } from "@excalidraw
 import { zoneColors, zoneDepths, type DiagramNode, type DiagramSpec } from "../../../shared/diagram";
 import type { Box, Point } from "../../../shared/geometry";
 import { translateLayout, type LayoutAlgorithm, type LayoutDirection, type LayoutResult } from "../../../shared/layout";
-import { layoutBest, qualitySummary, translateRoutes } from "../../../shared/layoutBest";
+import { layoutBest, qualitySummary, translateRoutes, VARIANTS } from "../../../shared/layoutBest";
+import { measureQuality } from "../../../shared/diagramQuality";
+import { qualityInputOf } from "../../../shared/lintQuality";
+import { byReadingOrder, inferDirection, nodeOverlaps, OVERLAP_WEIGHT, overlapArea, tidyLayout } from "../../../shared/tidy";
 import { labelOffsetLimit } from "../../../shared/edgeTidy";
 import { distToPolyline } from "../../../shared/labelGuard";
 import type { LibraryItem } from "../../../shared/library";
@@ -867,17 +870,25 @@ interface Unit {
  * arrows between them as edges. The result keeps the current top-left corner. Returns the changed
  * elements (one commit) and a summary.
  */
-export async function autoLayout(
-  scene: readonly El[],
-  st: AppState,
-  p: { ids?: string[]; direction?: LayoutDirection; algorithm?: LayoutAlgorithm; spacing?: number; routing?: Routing },
-): Promise<{ changed: El[]; added: El[]; result: Loose }> {
+/** What a layout or tidy works on: units (nodes and groups), zones, the arrows between units, and
+ *  free text (notes) that stays with the unit it sits next to. */
+interface Collected {
+  live: El[];
+  map: ElMap;
+  units: Unit[];
+  zones: El[];
+  zoneIds: Set<string>;
+  owner: Map<string, string>;
+  edges: { id: string; from: string; to: string; arrow: El }[];
+}
+
+function collectUnits(scene: readonly El[], ids: string[] | undefined): Collected {
   const live = scene.filter((e) => !e.isDeleted);
   const map: ElMap = new Map(live.map((e) => [e.id, e]));
   let scope = live;
-  if (p.ids?.length) {
+  if (ids?.length) {
     const want = new Set<string>();
-    for (const id of p.ids) {
+    for (const id of ids) {
       const el = map.get(id);
       if (!el) throw new Error(`no element with id "${id}"`);
       want.add(id);
@@ -909,10 +920,12 @@ export async function autoLayout(
     !!el.customData?.mydrawLegend ||
     (el.type === "text" && !!(el as El & Loose).containerId);
   const byGroup = new Map<string, El[]>();
+  const loose: El[] = [];
   for (const el of scope) {
     if (skip(el)) continue;
     const g = el.groupIds.at(-1);
     if (g) byGroup.set(g, [...(byGroup.get(g) ?? []), el]);
+    else if (el.type === "text") loose.push(el);
     else {
       units.push({ id: el.id, main: el, members: [el], box: boxOf(el), zone: zoneIn(el, zoneIds) });
       owner.set(el.id, el.id);
@@ -929,11 +942,33 @@ export async function autoLayout(
     units.push({ id, main, members: all, box, zone });
     for (const m of all) owner.set(m.id, id);
   }
-  if (units.length < 2 && !zones.length) throw new Error("nothing to lay out: need at least two shapes, icons or groups");
+  // Free text: a note close to a unit travels with it (members only, the unit's box is unchanged);
+  // text far from everything is a unit of its own.
+  for (const t of loose) {
+    const tb = boxOf(t);
+    let best: Unit | undefined;
+    let bestD = Infinity;
+    for (const u of units) {
+      const gx = Math.max(0, u.box.x - (tb.x + tb.width), tb.x - (u.box.x + u.box.width));
+      const gy = Math.max(0, u.box.y - (tb.y + tb.height), tb.y - (u.box.y + u.box.height));
+      const d = Math.hypot(gx, gy);
+      if (d < bestD) {
+        bestD = d;
+        best = u;
+      }
+    }
+    if (best && bestD <= NOTE_DISTANCE && best.zone === zoneIn(t, zoneIds)) {
+      best.members.push(t);
+      owner.set(t.id, best.id);
+    } else {
+      units.push({ id: t.id, main: t, members: [t], box: tb, zone: zoneIn(t, zoneIds) });
+      owner.set(t.id, t.id);
+    }
+  }
 
   // Edges: arrows between different units.
   const arrows = live.filter((e) => e.type === "arrow" || e.type === "line");
-  const edges: { id: string; from: string; to: string; arrow: El }[] = [];
+  const edges: Collected["edges"] = [];
   for (const a of arrows) {
     const e = a as El & { startBinding: { elementId: string } | null; endBinding: { elementId: string } | null };
     const from = e.startBinding && owner.get(e.startBinding.elementId);
@@ -941,14 +976,67 @@ export async function autoLayout(
     if (!from || !to || from === to) continue;
     edges.push({ id: a.id, from, to, arrow: a });
   }
+  return { live, map, units, zones, zoneIds, owner, edges };
+}
 
+/** A free text this close to a unit (px) is its note and moves with it. */
+const NOTE_DISTANCE = 30;
+
+/** Score of the drawing as it is now, on the same scale as a layout's (plus overlapping nodes). */
+function currentScore(c: Collected): number {
+  const all = [...c.units.flatMap((u) => u.members), ...c.zones];
+  const ids = new Set(all.map((e) => e.id));
+  for (const e of c.edges) {
+    ids.add(e.id);
+    const label = boundTextOf(e.arrow, c.map);
+    if (label) ids.add(label.id);
+  }
+  const input = qualityInputOf(c.live.filter((e) => ids.has(e.id) || (e.type === "text" && !!e.customData?.mydrawZoneTitle)) as never);
+  return measureQuality(input).score + nodeOverlaps(c.units.map((u) => u.box)) * OVERLAP_WEIGHT;
+}
+
+/** Push units that are not part of a change out of the way of boxes that grew there (one pass). */
+function makeRoom(c: Collected, scene: readonly El[], scopeIds: Set<string>, before: Box, after: Box): Loose[] {
+  if (after.width <= before.width + 1 && after.height <= before.height + 1) return [];
+  const others = collectUnits(scene, undefined).units.filter((u) => !u.members.some((m) => scopeIds.has(m.id)) && !u.zone);
+  const updates: Loose[] = [];
+  const growX = after.x + after.width - (before.x + before.width);
+  const growY = after.y + after.height - (before.y + before.height);
+  for (const u of others) {
+    if (!overlapArea(u.box, after, PLACE_GAP / 3)) continue;
+    // Right of the old area: shift right; below it: shift down; else whichever the growth allows.
+    const right = u.box.x >= before.x + before.width - 1;
+    const below = u.box.y >= before.y + before.height - 1;
+    const dx = right && growX > 0 ? growX : 0;
+    const dy = !dx && (below || growY > 0) ? Math.max(growY, after.y + after.height + PLACE_GAP / 3 - u.box.y) : 0;
+    if (!dx && !dy) continue;
+    for (const m of u.members) if (!(m.type === "text" && (m as El & Loose).containerId)) updates.push({ id: m.id, dx, dy });
+  }
+  void c;
+  return updates;
+}
+
+/** Excalidraw's own selection ids, widened to whole units by collectUnits. */
+export async function autoLayout(
+  scene: readonly El[],
+  st: AppState,
+  p: { ids?: string[]; direction?: LayoutDirection; algorithm?: LayoutAlgorithm; spacing?: number; routing?: Routing; onlyIfBetter?: boolean; makeRoom?: boolean },
+): Promise<{ changed: El[]; added: El[]; result: Loose }> {
+  const c = collectUnits(scene, p.ids);
+  const { live, map, zones, zoneIds, owner, edges } = c;
+  if (c.units.length < 2 && !zones.length) throw new Error("nothing to lay out: need at least two shapes, icons or groups");
+  // The drawing's own direction and order: ELK keeps the input order, so the result looks like it.
+  const unitBoxes = new Map(c.units.map((u) => [u.id, u.box]));
+  const inferred = p.direction ?? inferDirection(unitBoxes, edges);
+  const units = byReadingOrder(c.units, inferred ?? "right");
   const font = st.currentItemFontFamily as number;
   const startBox = boundsOf([...units.flatMap((u) => u.members), ...zones]);
   const zoneParent = (z: El) => {
     const pz = zoneOf(z);
     return pz && zoneIds.has(pz) ? pz : undefined;
   };
-  const best = await layoutBest({
+  const best = await layoutBest(
+    {
       nodes: units.map((u) => ({ id: u.id, width: u.box.width, height: u.box.height, zone: u.zone })),
       zones: zones.map((z) => {
         const title = zoneTitleOf(z, map) as (El & { text: string }) | undefined;
@@ -960,10 +1048,19 @@ export async function autoLayout(
         const label = boundTextOf(e.arrow, map);
         return { id: e.id, from: e.from, to: e.to, label: label ? { width: label.width + 8, height: label.height + 4 } : undefined };
       }),
-      direction: p.direction,
+      // Only a direction the drawing clearly has; otherwise layoutBest also tries the other one.
+      direction: inferred,
       algorithm: p.algorithm,
       spacing: p.spacing,
-  });
+    },
+    // A re-layout of existing work is worth a bit more search than a fresh build: all variants.
+    { maxVariants: VARIANTS.length },
+  );
+  // Never replace a drawing with a layout that measures worse (the user asked for tidier, not different).
+  const before = p.onlyIfBetter ? currentScore(c) : undefined;
+  if (before !== undefined && best.quality.score >= before - Math.max(5, before * 0.05)) {
+    return { changed: [], added: [], result: { nodes: units.length, zones: zones.length, edges: edges.length, unchanged: true, scoreBefore: before, scoreLayout: best.quality.score, quality: qualitySummary(best) } };
+  }
   const layout = translateLayout(best.layout, { x: startBox.x, y: startBox.y });
   const tidied = new Map(translateRoutes(best.routes, layout.bounds.x - best.layout.bounds.x, layout.bounds.y - best.layout.bounds.y).map((r) => [r.id, r]));
 
@@ -981,6 +1078,11 @@ export async function autoLayout(
     updates.push({ id: z.id, x: nb.x, y: nb.y, width: nb.width, height: nb.height });
     const title = zoneTitleOf(z, map);
     if (title) updates.push({ id: title.id, x: nb.x + ZONE_TITLE_X, y: nb.y + ZONE_TITLE_Y });
+  }
+  // A re-laid-out selection that grew pushes the shapes around it away instead of covering them.
+  if (p.ids?.length && p.makeRoom !== false) {
+    const scopeIds = new Set([...units.flatMap((u) => u.members.map((m) => m.id)), ...zones.map((z) => z.id)]);
+    updates.push(...makeRoom(c, live, scopeIds, startBox, layout.bounds));
   }
   const r = applyUpdates(updates, live, st);
 
@@ -1050,8 +1152,59 @@ export async function autoLayout(
   return {
     changed: [...changed.values()],
     added: r.added,
-    result: { nodes: units.length, zones: zones.length, edges: edges.length, bounds, legendsMoved: legends || undefined, quality: qualitySummary(best) },
+    result: { nodes: units.length, zones: zones.length, edges: edges.length, bounds, direction: inferred ?? (best.variant === "other-direction" ? "down" : "right"), legendsMoved: legends || undefined, ...(before !== undefined ? { scoreBefore: before } : {}), quality: qualitySummary(best) },
   };
+}
+
+/**
+ * Tidy without re-laying out (the "Tidy" command, MCP `tidy`): the arrangement stays; rows and
+ * columns that nearly line up are lined up, nearly even gaps evened, overlapping nodes pushed apart,
+ * zones grown to fit, then arrows re-routed between their (possibly moved) ends. Applied only when
+ * it measures at least as clean as before (fixing overlaps always counts). One commit.
+ */
+export function tidyDrawing(scene: readonly El[], st: AppState, p: { ids?: string[] } = {}): { changed: El[]; added: El[]; result: Loose } {
+  const c = collectUnits(scene, p.ids);
+  const { live, map, units, zones, zoneIds } = c;
+  if (units.length < 2 && !zones.length) throw new Error("nothing to tidy: need at least two shapes, icons or groups");
+  const zoneParent = (z: El) => {
+    const pz = zoneOf(z);
+    return pz && zoneIds.has(pz) ? pz : undefined;
+  };
+  const t = tidyLayout(
+    units.map((u) => ({ id: u.id, box: u.box, zone: u.zone })),
+    zones.map((z) => {
+      const title = zoneTitleOf(z, map);
+      return { id: z.id, box: boxOf(z), parent: zoneParent(z), titleRoom: title ? title.height + ZONE_TITLE_Y + 12 : 40 };
+    }),
+  );
+  const before = currentScore(c);
+  const updates: Loose[] = [];
+  for (const u of units) {
+    const m = t.moves.get(u.id);
+    if (!m) continue;
+    for (const el of u.members) if (!(el.type === "text" && (el as El & Loose).containerId)) updates.push({ id: el.id, dx: m.dx, dy: m.dy });
+  }
+  for (const z of zones) {
+    const nb = t.zones.get(z.id);
+    if (!nb) continue;
+    // Zones are moved by box (applyUpdates would carry their contents along with a dx/dy).
+    updates.push({ id: z.id, x: nb.x, y: nb.y, width: nb.width, height: nb.height });
+    const title = zoneTitleOf(z, map);
+    if (title) updates.push({ id: title.id, x: nb.x + ZONE_TITLE_X, y: nb.y + ZONE_TITLE_Y });
+  }
+  const stats = t.stats;
+  const summary = { nodes: units.length, zones: zones.length, ...stats };
+  if (!updates.length) return { changed: [], added: [], result: { ...summary, unchanged: true, scoreBefore: before } };
+  const r = applyUpdates(updates, live, st);
+  const after = collectUnits(
+    live.map((e) => r.changed.find((x) => x.id === e.id) ?? e),
+    p.ids,
+  );
+  const score = currentScore(after);
+  if (score > before + 1 && !stats.overlaps) {
+    return { changed: [], added: [], result: { ...summary, unchanged: true, scoreBefore: before, scoreTidied: score } };
+  }
+  return { changed: r.changed, added: r.added, result: { ...summary, scoreBefore: before, score } };
 }
 
 function unitMain(units: Unit[], id: string): string | null {

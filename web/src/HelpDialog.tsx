@@ -106,6 +106,8 @@ export function helpSections(): Section[] {
         { keys: sc("lint"), text: "Diagram lint: overlaps, unconnected arrows, unlabeled nodes, missing IPs, off-palette colors" },
         { keys: sc("grid"), text: "Show / hide the layout grid (Grid settings… in the menu); snap while moving and drawing" },
         { keys: sc("align"), text: `Align (Excalidraw); ${formatShortcut("⌥H")} / ${formatShortcut("⌥V")} distribute. The Align section sits above Edges in the panel` },
+        { text: "Tidy: line up rows and columns, even gaps, fix overlaps, keeping your arrangement (Diagram menu, command palette)" },
+        { text: "Re-layout: fresh automatic layout that follows your drawing, applied only if cleaner (Diagram menu, command palette)" },
         { text: "Route arrows around shapes (command palette)" },
         { keys: sc("findReplace"), text: "Find and replace: step through matches (Enter, Shift+Enter), replace one or all, match case, whole word, selection or whole drawing" },
       ],

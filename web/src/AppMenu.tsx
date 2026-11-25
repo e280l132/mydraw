@@ -250,6 +250,8 @@ export function AppMenu({ settings, panels, onCommand, onSettings }: Props) {
         <MainMenu.Item onSelect={run({ type: "versionHistory" })} shortcut={sc("versionHistory")}>
           Version history…
         </MainMenu.Item>
+        <MainMenu.Item onSelect={run({ type: "tidyLayout" })}>Tidy</MainMenu.Item>
+        <MainMenu.Item onSelect={run({ type: "relayout" })}>Re-layout</MainMenu.Item>
         <MainMenu.Item onSelect={run({ type: "snapToGrid" })}>Snap selection to grid</MainMenu.Item>
         <MainMenu.Item onSelect={run({ type: "saveStencil" })}>Save selection as stencil…</MainMenu.Item>
       </Section>

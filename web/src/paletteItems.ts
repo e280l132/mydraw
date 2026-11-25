@@ -83,6 +83,8 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
       }
     }, { hint: a.keys || undefined, keywords: "align distribute arrange line up space evenly layout" });
   }
+  cmd("Edit", "Tidy (keep the arrangement: line up, even gaps, fix overlaps)", { type: "tidyLayout" }, { keywords: "tidy clean up straighten line up align rows columns overlap neat selection" });
+  cmd("Edit", "Re-layout (fresh automatic layout, only if cleaner)", { type: "relayout" }, { keywords: "auto layout arrange rearrange organize elk layout again selection" });
   cmd("Edit", "Snap selection to grid", { type: "snapToGrid" }, { keywords: "align layout line up round position" });
   add("Edit", "Link selection to a drawing…", c.linkSelection, { keywords: "hyperlink drill down open diagram" });
   add("Edit", "Remove links from selection", c.clearLinks, { keywords: "hyperlink unlink" });

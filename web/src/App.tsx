@@ -38,6 +38,7 @@ import { PanelFooter } from "./PanelFooter";
 import { attachFineTuneHosts, FineTune, sameHosts, type FineTuneHosts } from "./FineTune";
 import { attachStyleMoreHosts, sameMoreHosts, StyleMore, type StyleMoreHosts } from "./StyleMore";
 import { snapSelectionToGrid } from "./gridOps";
+import { relayout, tidyLayout } from "./tidyLayout";
 import { DEFAULT_GRID, type GridSettings } from "../../shared/grid";
 import { InventoryDialog } from "./InventoryDialog";
 import { HelpDialog } from "./HelpDialog";
@@ -1154,6 +1155,20 @@ export function App() {
           if (!api) return;
           const n = snapSelectionToGrid(api, (settingsRef.current?.grid ?? DEFAULT_GRID).size);
           showToast(n ? `Snapped ${n} item${n === 1 ? "" : "s"} to the grid` : "Nothing to snap: select shapes first, or they are already on the grid");
+          return;
+        }
+        case "tidyLayout":
+        case "relayout": {
+          const api = apis.current.get(activeRef.current);
+          if (!api) return;
+          const fail = (e: unknown) =>
+            showToast(e instanceof Error && /nothing to (lay out|tidy)/.test(e.message) ? "Nothing to arrange: select at least two shapes, icons or groups (or a zone)." : `${cmd.type === "relayout" ? "Re-layout" : "Tidy"} failed: ${e instanceof Error ? e.message : String(e)}`, true);
+          try {
+            if (cmd.type === "tidyLayout") showToast(tidyLayout(api).message);
+            else relayout(api).then((r) => showToast(r.message), fail);
+          } catch (e) {
+            fail(e);
+          }
           return;
         }
         case "toggleLint":

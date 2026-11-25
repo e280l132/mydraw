@@ -151,6 +151,8 @@ export function buildMenu(settings: Settings, h: MenuHandlers): void {
         { label: "Inventory Table…", ...shown("Alt+CmdOrCtrl+T"), click: cmd({ type: "inventory" }) },
         { label: "Import Diagram from Text…", ...shown("Alt+CmdOrCtrl+U"), click: cmd({ type: "importText" }) },
         { label: "Version History…", ...shown("Alt+CmdOrCtrl+V"), click: cmd({ type: "versionHistory" }) },
+        { label: "Tidy", click: cmd({ type: "tidyLayout" }) },
+        { label: "Re-layout", click: cmd({ type: "relayout" }) },
         { label: "Snap Selection to Grid", click: cmd({ type: "snapToGrid" }) },
         { type: "separator" },
         { label: "Save Selection as Stencil…", click: cmd({ type: "saveStencil" }) },
