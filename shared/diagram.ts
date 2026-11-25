@@ -1,9 +1,13 @@
 // The diagram description used by build_diagram (and produced by the Mermaid parser and the
 // templates): nodes, edges, zones. Validation and defaults live here; layout in layout.ts; the
 // renderer turns a laid-out diagram into Excalidraw elements (web/src/agent/diagram.ts).
+import { resolveShadowInput, type Shadow } from "./shadow";
+import { STROKE_STYLE_NAMES, type StrokeStyleName } from "./dash";
+import { resolveGradientInput, type Gradient } from "./gradient";
+import { requireFillStyle, type FillStyleId } from "./fills";
 import { hexToRgb, rgbToHex } from "./colorMath";
 import { linkProblem } from "./links";
-import { resolveColor } from "./palettes";
+import { requireColor, resolveColor } from "./palettes";
 import { ARROWHEADS, EDGE_WEIGHTS, LOOKS_LIST, NODE_EMPHASES, type Arrowhead, type EdgeWeight, type KindStyle, type LookName, type NodeEmphasis } from "./diagramLook";
 import type { LayoutAlgorithm, LayoutDirection } from "./layout";
 import type { Routing } from "./routing";
@@ -11,7 +15,8 @@ import { SVG_SHAPES, type SvgShape } from "./shapeSvgs";
 
 /** Excalidraw's own shapes, plus the drawn ones of shared/shapeSvgs.ts (cylinder for a database, ...). */
 export type NodeShape = "rectangle" | "ellipse" | "diamond" | SvgShape;
-export type LineStyle = "solid" | "dashed" | "dotted";
+/** Excalidraw's solid / dashed / dotted plus the extra dash styles (shared/dash.ts). */
+export type LineStyle = StrokeStyleName;
 
 export interface DiagramNode {
   id: string;
@@ -37,6 +42,14 @@ export interface DiagramNode {
   emphasis?: NodeEmphasis;
   /** Second line under the label (an IP, a role), smaller and grey. */
   subtitle?: string;
+  /** Shadow under the node (icon nodes: under the icon); null = none even with a diagram-wide shadow. */
+  shadow?: Shadow | null;
+  /** Shape nodes: gradient fill (shared/gradient.ts); overrides `fill`. */
+  gradient?: Gradient | null;
+  /** Shape nodes: fill pattern (solid default; hachure, cross-hatch, dots, dashed, zigzag, zigzag-line). */
+  fillStyle?: FillStyleId;
+  /** Shape nodes: border style (solid default, dashed, dotted, or an extra dash style). */
+  strokeStyle?: LineStyle;
 }
 
 export interface DiagramZone {
@@ -95,6 +108,8 @@ export interface DiagramSpec {
   subtitle?: string;
   /** "professional" (default) or "sketch" (hand-drawn). */
   look?: LookName;
+  /** Default shadow for every node (a node's own `shadow` wins). */
+  shadow?: Shadow | null;
   /** Style per edge kind, so every arrow of a kind looks the same; kinds without one get a colour of their own. */
   kinds?: Record<string, KindStyle>;
 }
@@ -103,7 +118,7 @@ export const DIRECTIONS: readonly LayoutDirection[] = ["right", "down", "left", 
 export const ALGORITHMS: readonly LayoutAlgorithm[] = ["layered", "tree", "radial", "force", "grid"];
 export const ROUTINGS: readonly Routing[] = ["elbow", "straight", "curved"];
 const SHAPES: readonly NodeShape[] = ["rectangle", "ellipse", "diamond", ...SVG_SHAPES];
-const STYLES: readonly LineStyle[] = ["solid", "dashed", "dotted"];
+const STYLES: readonly LineStyle[] = STROKE_STYLE_NAMES;
 
 /** Zone colors used in turn when a zone has none: [border, fill]. */
 export const ZONE_PALETTE: readonly [string, string][] = [
@@ -152,6 +167,36 @@ function oneOf<T extends string>(v: unknown, list: readonly T[], what: string): 
   if (v === undefined || v === null) return undefined;
   if (!list.includes(v as T)) throw new Error(`${what} must be one of ${list.join(", ")}`);
   return v as T;
+}
+
+/** Gradient input; from/to may be color names. */
+function gradientIn(v: unknown, what: string): Gradient | null | undefined {
+  try {
+    if (v && typeof v === "object") {
+      const o = { ...(v as Record<string, unknown>) };
+      for (const k of ["from", "to"] as const) if (o[k] !== undefined) o[k] = requireColor(o[k], `${k}`);
+      v = o;
+    }
+    return resolveGradientInput(v);
+  } catch (e) {
+    throw new Error(`${what}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+function fillIn(v: unknown, what: string): FillStyleId {
+  try {
+    return requireFillStyle(v);
+  } catch (e) {
+    throw new Error(`${what}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+function shadowIn(v: unknown, what: string): Shadow | null | undefined {
+  try {
+    return resolveShadowInput(v);
+  } catch (e) {
+    throw new Error(`${what}: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 function num(v: unknown, what: string): number | undefined {
@@ -209,6 +254,10 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
       kind: str(n.kind, `node ${id} kind`),
       emphasis: oneOf(n.emphasis, NODE_EMPHASES, `node ${id} emphasis`),
       subtitle: str(n.subtitle, `node ${id} subtitle`),
+      shadow: shadowIn(n.shadow, `node ${id} shadow`),
+      gradient: gradientIn(n.gradient, `node ${id} gradient`),
+      fillStyle: n.fillStyle === undefined || n.fillStyle === null ? undefined : fillIn(n.fillStyle, `node ${id} fillStyle`),
+      strokeStyle: oneOf(n.strokeStyle, STYLES, `node ${id} strokeStyle`),
     };
   });
   if (!nodes.length && !zones.length) throw new Error("diagram needs at least one node");
@@ -262,6 +311,7 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
     title: str(r.title, "title"),
     subtitle: str(r.subtitle, "subtitle"),
     look: oneOf(r.look, LOOKS_LIST, "look"),
+    shadow: shadowIn(r.shadow, "shadow"),
     kinds: kindsOf(r.kinds),
   };
 }

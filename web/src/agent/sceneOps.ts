@@ -1,6 +1,9 @@
 // Element-level helpers for agent commands: compact descriptions, building elements from skeletons,
 // binding arrows, relabeling and rerouting. Functions here never call updateScene; the executor
 // collects their results and applies each command as one scene update (= one undo step).
+import { requireFillStyle } from "../../../shared/fills";
+import { dashPatch, isDashId, requireStrokeStyle, strokeStyleName } from "../../../shared/dash";
+import { canGradient, gradientOf, gradientPatch, gradientPresetOf, resolveGradientInput } from "../../../shared/gradient";
 import { fontIdByName } from "../fontRegistry";
 import { convertToExcalidrawElements, getCommonBounds, newElementWith } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
@@ -10,6 +13,8 @@ import { labelOffsetLimit } from "../../../shared/edgeTidy";
 import { distToPolyline, labelPoint } from "../../../shared/labelGuard";
 import { linkProblem } from "../../../shared/links";
 import { requireColor } from "../../../shared/palettes";
+import { normalizeOutline, outlineOf, withOutline, type TextOutline } from "../../../shared/textOutline";
+import { canShadow, describeShadow, resolveShadowInput, shadowOf, withShadow, type Shadow } from "../../../shared/shadow";
 import { curvedPoints, ELBOW_GAP, elbowRoute, fixedPointFor, isOrthogonal, type Routing, type Side } from "../../../shared/routing";
 import { fixedSegmentsFor, nearestSide, portPoint, routeAround } from "../../../shared/avoidRoute";
 
@@ -140,17 +145,28 @@ export function describe(el: El, map: ElMap): Loose {
   if (el.angle) o.angle = Math.round(el.angle * 1000) / 1000;
   const label = boundTextOf(el, map);
   if (label) o.label = typedText(label as El & Loose);
+  const labelOutline = label ? outlineOf(label as El & Loose) : null;
+  if (labelOutline) o.labelOutline = labelOutline;
+  // An icon node's shadow sits on its image.
+  const gradient = gradientOf(el as never);
+  if (gradient) o.gradient = gradientPresetOf(gradient) ?? gradient;
+  const shadow = describeShadow(shadowOf(isIconNode(el) ? (iconImageOf(el, map) ?? el) : el));
+  if (shadow) o.shadow = shadow;
+  const labelShadow = label ? describeShadow(shadowOf(label)) : undefined;
+  if (labelShadow) o.labelShadow = labelShadow;
   if (el.type === "text") {
     o.text = e.text;
     o.fontSize = e.fontSize;
     if (e.containerId) o.containerId = e.containerId;
+    const outline = outlineOf(e);
+    if (outline) o.textOutline = outline;
   }
   o.strokeColor = el.strokeColor;
   if (el.backgroundColor !== "transparent") o.backgroundColor = el.backgroundColor;
   if (el.type !== "text" && el.type !== "image") {
     if (el.backgroundColor !== "transparent") o.fillStyle = el.fillStyle;
     o.strokeWidth = el.strokeWidth;
-    if (el.strokeStyle !== "solid") o.strokeStyle = el.strokeStyle;
+    if (el.strokeStyle !== "solid") o.strokeStyle = strokeStyleName(el);
   }
   if (el.opacity !== 100) o.opacity = el.opacity;
   if (isLinear(el)) {
@@ -268,9 +284,61 @@ export function resolveFontFamily(v: unknown): number {
   throw new Error("fontFamily must be a font name (list_fonts) or a font id");
 }
 
+/** Agent `textOutline`: {color (name or hex), width?} or null (none). */
+export function parseTextOutline(v: unknown): TextOutline | null {
+  if (v === null || v === false) return null;
+  if (typeof v === "string") v = { color: v };
+  if (!v || typeof v !== "object") throw new Error("textOutline must be {color, width?} or null");
+  const raw = v as Loose;
+  const color = requireColor(String(raw.color ?? ""), "textOutline color");
+  if (color === "transparent") return null;
+  const o = normalizeOutline({ color, width: raw.width });
+  if (!o) throw new Error(`textOutline color "${String(raw.color)}" can't be used`);
+  return o;
+}
+
+/** Agent `shadow`: true, a preset name, {preset?, color (name or hex)?, opacity?, blur?, distance?, angle?, amount?} or null (none). */
+export function parseShadow(v: unknown): Shadow | null | undefined {
+  if (v && typeof v === "object" && typeof (v as Loose).color === "string") {
+    v = { ...(v as Loose), color: requireColor(String((v as Loose).color), "shadow color") };
+  }
+  return resolveShadowInput(v);
+}
+
+/** Agent `gradient`: a preset name, {preset?, from, to (names or hex), kind, angle} or null (none). */
+function parseGradient(v: unknown) {
+  if (v && typeof v === "object") {
+    const o = { ...(v as Loose) };
+    for (const k of ["from", "to"] as const) if (o[k] !== undefined) o[k] = requireColor(String(o[k]), `gradient ${k}`);
+    v = o;
+  }
+  return resolveGradientInput(v);
+}
+
 function withDefaults(sk: Loose, st: AppState): Loose {
   const out: Loose = { ...styleDefaults(st, String(sk.type)), ...sk };
+  if (sk.textOutline !== undefined) {
+    if (sk.type !== "text") throw new Error(`textOutline applies to text (use update_elements on a shape or arrow to outline its label)`);
+    delete out.textOutline;
+    out.customData = withOutline(out.customData as Loose | undefined, parseTextOutline(sk.textOutline));
+  }
+  if (sk.shadow !== undefined) {
+    if (!canShadow(String(sk.type))) throw new Error(`shadow applies to shapes, text, lines, arrows, freedraw and images, not ${String(sk.type)}`);
+    delete out.shadow;
+    out.customData = withShadow(out.customData as Loose | undefined, parseShadow(sk.shadow) ?? null);
+  }
   if (sk.fontFamily !== undefined) out.fontFamily = resolveFontFamily(sk.fontFamily);
+  if (sk.fillStyle !== undefined) out.fillStyle = requireFillStyle(sk.fillStyle);
+  if (sk.gradient !== undefined) {
+    if (!canGradient(String(sk.type))) throw new Error(`gradient applies to rectangles, diamonds and ellipses, not ${String(sk.type)}`);
+    delete out.gradient;
+    Object.assign(out, gradientPatch(out.customData as Loose | undefined, parseGradient(sk.gradient) ?? null));
+  }
+  if (sk.strokeStyle !== undefined) {
+    // Extra dash styles (shared/dash.ts): strokeStyle keeps the dashed/dotted fallback, the pattern goes in customData.
+    const name = requireStrokeStyle(sk.strokeStyle);
+    Object.assign(out, dashPatch(out.customData as Loose | undefined, isDashId(name) ? name : null, isDashId(name) ? "dashed" : name));
+  }
   if (typeof out.link === "string" && out.link) {
     const bad = linkProblem(out.link);
     if (bad) throw new Error(`${sk.type} "${sk.id ?? ""}": ${bad}`);
@@ -844,14 +912,16 @@ export function applyUpdates(updates: unknown[], scene: readonly El[], st: AppSt
     ids.push(id);
     const patch: Loose = {};
     for (const [k, v] of Object.entries(u)) {
-      if (k === "id" || k === "label" || k === "dx" || k === "dy" || k === "data" || k === "routing") continue;
+      if (k === "id" || k === "label" || k === "dx" || k === "dy" || k === "data" || k === "routing" || k === "textOutline" || k === "shadow" || k === "shadowLabel" || k === "strokeStyle" || k === "gradient") continue;
       if (!UPDATABLE.has(k)) throw new Error(`"${k}" can't be updated here (use raw_update for other fields)`);
       patch[k] =
         (k === "strokeColor" || k === "backgroundColor") && typeof v === "string"
           ? requireColor(v, k)
           : k === "fontFamily"
             ? resolveFontFamily(v)
-            : v;
+            : k === "fillStyle"
+              ? requireFillStyle(v)
+              : v;
     }
     if ("link" in patch) {
       if (patch.link === "" || patch.link === undefined) patch.link = null;
@@ -863,6 +933,44 @@ export function applyUpdates(updates: unknown[], scene: readonly El[], st: AppSt
     if (typeof u.dx === "number") patch.x = (typeof patch.x === "number" ? patch.x : el.x) + u.dx;
     if (typeof u.dy === "number") patch.y = (typeof patch.y === "number" ? patch.y : el.y) + u.dy;
     if (u.data && typeof u.data === "object") patch.customData = { ...(el.customData ?? {}), ...(u.data as Loose) };
+    if (u.gradient !== undefined) {
+      if (!canGradient(el.type)) throw new Error(`"${id}" is a ${el.type}; gradients apply to rectangles, diamonds and ellipses`);
+      Object.assign(patch, gradientPatch((patch.customData as Loose | undefined) ?? (el.customData as Loose | undefined), parseGradient(u.gradient) ?? null));
+    }
+    if (u.strokeStyle !== undefined) {
+      const name = requireStrokeStyle(u.strokeStyle);
+      Object.assign(patch, dashPatch((patch.customData as Loose | undefined) ?? (el.customData as Loose | undefined), isDashId(name) ? name : null, isDashId(name) ? "dashed" : name));
+    }
+    if (u.textOutline !== undefined) {
+      // On text: its own outline. On a shape or arrow: its label's.
+      const outline = parseTextOutline(u.textOutline);
+      if (el.type === "text") patch.customData = withOutline((patch.customData as Loose | undefined) ?? (el.customData as Loose | undefined), outline);
+      else {
+        const label = boundTextOf(el, map);
+        if (!label) throw new Error(`"${id}" is a ${el.type} without a label; textOutline applies to text and labels`);
+        set(newElementWith(label, { customData: withOutline(label.customData as Loose | undefined, outline) } as never));
+      }
+    }
+    if (u.shadow !== undefined || u.shadowLabel !== undefined) {
+      // An icon node's shadow goes on its image (the container is an invisible box).
+      const sh = parseShadow(u.shadow);
+      if (sh !== undefined) {
+        const image = isIconNode(el) ? iconImageOf(el, map) : undefined;
+        if (image) set(newElementWith(map.get(image.id) ?? image, { customData: withShadow((map.get(image.id) ?? image).customData as Loose | undefined, sh) } as never));
+        else {
+          if (!canShadow(el.type)) throw new Error(`"${id}" is a ${el.type}; shadows apply to shapes, text, lines, arrows, freedraw and images`);
+          patch.customData = withShadow((patch.customData as Loose | undefined) ?? (el.customData as Loose | undefined), sh);
+        }
+      }
+      // shadowLabel: true = the label (or icon caption) gets the same shadow; false = its shadow is removed.
+      if (u.shadowLabel !== undefined) {
+        const label = boundTextOf(el, map);
+        if (!label) throw new Error(`"${id}" has no label; shadowLabel needs a shape, arrow or icon node with a label`);
+        const own = isIconNode(el) ? iconImageOf(el, map) : el;
+        const lsh = u.shadowLabel ? (sh ?? shadowOf(own ? (map.get(own.id) ?? own) : undefined) ?? parseShadow(true)!) : null;
+        set(newElementWith(label, { customData: withShadow(label.customData as Loose | undefined, lsh) } as never));
+      }
+    }
     if (u.routing !== undefined) {
       if (!isLinear(el)) throw new Error(`"${id}" is a ${el.type}; routing applies to arrows and lines`);
       const routing = parseRouting(u.routing, "straight");

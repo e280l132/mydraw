@@ -12,6 +12,11 @@ import { toMermaid } from "../../shared/mermaidWriter";
 import { extractGraph, type SceneEl } from "../../shared/sceneGraph";
 import type { ExportExtension } from "../../shared/types";
 import { resolveColor } from "../../shared/palettes";
+import { maxShadowExtent } from "../../shared/shadow";
+
+/** Export padding that keeps shadows inside the picture (they reach past the elements' boxes). */
+const shadowPadding = (elements: readonly unknown[], padding: number) =>
+  Math.max(padding, maxShadowExtent(elements as { customData?: Record<string, unknown> | null }[]));
 
 export type ExportFormat = "png" | "jpg" | "webp" | "svg" | "html" | "pdf" | "pptx" | "drawio" | "mermaid" | "csv" | "markdown" | "excalidrawlib";
 export const EXPORT_FORMATS: readonly ExportFormat[] = ["png", "jpg", "webp", "svg", "html", "pdf", "pptx", "drawio", "mermaid", "csv", "markdown", "excalidrawlib"];
@@ -301,7 +306,7 @@ async function renderPaged(api: ExcalidrawImperativeAPI, opts: ExportOptions, pa
   if (opts.format === "pdf") {
     const sources = [];
     for (const p of pages) {
-      const svg = await exportToSvg({ elements: p.elements, appState, files, exportPadding: opts.padding, exportingFrame: p.frame });
+      const svg = await exportToSvg({ elements: p.elements, appState, files, exportPadding: shadowPadding(p.elements, opts.padding), exportingFrame: p.frame });
       const text = svg.outerHTML;
       sources.push({ svg: text, ...svgSize(text) });
     }
@@ -324,7 +329,7 @@ async function renderPaged(api: ExcalidrawImperativeAPI, opts: ExportOptions, pa
       elements: p.elements,
       appState: { ...appState, exportBackground: opts.background },
       files,
-      exportPadding: opts.padding,
+      exportPadding: shadowPadding(p.elements, opts.padding),
       exportingFrame: p.frame,
       mimeType: MIME_TYPES.png,
       getDimensions: (w: number, h: number) => ({ width: w * opts.scale, height: h * opts.scale, scale: opts.scale }),
@@ -361,7 +366,7 @@ async function renderElements(
   const isJpg = opts.format === "jpg";
   const appState = exportAppState(api, opts, preview);
   const files = api.getFiles();
-  const common = { elements, appState, files, exportPadding: opts.padding, exportingFrame };
+  const common = { elements, appState, files, exportPadding: shadowPadding(elements, opts.padding), exportingFrame };
 
   if ((opts.format === "svg" || opts.format === "html") && !preview) {
     const svg = await exportToSvg(common);

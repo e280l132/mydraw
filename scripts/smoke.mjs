@@ -476,6 +476,111 @@ await page.press(".md-ft-pop .md-ft-num", "Enter");
 await waitFor(async () => JSON.stringify((await rectProps()).roundness) === JSON.stringify({ type: 3, value: 10 }), "custom corner radius");
 await page.keyboard.press("Escape");
 
+// More fills: roughjs fillers Excalidraw's own Fill row doesn't offer (one undo step).
+const fillBefore = (await rectProps()).fillStyle;
+const moreFill = page.locator(`${COL} .md-more-btn[data-more-kind="fill"]`);
+await moreFill.scrollIntoViewIfNeeded();
+await moreFill.click();
+await page.waitForSelector('.md-more-pop[data-more-pop="fill"]');
+assert.equal(await page.locator(".md-more-pop .md-more-tile[data-fill]").count(), 4, "four extra fills");
+await page.click('.md-more-pop .md-more-tile[data-fill="dots"]');
+await waitFor(async () => (await rectProps()).fillStyle === "dots", "dots fill applied");
+await waitFor(async () => (await page.locator(`${COL} .md-more-btn[data-more-kind="fill"].active`).count()) === 1, "More fills button shows the extra fill");
+await page.screenshot({ path: path.join(shots, "more-fills.png") });
+await page.keyboard.press("Escape");
+await waitFor(async () => (await page.locator(".md-more-pop").count()) === 0, "Esc closes the fills popover");
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*='none']) .excalidraw-container")?.focus());
+await page.keyboard.press("Meta+Z");
+await waitFor(async () => (await rectProps()).fillStyle === fillBefore, "fill pick is one undo step");
+
+// Sub-windows float: drag the title bar, it stays open on canvas clicks, reopens where it was put, docks back.
+await moreFill.click();
+await page.waitForSelector('.md-more-pop[data-more-pop="fill"]');
+const popBox = async () => page.locator('.md-more-pop[data-more-pop="fill"]').boundingBox();
+const docked = await popBox();
+const head = page.locator('.md-more-pop[data-more-pop="fill"] .md-float-head');
+const hb = await head.boundingBox();
+await page.mouse.move(hb.x + 40, hb.y + hb.height / 2);
+await page.mouse.down();
+await page.mouse.move(hb.x + 200, hb.y + hb.height / 2 + 80, { steps: 5 });
+await page.mouse.move(hb.x + 340, hb.y + hb.height / 2 + 120, { steps: 5 });
+await page.mouse.up();
+await waitFor(async () => (await page.locator(".md-more-pop.md-floating").count()) === 1, "dragged window is floating");
+const floated = await popBox();
+assert.ok(Math.abs(floated.x - docked.x - 300) < 4 && Math.abs(floated.y - docked.y - 120) < 4, `window moved with the drag (${JSON.stringify(docked)} -> ${JSON.stringify(floated)})`);
+assert.ok(await page.evaluate(() => JSON.parse(localStorage.getItem("mydraw.floatPos") ?? "{}").fill), "position saved");
+await page.click(".md-drawing:not([style*='none']) canvas.interactive", { position: { x: 960, y: 260 }, modifiers: ["Shift"] });
+await sleep(200);
+assert.equal(await page.locator('.md-more-pop[data-more-pop="fill"]').count(), 1, "a floating window stays open on a canvas click");
+await page.keyboard.press("Escape");
+await sleep(100);
+assert.equal(await page.locator('.md-more-pop[data-more-pop="fill"]').count(), 1, "Esc outside a floating window leaves it open");
+await page.click('.md-more-pop[data-more-pop="fill"] .md-float-close');
+await waitFor(async () => (await page.locator(".md-more-pop").count()) === 0, "× closes it");
+await moreFill.click();
+await page.waitForSelector('.md-more-pop[data-more-pop="fill"].md-floating');
+const reopened = await popBox();
+assert.ok(Math.abs(reopened.x - floated.x) < 2 && Math.abs(reopened.y - floated.y) < 2, "reopens where it was put");
+await page.click('.md-more-pop[data-more-pop="fill"] .md-float-dock');
+await waitFor(async () => {
+  const b = await popBox();
+  return Math.abs(b.x - docked.x) < 2 && (await page.locator(".md-more-pop.md-floating").count()) === 0;
+}, "dock puts it back beside the panel");
+assert.ok(!(await page.evaluate(() => JSON.parse(localStorage.getItem("mydraw.floatPos") ?? "{}").fill)), "docked: position forgotten");
+await page.keyboard.press("Escape");
+await waitFor(async () => (await page.locator(".md-more-pop").count()) === 0, "docked window closes on Esc");
+
+// More stroke styles: dash patterns in customData.mydrawDash, drawn through the patched strokeLineDash.
+const moreStroke = page.locator(`${COL} .md-more-btn[data-more-kind="stroke"]`);
+await moreStroke.scrollIntoViewIfNeeded();
+await moreStroke.click();
+await page.waitForSelector('.md-more-pop[data-more-pop="stroke"]');
+assert.equal(await page.locator(".md-more-pop .md-more-tile[data-dash]").count(), 6, "six extra dash styles");
+await page.click('.md-more-pop .md-more-tile[data-dash="dash-dot"]');
+await waitFor(async () => {
+  const r = await rectProps();
+  return r.strokeStyle === "dashed" && r.customData?.mydrawDash === "dash-dot";
+}, "dash-dot stroke applied (fallback strokeStyle dashed)");
+assert.deepEqual(
+  await t((x) => {
+    const el = x.api().getSceneElements().find((e) => e.type === "rectangle");
+    return globalThis.__mydrawDash(el);
+  }),
+  [12, 5 + (await rectProps()).strokeWidth, 1.5, 5 + (await rectProps()).strokeWidth],
+  "the dash hook gives the dash-dot pattern",
+);
+await waitFor(async () => (await page.locator(`${COL} .buttonList[data-md-custom]`).count()) === 1, "Excalidraw's Dashed highlight is muted");
+await page.keyboard.press("Escape");
+// Excalidraw's own Solid button drops our dash style (same undo step as Excalidraw's change).
+const solidBtn = page.locator(`${COL} .buttonList:has(input[name="strokeStyle"]) > label`).first();
+await solidBtn.click();
+await waitFor(async () => {
+  const r = await rectProps();
+  return r.strokeStyle === "solid" && !r.customData?.mydrawDash;
+}, "Solid clears the dash style");
+await waitFor(async () => (await page.locator(`${COL} .buttonList[data-md-custom]`).count()) === 0, "highlight restored");
+
+// Gradient fills (Fill popover): a preset, then Excalidraw's own Hatch button turns it back into a pattern.
+await moreFill.scrollIntoViewIfNeeded();
+await moreFill.click();
+await page.waitForSelector('.md-more-pop[data-more-pop="fill"] .md-grad');
+await page.click('.md-more-pop .md-grad-preset[data-gradient-preset="sunset"]');
+await waitFor(async () => {
+  const r = await rectProps();
+  return r.fillStyle === "solid" && r.backgroundColor === "#ffe066" && r.customData?.mydrawGradient?.to === "#ff6b6b";
+}, "gradient preset applied (fill = start color)");
+await page.waitForSelector('.md-more-pop .md-grad[data-gradient="on"] .md-grad-color[data-gradient-color="to"]');
+await page.click('.md-more-pop .md-chip[data-gradient-kind="radial"]');
+await waitFor(async () => (await rectProps()).customData?.mydrawGradient?.kind === "radial", "radial gradient");
+await waitFor(() => page.evaluate(() => globalThis.__mydrawShadowDraws.gradient > 0), "the canvas drew a gradient");
+await page.screenshot({ path: path.join(shots, "gradient-popover.png") });
+await page.keyboard.press("Escape");
+await page.locator(`${COL} [data-testid="fill-hachure"]`).click();
+await waitFor(async () => {
+  const r = await rectProps();
+  return r.fillStyle === "hachure" && !r.customData?.mydrawGradient;
+}, "Excalidraw's own fill button removes the gradient");
+
 // Nothing selected, pen tool: stroke width sets the default for the next stroke.
 await page.click(".md-drawing:not([style*='none']) canvas.interactive", { position: { x: 900, y: 700 } });
 await waitFor(async () => (await t((x) => x.selectedCount())) === 0, "nothing selected");
@@ -698,6 +803,325 @@ assert.equal((await call("get_color", { id: "web" })).color, "#2f9e44");
 const shot = await callRaw("screenshot", {});
 assert.equal(shot.content[0].type, "image");
 assert.deepEqual([...Buffer.from(shot.content[0].data, "base64").subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47], "screenshot is a PNG");
+
+step("text outline: agent, canvas, SVG export, undo, style panel (patched text renderers)");
+await call("add_elements", { elements: [{ type: "text", id: "halo", x: 0, y: 420, text: "Halo", fontSize: 36, strokeColor: "#b197fc", textOutline: { color: "#1e1e1e", width: 3 } }] });
+scene = await call("get_scene");
+assert.deepEqual(el("halo").textOutline, { color: "#1e1e1e", width: 3 }, "add_elements sets the outline");
+await waitFor(() => page.evaluate(() => (globalThis.__mydrawTextOutlineDraws ?? 0) > 0), "patched canvas renderer drew an outline");
+const haloSvg = path.join(work, "halo.svg");
+await call("export", { path: haloSvg, ids: ["halo"] });
+assert.match(fs.readFileSync(haloSvg, "utf8"), /<text[^>]*stroke="#1e1e1e"[^>]*paint-order="stroke"/, "SVG export carries the outline under the fill");
+await call("update_elements", { updates: [{ id: "web", textOutline: { color: "white", width: 2 } }] });
+scene = await call("get_scene");
+assert.equal(el("web").labelOutline.width, 2, "update_elements on a shape outlines its label");
+await call("update_elements", { updates: [{ id: "halo", textOutline: null }] });
+scene = await call("get_scene");
+assert.equal(el("halo").textOutline, undefined, "null removes the outline");
+await call("undo");
+scene = await call("get_scene");
+assert.deepEqual(el("halo").textOutline, { color: "#1e1e1e", width: 3 }, "undo brings the outline back");
+await call("select", { ids: ["halo"] });
+await page.waitForSelector(`${COL} .md-target[data-target="outline"]`);
+await page.locator(`${COL} .md-target[data-target="outline"]`).click();
+for (const target of ["stroke", "fill", "outline"]) {
+  const fits = await page.locator(`${COL} .md-target[data-target="${target}"]`).evaluate((b) => {
+    const r = b.getBoundingClientRect();
+    const row = b.parentElement.getBoundingClientRect();
+    return b.scrollWidth <= b.clientWidth + 1 && r.right <= row.right + 1;
+  });
+  assert.ok(fits, `${target} chip is not cut off`);
+}
+const chipTops = await page.locator(`${COL} .md-target`).evaluateAll((bs) => bs.map((b) => Math.round(b.getBoundingClientRect().top)));
+assert.equal(new Set(chipTops).size, 1, "Stroke / Fill / Outline sit on one line");
+const haloWidth = async () => (await call("get_scene")).elements.find((e) => e.id === "halo").textOutline?.width;
+await page.locator(`${COL} .md-outline-num`).fill("4");
+await page.locator(`${COL} .md-outline-num`).press("Enter");
+await waitFor(async () => (await haloWidth()) === 4, "typed width changes the outline");
+await page.locator(`${COL} .md-outline-range`).focus();
+await page.keyboard.press("ArrowRight");
+await waitFor(async () => (await haloWidth()) === 4.5, "slider (arrow key) widens the outline and commits on release");
+assert.equal(await page.locator(`${COL} .md-outline-range`).getAttribute("max"), "9", "slider tops out at fontSize / 4");
+assert.ok((await page.locator(`${COL} .md-outline-range`).boundingBox()).width > 100, "the width slider gets the panel's width");
+await call("undo");
+await waitFor(async () => (await haloWidth()) === 4, "one slider change is one undo step");
+await page.locator(`${COL} .md-iconcolor-grid .md-swatch`).nth(5).click();
+await waitFor(async () => (await call("get_scene")).elements.find((e) => e.id === "halo").textOutline?.color !== "#1e1e1e", "swatch recolors the outline");
+await page.screenshot({ path: path.join(shots, "text-outline.png") });
+await page.locator(`${COL} .md-outline-none`).click();
+await waitFor(async () => (await call("get_scene")).elements.find((e) => e.id === "halo").textOutline === undefined, "None removes the outline");
+await call("delete_elements", { ids: ["halo"] });
+await call("update_elements", { updates: [{ id: "web", textOutline: null }] });
+
+step("shadows: agent, canvas, PNG/SVG export, undo, style panel, new shapes (patched renderElement / renderElementToSvg)");
+const hardShadow = { color: "#000000", opacity: 0.9, blur: 0, distance: 12, angle: 45 };
+await call("add_elements", { elements: [{ type: "rectangle", id: "shbox", x: 2000, y: 2000, width: 120, height: 60, strokeColor: "#1e1e1e", backgroundColor: "#ffffff", fillStyle: "solid", shadow: { preset: "hard", distance: 12 } }] });
+scene = await call("get_scene");
+assert.deepEqual(el("shbox").shadow, hardShadow, "add_elements sets the shadow");
+await page.evaluate(() => {
+  const api = window.__mydrawTest.api();
+  api.scrollToContent(api.getSceneElements().find((e) => e.id === "shbox"), { fitToContent: false });
+});
+await waitFor(() => page.evaluate(() => (globalThis.__mydrawShadowDraws?.screen ?? 0) > 0), "patched renderElement drew a shadow on screen");
+// Read the static canvas at scene points (device px).
+const shadowPx = (pts) =>
+  page.evaluate((pts) => {
+    const st = window.__mydrawTest.api().getAppState();
+    const dpr = window.devicePixelRatio || 1;
+    const c = document.querySelector('.md-drawing:not([style*="display: none"]) canvas.excalidraw__canvas.static');
+    return pts.map(([sx, sy]) => {
+      const d = c.getContext("2d").getImageData(Math.round((sx + st.scrollX) * st.zoom.value * dpr), Math.round((sy + st.scrollY) * st.zoom.value * dpr), 1, 1).data;
+      return [d[0], d[1], d[2]];
+    });
+  }, pts);
+await sleep(300);
+// Hard shadow, 12 px at 45°: it covers (2008..2128, 2008..2068); the box ends at (2120, 2060).
+const [inShadow, beside] = await shadowPx([[2124, 2064], [1994, 1994]]);
+assert.ok(inShadow.every((v) => v < 90), `shadow painted below-right of the box (${inShadow})`);
+assert.ok(beside.every((v) => v > 200), `no shadow above-left (${beside})`);
+// A sample of every kind (screenshots shadows-light.png / shadows-dark.png, for a look by eye).
+await call("add_elements", {
+  elements: [
+    { type: "ellipse", id: "shs1", x: 2180, y: 1990, width: 90, height: 70, backgroundColor: "#a5d8ff", fillStyle: "solid", shadow: "soft" },
+    { type: "diamond", id: "shs2", x: 2300, y: 1990, width: 90, height: 70, backgroundColor: "#b2f2bb", fillStyle: "solid", shadow: "lifted" },
+    { type: "text", id: "shs3", x: 2000, y: 2100, text: "Shadowed text", fontSize: 32, shadow: { preset: "drop", distance: 3, blur: 3 } },
+    { type: "arrow", id: "shs4", x: 2000, y: 2170, points: [[0, 0], [260, 0]], strokeWidth: 2, shadow: "drop" },
+    { type: "rectangle", id: "shs5", x: 2300, y: 2100, width: 100, height: 60, strokeColor: "#1971c2", backgroundColor: "transparent", shadow: "glow", label: "Glow" },
+    { type: "rectangle", id: "shs6", x: 2180, y: 2100, width: 90, height: 60, backgroundColor: "#ffec99", fillStyle: "solid", angle: 0.3, shadow: "long" },
+    // Shadow kinds: inner, layered (elevated, neon), extrude (3D), contact (float).
+    { type: "rectangle", id: "shk1", x: 2000, y: 2230, width: 90, height: 60, backgroundColor: "#ffffff", fillStyle: "solid", shadow: "inner" },
+    { type: "rectangle", id: "shk2", x: 2120, y: 2230, width: 90, height: 60, backgroundColor: "#ffffff", fillStyle: "solid", shadow: "elevated" },
+    { type: "ellipse", id: "shk3", x: 2240, y: 2230, width: 90, height: 60, strokeColor: "#f06595", backgroundColor: "transparent", shadow: "neon" },
+    { type: "rectangle", id: "shk4", x: 2360, y: 2230, width: 90, height: 60, backgroundColor: "#ffffff", fillStyle: "solid", shadow: "extrude" },
+    { type: "rectangle", id: "shk5", x: 2480, y: 2230, width: 90, height: 60, backgroundColor: "#ffffff", fillStyle: "solid", shadow: "float" },
+  ],
+});
+scene = await call("get_scene");
+assert.deepEqual(["shk1", "shk2", "shk3", "shk4", "shk5"].map((id) => el(id).shadow), ["inner", "elevated", "neon", "extrude", "float"], "shadow kinds by preset name");
+await page.evaluate(() => {
+  const api = window.__mydrawTest.api();
+  api.scrollToContent(api.getSceneElements().find((e) => e.id === "shk3"), { fitToContent: false });
+});
+await waitFor(() => page.evaluate(() => globalThis.__mydrawShadowDraws.inner > 0 && globalThis.__mydrawShadowDraws.contact > 0), "inner and ground shadows drawn on screen");
+await sleep(300);
+// 3D: 8 px solid block at 45° behind shk4 (box ends at 2450, 2290); inner: dark just inside shk1's top edge.
+const [extruded, innerTop, innerMid] = await shadowPx([[2454, 2294], [2045, 2232], [2045, 2275]]);
+assert.ok(extruded.every((v) => v < 120), `extrude shadow painted (${extruded})`);
+assert.ok(innerTop[0] < innerMid[0] - 15, `inner shadow darkens the inside edge (${innerTop} vs ${innerMid})`);
+await page.screenshot({ path: path.join(shots, "shadow-kinds.png") });
+const kindSvg = path.join(work, "shadow-kinds.svg");
+await call("export", { path: kindSvg, ids: ["shk1", "shk2", "shk3", "shk4", "shk5"] });
+const kindSvgText = fs.readFileSync(kindSvg, "utf8");
+assert.match(kindSvgText, /<filter id="md-sh-shk1"[\s\S]*?<feFuncA type="table" tableValues="1 0"/, "SVG inner shadow inverts the alpha");
+assert.equal((kindSvgText.match(/<filter id="md-sh-shk2"[\s\S]*?<\/filter>/)[0].match(/<feGaussianBlur/g) ?? []).length, 2, "SVG layered shadow has two layers");
+assert.ok((kindSvgText.match(/<filter id="md-sh-shk4"[\s\S]*?<\/filter>/)[0].match(/<feOffset/g) ?? []).length === 8, "SVG 3D shadow has a step per px");
+assert.match(kindSvgText, /<radialGradient id="md-gs-shk5"/, "SVG ground shadow is a gradient ellipse");
+// Gradient from the agent: lighter at the top than the bottom on screen; SVG gets a <linearGradient>.
+await call("add_elements", { elements: [{ type: "rectangle", id: "grd1", x: 2600, y: 2230, width: 90, height: 60, strokeColor: "#1e1e1e", gradient: { from: "white", to: "#1971c2", angle: 90 } }] });
+scene = await call("get_scene");
+assert.deepEqual(el("grd1").gradient, { kind: "linear", from: "#ffffff", to: "#1971c2", angle: 90 }, "add_elements sets the gradient");
+await sleep(300);
+const [gTop, gBottom] = await shadowPx([[2645, 2236], [2645, 2284]]);
+assert.ok(gTop[0] > gBottom[0] + 60, `gradient on screen: light top, blue bottom (${gTop} / ${gBottom})`);
+// Dragging mutates the element in place (Excalidraw's mutateElement): the gradient must move with it.
+await page.evaluate(() => window.__mydrawTest.api().setActiveTool({ type: "selection" }));
+const toPage = (sx, sy) =>
+  page.evaluate(([sx, sy]) => {
+    const st = window.__mydrawTest.api().getAppState();
+    return { x: (sx + st.scrollX) * st.zoom.value + st.offsetLeft, y: (sy + st.scrollY) * st.zoom.value + st.offsetTop };
+  }, [sx, sy]);
+const gFrom = await toPage(2645, 2260);
+await page.mouse.move(gFrom.x, gFrom.y);
+await page.mouse.down();
+await page.mouse.move(gFrom.x, gFrom.y + 60, { steps: 6 });
+await page.mouse.move(gFrom.x, gFrom.y + 120, { steps: 6 });
+await page.mouse.up();
+await waitFor(async () => Math.round((await call("get_scene")).elements.find((e) => e.id === "grd1").y) === 2350, "gradient shape dragged by 120");
+await call("select", { ids: [] });
+await sleep(300);
+const [gMovedBottom, gOldSpot] = await shadowPx([[2645, 2404], [2645, 2284]]);
+assert.ok(gMovedBottom[2] > gMovedBottom[0] + 60, `gradient drawn at the new position (${gMovedBottom})`);
+assert.ok(gOldSpot.every((v) => v > 200), `nothing left at the old position (${gOldSpot})`);
+const grdSvg = path.join(work, "gradient.svg");
+await call("export", { path: grdSvg, ids: ["grd1", "shk4"] });
+const grdText = fs.readFileSync(grdSvg, "utf8");
+assert.match(grdText, /<linearGradient id="md-gr-grd1" gradientUnits="userSpaceOnUse"/, "SVG gradient definition");
+assert.match(grdText, /fill="url\(#md-gr-grd1\)"/, "SVG fill uses the gradient");
+assert.ok(!grdText.includes("#fe01fd"), "no sentinel color left in the SVG");
+await call("update_elements", { updates: [{ id: "grd1", gradient: null }] });
+scene = await call("get_scene");
+assert.equal(el("grd1").gradient, undefined, "gradient: null makes it flat");
+await call("delete_elements", { ids: ["shk1", "shk2", "shk3", "shk4", "shk5", "grd1"] });
+// The agent can use every new style: build_diagram nodes / edges / zones, update_elements, style presets.
+await call("build_diagram", {
+  x: 3200,
+  y: 3200,
+  zones: [{ id: "gz", label: "Zone", style: "sparse-dot" }],
+  nodes: [
+    { id: "gd1", label: "A", zone: "gz", gradient: "sky", strokeStyle: "dash-dot" },
+    { id: "gd2", label: "B", zone: "gz", fillStyle: "dots", fill: "#ffc9c9" },
+    { id: "gd3", label: "C", zone: "gz", gradient: { from: "white", to: "green", kind: "radial" } },
+  ],
+  edges: [{ from: "gd1", to: "gd2", style: "long-dash" }, { from: "gd2", to: "gd3" }],
+});
+scene = await call("get_scene");
+assert.equal(el("gd1").gradient, "sky", "build_diagram node gradient preset");
+assert.equal(el("gd1").strokeStyle, "dash-dot", "build_diagram node dash style");
+assert.equal(el("gd2").fillStyle, "dots", "build_diagram node fill pattern");
+assert.equal(el("gd3").gradient.kind, "radial", "build_diagram node gradient object with color names");
+const gEdge = scene.elements.find((e) => e.type === "arrow" && e.from === "gd1" && e.to === "gd2");
+assert.equal(gEdge.strokeStyle, "long-dash", "build_diagram edge dash style");
+assert.equal(scene.elements.find((e) => e.id === "gz").strokeStyle, "sparse-dot", "build_diagram zone dash style");
+await call("update_elements", { updates: [{ id: "gd2", strokeStyle: "fine-dot", fillStyle: "zigzag-line" }, { id: "gd1", strokeStyle: "solid" }] });
+scene = await call("get_scene");
+assert.equal(el("gd2").strokeStyle, "fine-dot", "update_elements dash style");
+assert.equal(el("gd2").fillStyle, "zigzag-line", "update_elements fill pattern");
+assert.equal(el("gd1").strokeStyle, undefined, "solid clears the dash style");
+await call("apply_style_preset", { ids: ["gd2", gEdge.id], preset: "Sunset gradient" });
+scene = await call("get_scene");
+assert.equal(el("gd2").gradient, "sunset", "style preset carries a gradient");
+assert.equal(scene.elements.find((e) => e.id === gEdge.id).gradient, undefined, "a gradient preset leaves arrows alone");
+await call("apply_style_preset", { ids: ["gd2"], style: { strokeStyle: "dash-dot-dot", gradient: null } });
+scene = await call("get_scene");
+assert.equal(el("gd2").gradient, undefined, "inline style gradient: null = flat");
+assert.equal(el("gd2").strokeStyle, "dash-dot-dot", "inline style dash");
+await call("delete_elements", { ids: ["gz", "gd1", "gd2", "gd3"] });
+
+await page.evaluate(() => {
+  const api = window.__mydrawTest.api();
+  api.scrollToContent(api.getSceneElements().find((e) => e.id === "shbox"), { fitToContent: false });
+});
+await sleep(400);
+await page.screenshot({ path: path.join(shots, "shadows-light.png") });
+await page.evaluate(() => window.mydraw.updateSettings({ theme: "dark" }));
+await sleep(700);
+await page.screenshot({ path: path.join(shots, "shadows-dark.png") });
+const shDarkPng = path.join(work, "shadows-dark-export.png");
+await call("export", { path: shDarkPng, ids: ["shbox", "shs1", "shs2", "shs3", "shs4", "shs5", "shs6"], darkMode: true, scale: 1 });
+await call("export", { path: path.join(work, "shadows.svg"), ids: ["shbox", "shs1", "shs2", "shs3", "shs4", "shs5", "shs6"] });
+fs.copyFileSync(shDarkPng, path.join(shots, "shadows-dark-export.png"));
+await page.evaluate(() => window.mydraw.updateSettings({ theme: "light" }));
+await sleep(300);
+await call("delete_elements", { ids: ["shs1", "shs2", "shs3", "shs4", "shs5", "shs6"] });
+// PNG export: the shadow is inside the picture (padding grows to fit it) and drawn once.
+const shPng = path.join(work, "shadow.png");
+await call("export", { path: shPng, ids: ["shbox"], padding: 0, scale: 1 });
+const shStats = await page.evaluate(async (b64) => {
+  const bm = await createImageBitmap(await (await fetch("data:image/png;base64," + b64)).blob());
+  const c = new OffscreenCanvas(bm.width, bm.height);
+  const g = c.getContext("2d");
+  g.drawImage(bm, 0, 0);
+  const d = g.getImageData(0, 0, bm.width, bm.height).data;
+  let dark = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i] < 60 && d[i + 1] < 60 && d[i + 2] < 60 && d[i + 3] > 200) dark++;
+  // inside the box (white fill), away from the stroke
+  const mid = ((Math.round(bm.height / 2) - 4) * bm.width + Math.round(bm.width / 2) - 4) * 4;
+  return { w: bm.width, h: bm.height, dark, mid: [d[mid], d[mid + 1], d[mid + 2]] };
+}, fs.readFileSync(shPng).toString("base64"));
+assert.ok(shStats.w >= 120 + 12 && shStats.h >= 60 + 12, `export has room for the shadow (${shStats.w}x${shStats.h})`);
+assert.ok(shStats.dark > 1600, `PNG export has the shadow (${shStats.dark} dark px)`);
+assert.ok(shStats.mid.every((v) => v > 230), `the shadow is under the box, not on its fill (${shStats.mid})`);
+assert.ok((await page.evaluate(() => globalThis.__mydrawShadowDraws.layer)) > 0, "export used the layer path");
+const shSvg = path.join(work, "shadow.svg");
+await call("export", { path: shSvg, ids: ["shbox"] });
+const shSvgText = fs.readFileSync(shSvg, "utf8");
+assert.match(shSvgText, /<filter id="md-sh-shbox"[^>]*filterUnits="userSpaceOnUse"[^>]*>\s*<feDropShadow[^>]*flood-opacity="0.9"/, "SVG export has a drop-shadow filter");
+assert.match(shSvgText, /<g filter="url\(#md-sh-shbox\)">/, "the element is wrapped in the filtered group");
+// Undo: removing is one step.
+await call("update_elements", { updates: [{ id: "shbox", shadow: null }] });
+scene = await call("get_scene");
+assert.equal(el("shbox").shadow, undefined, "null removes the shadow");
+await call("undo");
+scene = await call("get_scene");
+assert.deepEqual(el("shbox").shadow, hardShadow, "undo brings the shadow back");
+// Icon node: the shadow goes under the icon.
+await call("update_elements", { updates: [{ id: placed.node, shadow: "glow" }] });
+scene = await call("get_scene");
+assert.equal(el(placed.node).shadow, "glow", "icon node shows its (image's) shadow");
+assert.equal(el(placed.node).labelShadow, undefined, "caption left alone");
+await call("update_elements", { updates: [{ id: placed.node, shadow: null }] });
+// Style panel.
+await call("select", { ids: ["shbox"] });
+const SH = `${COL} .md-shadow`;
+await page.waitForSelector(`${SH}[data-mode="selection"]`);
+await page.locator(`${SH} .md-shadow-preset[data-preset="soft"]`).click();
+const shOf = async () => (await call("get_scene")).elements.find((e) => e.id === "shbox").shadow;
+await waitFor(async () => (await shOf()) === "soft", "Soft chip applies the preset");
+assert.equal(await page.locator(`${SH} .md-shadow-preset.on`).getAttribute("data-preset"), "soft", "the chip shows as active");
+// The row looks like Excalidraw's: None + three presets + the "more" button, all Excalidraw-sized, one line.
+const shRow = await page.locator(`${SH} .md-shadow-presets > button`).evaluateAll((bs) => bs.map((b) => ({ p: b.dataset.preset ?? b.dataset.moreKind, w: Math.round(b.getBoundingClientRect().width), top: Math.round(b.getBoundingClientRect().top) })));
+assert.deepEqual(shRow.map((b) => b.p), ["none", "soft", "drop", "shadow"], "shadow row: None, Soft, Drop, more (four, like Excalidraw rows)");
+assert.equal(new Set(shRow.map((b) => b.top)).size, 1, "shadow row on one line");
+const nativeW = await page.locator(`${COL} [data-testid="fill-hachure"]`).evaluate((b) => Math.round(b.getBoundingClientRect().width)).catch(() => null);
+if (nativeW) assert.ok(shRow.every((b) => Math.abs(b.w - nativeW) <= 1), `shadow buttons are Excalidraw-sized (${shRow.map((b) => b.w)} vs ${nativeW})`);
+await page.locator(SH).screenshot({ path: path.join(shots, "shadow-panel-closed.png") });
+const shOpen = async () => {
+  if ((await page.locator('.md-more-pop[data-more-pop="shadow"]').count()) === 0) await page.locator(`${SH} .md-shadow-open`).click();
+  await page.waitForSelector('.md-more-pop[data-more-pop="shadow"]');
+};
+const SHP = '.md-more-pop[data-more-pop="shadow"]';
+await shOpen();
+assert.equal(await page.locator(`${SHP} .md-shadow-tile[data-preset]`).count(), 11, "popover lists every preset");
+await page.locator(`${SHP} .md-shadow-range[data-field="amount"]`).focus();
+await page.keyboard.press("ArrowRight");
+await waitFor(async () => {
+  const s = await shOf();
+  return typeof s === "object" && Math.round(s.blur + s.distance) === 23;
+}, "Amount slider scales blur + distance and commits on release");
+await page.keyboard.press("Escape");
+await call("undo");
+await waitFor(async () => (await shOf()) === "soft", "one Amount change is one undo step");
+await shOpen();
+await page.locator(`${SHP} .md-shadow-color[data-color="#1971c2"]`).click();
+await waitFor(async () => (await shOf())?.color === "#1971c2", "swatch colors the shadow");
+await page.locator(`${SHP} .md-shadow-num[data-field="angle"]`).fill("180");
+await page.locator(`${SHP} .md-shadow-num[data-field="angle"]`).press("Enter");
+await waitFor(async () => (await shOf())?.angle === 180, "typed angle");
+await page.locator(`${SHP} .md-shadow-kind[data-kind="inner"]`).click();
+await waitFor(async () => (await shOf())?.kind === "inner", "kind switch keeps the other values");
+assert.equal((await shOf()).angle, 180, "angle kept when switching kind");
+await page.locator(`${SHP} .md-shadow-tile[data-preset="float"]`).click();
+await waitFor(async () => (await shOf()) === "float", "a popover preset applies");
+await waitFor(async () => (await page.locator(`${SH} .md-shadow-open.active`).count()) === 1, "the more button marks a preset not in the row");
+const shOverflow = await page.evaluate(() => {
+  const menu = document.querySelector(".md-drawing:not([style*='none']) .App-menu__left");
+  return { scroll: menu.scrollWidth - menu.clientWidth, left: menu.scrollLeft };
+});
+assert.ok(shOverflow.scroll <= 0 && shOverflow.left === 0, `the panel never scrolls sideways (${JSON.stringify(shOverflow)})`);
+await page.screenshot({ path: path.join(shots, "shadow-panel.png") });
+await page.keyboard.press("Escape");
+await waitFor(async () => (await page.locator(SHP).count()) === 0, "Esc closes the shadow popover");
+await page.locator(`${SH} .md-shadow-preset[data-preset="none"]`).click();
+await waitFor(async () => (await shOf()) === undefined, "None removes the shadow");
+// Default shadow for new shapes: pick it with nothing selected, then draw a rectangle.
+await call("select", { ids: [] });
+await page.evaluate(() => window.__mydrawTest.api().setActiveTool({ type: "rectangle" }));
+await page.waitForSelector(`${SH}[data-mode="new"]`);
+await page.locator(`${SH} .md-shadow-preset[data-preset="drop"]`).click();
+await waitFor(() => page.evaluate(() => localStorage.getItem("mydraw.newShadow") !== null), "new-shape shadow saved");
+const shDraw = await page.evaluate(() => {
+  const st = window.__mydrawTest.api().getAppState();
+  // scene (2300, 2000) -> page px
+  return { x: (2300 + st.scrollX) * st.zoom.value + st.offsetLeft, y: (2000 + st.scrollY) * st.zoom.value + st.offsetTop };
+});
+const shBefore = (await call("get_scene")).elements.length;
+await page.mouse.move(shDraw.x, shDraw.y);
+await page.mouse.down();
+await page.mouse.move(shDraw.x + 80, shDraw.y + 50, { steps: 5 });
+await page.mouse.up();
+await waitFor(async () => {
+  const els = (await call("get_scene")).elements;
+  return els.length > shBefore && els.some((e) => e.type === "rectangle" && e.shadow === "drop");
+}, "a rectangle drawn by hand gets the default shadow");
+await call("undo");
+await waitFor(async () => (await call("get_scene")).elements.length === shBefore, "drawing + default shadow undo as one step");
+await page.evaluate(() => window.__mydrawTest.api().setActiveTool({ type: "rectangle" }));
+await page.waitForSelector(`${SH}[data-mode="new"]`);
+await page.locator(`${SH} .md-shadow-preset[data-preset="none"]`).click();
+await waitFor(() => page.evaluate(() => localStorage.getItem("mydraw.newShadow") === null), "new-shape shadow cleared");
+await page.evaluate(() => window.__mydrawTest.api().setActiveTool({ type: "selection" }));
+await call("delete_elements", { ids: ["shbox"] });
+await call("select", { ids: [] });
 const mcpJpg = path.join(work, "mcp.jpg");
 await call("export", { path: mcpJpg });
 assert.deepEqual([...fs.readFileSync(mcpJpg).subarray(0, 3)], [0xff, 0xd8, 0xff], "exported JPEG");
@@ -2650,6 +3074,9 @@ const strokeOf = (id) => t((x, id) => x.api().getSceneElements().find((e) => e.i
 const labelStroke = () => t((x) => x.api().getSceneElements().find((e) => e.type === "text" && e.containerId).strokeColor);
 const SW = ".md-drawing:not([style*='none']) .md-style .md-swatch";
 await call("select", { ids: ["bi1"] });
+// The Stroke/Fill choice is sticky (localStorage); the crash step's SIGKILL can lose the write that
+// set it back to Stroke, so pick it here.
+await page.locator(".md-drawing:not([style*='none']) .md-style .md-target[data-target='stroke']").click();
 await page.locator(`${SW}[aria-label="red"]`).click();
 await waitFor(async () => (await strokeOf("bi1")) !== "#1e1e1e", "red applies to bold italic free text");
 const redHex = await strokeOf("bi1");

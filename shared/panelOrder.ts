@@ -33,6 +33,13 @@ export function nativeOrder(present: readonly string[]): string[] {
     out.splice(a, 1);
     out.splice(e, 0, "align");
   }
+  // Shadow is an effect: after the stroke rows (Edges is the last of them), not between Fill and Stroke width.
+  const sh = out.indexOf("shadow");
+  const ed = out.indexOf("edges");
+  if (sh >= 0 && ed > sh) {
+    out.splice(sh, 1);
+    out.splice(out.indexOf("edges") + 1, 0, "shadow");
+  }
   return out;
 }
 

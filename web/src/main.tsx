@@ -1,4 +1,10 @@
 import "./assetPath";
+// Installs the text outline draw hooks the patched Excalidraw renderers call (before any render).
+import "./textOutline";
+// Installs the shadow hooks the patched renderElement / renderElementToSvg call.
+import "./shadowRender";
+// Installs the dash-pattern hook (extra stroke styles) Excalidraw's patched generator options call.
+import "./dashRender";
 import { createRoot } from "react-dom/client";
 import "@excalidraw/excalidraw/index.css";
 import "./styles.css";

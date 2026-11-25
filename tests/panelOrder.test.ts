@@ -18,6 +18,10 @@ describe("panel section order", () => {
   it("native order lifts Align above Edges", () => {
     expect(nativeOrder(["colors", "edges", "opacity", "layers", "align"])).toEqual(["colors", "align", "edges", "opacity", "layers"]);
     expect(nativeOrder(["colors", "opacity", "align"])).toEqual(["colors", "opacity", "align"]);
+    // Shadow (an effect) goes after the stroke rows, right after Edges.
+    expect(nativeOrder(["colors", "shadow", "fill", "stroke-width", "edges", "opacity"])).toEqual(["colors", "fill", "stroke-width", "edges", "shadow", "opacity"]);
+    expect(nativeOrder(["colors", "shadow", "edges", "opacity", "align"])).toEqual(["colors", "align", "edges", "shadow", "opacity"]);
+    expect(nativeOrder(["colors", "shadow", "font-size"])).toEqual(["colors", "shadow", "font-size"]);
   });
 
   it("no saved order = native order", () => {

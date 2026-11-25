@@ -29,7 +29,11 @@ export interface ImportShape {
   fontSize?: number;
   strokeWidth?: number;
   dashed?: boolean;
+  /** draw.io `dashPattern` (units of the stroke width). */
+  dashPattern?: string;
   rounded?: boolean;
+  /** draw.io gradient: second color and direction (north/south/east/west/radial). */
+  gradient?: { color?: string; direction?: string };
   align?: "left" | "center" | "right";
   verticalAlign?: "top" | "middle" | "bottom";
   /** data: URL of an image. */
@@ -41,6 +45,8 @@ export interface ImportShape {
   rotation?: number;
   opacity?: number;
   sketch?: boolean;
+  /** draw.io's drop shadow (`shadow=1`). */
+  shadow?: boolean;
   link?: string;
   data: Record<string, string>;
 }
@@ -58,10 +64,12 @@ export interface ImportEdge {
   strokeWidth?: number;
   fontSize?: number;
   dashed?: boolean;
+  dashPattern?: string;
   startArrow: ImportArrowhead;
   endArrow: ImportArrowhead;
   routing: "straight" | "elbow" | "curved";
   line: boolean;
+  shadow?: boolean;
   data: Record<string, string>;
 }
 
@@ -327,11 +335,13 @@ export function readModel(model: XmlElement, name: string, warnings: Set<string>
       height,
       label: labelText(c),
       fill: color(s.fillColor) ?? (k === "text" || k === "image" ? undefined : k === "zone" || k === "frame" ? undefined : "#ffffff"),
+      gradient: s.gradientColor && s.gradientColor !== "none" ? { color: color(s.gradientColor), direction: s.gradientDirection } : undefined,
       stroke: color(s.strokeColor) ?? (k === "text" || k === "image" ? undefined : "#000000"),
       fontColor: color(s.fontColor),
       fontSize: num(s.fontSize),
       strokeWidth: num(s.strokeWidth),
       dashed: s.dashed === "1",
+      dashPattern: s.dashed === "1" ? s.dashPattern : undefined,
       rounded: s.rounded === "1",
       align: s.align === "left" || s.align === "right" || s.align === "center" ? s.align : undefined,
       verticalAlign: s.verticalAlign === "top" || s.verticalAlign === "bottom" || s.verticalAlign === "middle" ? s.verticalAlign : undefined,
@@ -341,6 +351,7 @@ export function readModel(model: XmlElement, name: string, warnings: Set<string>
       rotation: num(s.rotation),
       opacity: num(s.opacity),
       sketch,
+      ...(s.shadow === "1" ? { shadow: true } : {}),
       link: c.link,
       data: c.data,
     });
@@ -391,10 +402,12 @@ export function readModel(model: XmlElement, name: string, warnings: Set<string>
       strokeWidth: num(s.strokeWidth),
       fontSize: num(s.fontSize),
       dashed: s.dashed === "1",
+      dashPattern: s.dashed === "1" ? s.dashPattern : undefined,
       startArrow: arrowhead(s.startArrow, s.startFill, false),
       endArrow: arrowhead(s.endArrow, s.endFill, true),
       routing,
       line,
+      ...(s.shadow === "1" ? { shadow: true } : {}),
       data: c.data,
     });
   }

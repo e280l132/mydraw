@@ -10,6 +10,9 @@
 // - freedraw, embeds and iframes are skipped (reported in `warnings`)
 import { userData, type SceneEl } from "./sceneGraph";
 import { escapeXml } from "./xml";
+import { shadowKind, shadowOf } from "./shadow";
+import { dashArrayFor, drawioDashPattern, NATIVE_DASH } from "./dash";
+import { drawioDirection, gradientOf } from "./gradient";
 
 export interface DrawioEl extends SceneEl {
   angle?: number;
@@ -143,9 +146,19 @@ function arrowhead(h: string | null | undefined): { arrow: string; fill?: number
 }
 
 function strokeStyle(el: DrawioEl): Record<string, string | number | undefined> {
+  const w = el.strokeWidth ?? 2;
+  // Extra dash styles (shared/dash.ts) as a draw.io dashPattern, in units of the stroke width.
+  const extra = dashArrayFor(el);
+  if (extra) return { dashed: 1, dashPattern: drawioDashPattern(extra, w) };
   if (el.strokeStyle === "dashed") return { dashed: 1 };
-  if (el.strokeStyle === "dotted") return { dashed: 1, dashPattern: "1 4" };
+  if (el.strokeStyle === "dotted") return { dashed: 1, dashPattern: drawioDashPattern(NATIVE_DASH.dotted(w), w) };
   return {};
+}
+
+/** Gradient fill (shared/gradient.ts): draw.io's gradientColor, with four directions or radial. */
+function gradientStyle(el: DrawioEl): Record<string, string | number | undefined> {
+  const g = gradientOf(el as never);
+  return g ? { gradientColor: g.to, gradientDirection: drawioDirection(g) } : {};
 }
 
 function sketch(el: DrawioEl): Record<string, string | number | undefined> {
@@ -158,6 +171,9 @@ function common(el: DrawioEl): Record<string, string | number | undefined> {
   return {
     rotation: el.angle ? r2((el.angle * 180) / Math.PI) : undefined,
     opacity: el.opacity !== undefined && el.opacity < 100 ? el.opacity : undefined,
+    // draw.io has one built-in drop shadow (on/off); the shadow's own settings don't carry over.
+    // draw.io has one kind of shadow (a drop shadow): inner / 3D / ground shadows are left out.
+    shadow: shadowOf(el) && ["drop", "layered"].includes(shadowKind(shadowOf(el))) ? 1 : undefined,
   };
 }
 
@@ -446,6 +462,7 @@ function pageXml(page: DrawioPage, files: Record<string, DrawioFile>, opts: Draw
           whiteSpace: "wrap",
           html: 1,
           fillColor: drawioColor(el.backgroundColor),
+          ...gradientStyle(el),
           strokeColor: drawioColor(el.strokeColor),
           strokeWidth: el.strokeWidth,
           ...strokeStyle(el),

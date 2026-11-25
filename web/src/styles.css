@@ -3003,7 +3003,24 @@ body.md-panel-dragging * {
 .md-ft-btn:hover:not(:disabled) {
   background: var(--button-hover-bg, var(--color-surface-high, #e0dfff));
 }
-.md-ft-btn.active,
+/* A custom value / an extra style is set: accent icon + a dot. Not the "selected option" fill, which
+   belongs to Excalidraw's own buttons in the same row. */
+.md-ft-btn {
+  position: relative;
+}
+.md-ft-btn.active {
+  color: var(--color-primary, #6965db);
+}
+.md-ft-btn.active::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-primary, #6965db);
+}
 .md-ft-btn.open {
   background: var(--color-surface-primary-container, #e0dfff);
   color: var(--color-on-primary-container, inherit);
@@ -3083,6 +3100,244 @@ body.md-panel-dragging * {
   color: var(--color-gray-50, #888);
   font-size: 0.7rem;
   line-height: 1.35;
+}
+
+/* Sub-window title bar (web/src/MorePopover.tsx): drag it to float the window anywhere. */
+.md-float-head {
+  align-items: center;
+  gap: 0.35rem;
+  margin: -0.35rem -0.4rem 0.45rem -0.35rem;
+  padding: 0.2rem 0.2rem 0.2rem 0.3rem;
+  border-radius: var(--border-radius-md, 6px);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.md-float-head:hover {
+  background: var(--button-hover-bg, rgba(127, 127, 127, 0.1));
+}
+.md-float-head:active {
+  cursor: grabbing;
+}
+.md-float-grip {
+  display: inline-flex;
+  color: var(--color-gray-40, #aaa);
+}
+.md-float-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-float-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--border-radius-md, 6px);
+  background: transparent;
+  color: var(--color-gray-50, #888);
+  cursor: pointer;
+}
+.md-float-btn:hover {
+  background: var(--button-hover-bg, rgba(127, 127, 127, 0.2));
+  color: var(--text-primary-color, inherit);
+}
+/* A floated window: a firmer shadow and an accent edge, so it reads as a window of its own. */
+.md-ft-pop.md-floating {
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22), 0 0 0 1px color-mix(in srgb, var(--color-primary, #6965db) 35%, transparent);
+}
+
+/* "More…" buttons on Excalidraw's Fill / Stroke style rows and their popover (web/src/StyleMore.tsx).
+   The button reuses .md-ft-btn; tiles show the real style, drawn by roughjs. */
+.md-more-host {
+  display: contents;
+}
+.md-more-btn svg {
+  max-width: 1.25rem;
+  max-height: 1.25rem;
+}
+.md-more-pop {
+  width: 16.5rem;
+}
+.md-more-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.35rem;
+}
+.md-more-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0.3rem 0.1rem 0.25rem;
+  border: none;
+  border-radius: var(--border-radius-lg, 8px);
+  background: var(--button-bg, var(--color-surface-mid, #f1f0ff));
+  color: var(--button-color, var(--text-primary-color, inherit));
+  font: inherit;
+  font-size: 0.68rem;
+  line-height: 1.1;
+  cursor: pointer;
+}
+.md-more-tile span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-more-tile:hover {
+  background: var(--button-hover-bg, var(--color-surface-high, #e0dfff));
+}
+.md-more-grid-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+.md-more-tile-row {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 0.4rem;
+  padding: 0.4rem 0.45rem;
+}
+/* One of our dash styles is set: Excalidraw still marks its fallback (Dashed / Dotted) as selected. */
+.excalidraw .buttonList[data-md-custom] label.active {
+  background-color: var(--button-bg, var(--island-bg-color));
+  border-color: var(--button-border, var(--default-border-color));
+}
+/* Gradient editor in the Fill popover (StyleMore.tsx). */
+.md-grad {
+  margin-top: 0.6rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.1));
+}
+.md-grad-head {
+  align-items: center;
+}
+.md-grad-remove {
+  flex: 0 0 auto;
+  padding: 0.1rem 0.5rem;
+  font-weight: 500;
+}
+.md-grad-presets {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 0.3rem;
+}
+.md-grad-preset {
+  width: auto;
+  aspect-ratio: 1;
+}
+.md-grad-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+.md-grad-color {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.md-grad-swap {
+  flex: 0 0 2rem;
+}
+.md-grad-well {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+.md-grad-kind {
+  flex: 1 1 auto;
+}
+.md-grad-dot {
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+.md-grad .md-color-picker,
+.md-more-pop .md-cp {
+  margin-top: 0.45rem;
+}
+.excalidraw .buttonList[data-md-custom] button.active {
+  background-color: var(--button-bg, var(--island-bg-color));
+  border-color: var(--button-border, var(--default-border-color));
+}
+.md-shadow-kinds {
+  margin-bottom: 0.2rem;
+}
+.md-shadow-kinds button {
+  min-width: 0;
+  padding: 4px 2px;
+  font-size: 0.7rem;
+}
+/* Presets / Themes toolbar: the search box (or the scope switch) with New and Manage icon buttons. */
+.md-tools {
+  display: flex;
+  align-items: stretch;
+  gap: 0.3rem;
+  width: 100%;
+  margin: 0.15rem 0 0.4rem;
+}
+.md-tools > .md-style-select,
+.md-tools > .md-seg {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+.md-icon-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  padding: 0;
+  border: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.15));
+  border-radius: var(--border-radius-md, 6px);
+  background: var(--button-bg, transparent);
+  color: var(--text-primary-color, inherit);
+  cursor: pointer;
+}
+.md-icon-btn:hover {
+  background: var(--button-hover-bg, rgba(127, 127, 127, 0.12));
+}
+.md-icon-btn.on {
+  border-color: var(--color-primary, #6965db);
+  color: var(--color-primary, #6965db);
+}
+/* Stroke / Fill / Icon / Outline sit right under the Colors / Presets / Themes tabs: an outlined pick, so
+   the two rows don't read as two identical tab bars. */
+.md-seg.md-targets button.on {
+  background: color-mix(in srgb, var(--color-primary, #6965db) 12%, transparent);
+  color: var(--color-primary, #6965db);
+  box-shadow: inset 0 0 0 1px var(--color-primary, #6965db);
+}
+/* Section header badge: what the section changes when nothing is selected. */
+.md-head-badge {
+  flex: none;
+  margin-left: auto;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--color-surface-mid, rgba(127, 127, 127, 0.15));
+  color: var(--color-gray-60, #777);
+  font-size: 0.62rem;
+  font-weight: 500;
+  line-height: 1.1rem;
+  white-space: nowrap;
+}
+.md-head-badge + .md-pin-btn {
+  margin-left: 0.3rem;
+}
+.md-more-tile.on {
+  background: var(--color-surface-primary-container, #e0dfff);
+  box-shadow: 0 0 0 1px var(--color-primary, #6965db);
 }
 
 /* Our panel sections are fieldsets, whose default `min-width: min-content` let them grow wider than
@@ -3255,4 +3510,203 @@ body.md-panel-dragging * {
 .md-font-keep:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Text outline width (Colors tab, Outline target): "Width [n] px [None]", then a full-width slider
+   (the panel is too narrow for both on one line). */
+.md-outline-width {
+  margin-top: 0.4rem;
+  font-size: 0.8rem;
+}
+.md-outline-width-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.md-outline-width-label {
+  flex: 1;
+  color: var(--color-gray-70, #555);
+}
+.md-outline-width-unit {
+  color: var(--color-gray-50, #888);
+}
+.md-outline-width .md-outline-num {
+  flex: none;
+  width: 3.4rem;
+}
+.md-outline-width .md-outline-none {
+  flex: none;
+}
+.md-outline-width .md-outline-range {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+}
+
+/* Stroke / Fill / Icon / Outline: chips sized by their label (equal shares clipped "Outline") and
+   tight enough for three on one line; with all four (icons + text selected) they wrap. */
+.md-iconcolor-actions.md-targets .md-chip {
+  flex: 1 1 auto;
+  gap: 3px;
+  padding: 0 0.2rem;
+  font-size: 0.7rem;
+}
+.md-iconcolor-actions.md-targets .md-well {
+  width: 0.7rem;
+  height: 0.7rem;
+}
+.md-iconcolor-actions.md-targets.md-targets-4 {
+  flex-wrap: wrap;
+}
+/* No focus box around the outline width slider after a mouse drag (keyboard focus keeps one). */
+.md-outline-width .md-outline-range:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
+/* ---------- Shadow section (web/src/ShadowSection.tsx) ---------- */
+.md-shadow .md-legend-text {
+  flex: 1;
+}
+.md-shadow-status {
+  font-size: 0.68rem;
+  color: var(--color-gray-50, #888);
+  margin-right: 0.25rem;
+}
+/* The section's row is an Excalidraw .buttonList (its own button look); ours mark the pick with .on. */
+.md-shadow-presets {
+  width: 100%;
+}
+.excalidraw .buttonList button.md-shadow-preset.on {
+  background-color: var(--button-selected-bg, var(--color-surface-primary-container));
+  border-color: var(--button-selected-border, var(--color-surface-primary-container));
+}
+.md-shadow-sample {
+  display: block;
+  width: 1.05rem;
+  height: 0.8rem;
+  margin: -2px 2px 2px -2px;
+  border-radius: 3px;
+  border: 1px solid #adb5bd;
+  background: #fff;
+}
+.md-shadow-sample.none {
+  border-style: dashed;
+  background: transparent;
+}
+.md-shadow-all {
+  margin-bottom: 0.55rem;
+}
+.md-shadow-tile .md-shadow-sample {
+  margin: 4px 4px 6px 2px;
+}
+.md-shadow-slider {
+  margin-top: 0.45rem;
+  font-size: 0.8rem;
+}
+.md-shadow-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.md-shadow-slider-label {
+  flex: 1;
+  color: var(--color-gray-70, #555);
+}
+.md-shadow-unit {
+  width: 1rem;
+  color: var(--color-gray-50, #888);
+}
+.md-shadow-slider .md-shadow-num {
+  flex: none;
+  width: 3.4rem;
+}
+.md-shadow-slider .md-shadow-range {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+}
+.md-shadow-slider .md-shadow-range:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+.md-shadow-colors {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.3rem;
+  margin-top: 0.55rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+.md-shadow-colors .md-swatch {
+  width: 100%;
+  height: 1.4rem;
+}
+.md-shadow-actions {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+.md-shadow-actions .md-chip {
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: center;
+  padding: 0 0.3rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.md-shadow-slider-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-shadow-labels {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.md-shadow-more {
+  margin-top: 0.35rem;
+}
+.md-shadow-dial {
+  position: relative;
+  flex: none;
+  width: 1.3rem;
+  height: 1.3rem;
+  border: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.25));
+  border-radius: 50%;
+  cursor: grab;
+  touch-action: none;
+}
+.md-shadow-dial::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: var(--color-gray-50, #888);
+}
+.md-shadow-dial-dot {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--color-primary, #6965db);
+  pointer-events: none;
+}
+.md-shadow-note {
+  margin-top: 0.4rem;
+  font-size: 0.7rem;
+  color: var(--color-gray-50, #888);
 }

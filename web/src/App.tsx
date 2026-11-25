@@ -33,6 +33,7 @@ import { tagArrangeSection } from "./arrange";
 import { applyPanelOrder, installPanelDrag, setArranging } from "./panelOrder";
 import { PanelFooter } from "./PanelFooter";
 import { attachFineTuneHosts, FineTune, sameHosts, type FineTuneHosts } from "./FineTune";
+import { attachStyleMoreHosts, sameMoreHosts, StyleMore, type StyleMoreHosts } from "./StyleMore";
 import { snapSelectionToGrid } from "./gridOps";
 import { DEFAULT_GRID, type GridSettings } from "../../shared/grid";
 import { InventoryDialog } from "./InventoryDialog";
@@ -56,6 +57,8 @@ import type { DrawingMeta } from "../../shared/drawingMeta";
 import { StyleSection } from "./StyleSection";
 import { PropertiesSection } from "./PropertiesSection";
 import { followZones, type Positions } from "./zoneFollow";
+import { ShadowSection } from "./ShadowSection";
+import { newTracker, stampNewShadows, type NewShadowTracker } from "./shadowOps";
 import { colorOfElement, elementAt } from "./library/pickColor";
 import { IconRecolorSession, NO_ICONS, iconSelection, recolorSelectedIcons, type IconSelection } from "./library/iconColor";
 import { STENCIL_DRAG_TYPE, StencilPanel } from "./library/StencilPanel";
@@ -308,11 +311,14 @@ export function App() {
   const iconsKey = useRef("");
   const selKey = useRef("");
   const zonePositions = useRef(new Map<string, Positions>());
+  // Default shadow for shapes the user draws (Shadow section with nothing selected).
+  const shadowTrackers = useRef(new Map<string, NewShadowTracker>());
   const [selTick, setSelTick] = useState(0);
   // Selection + any change to a selected element (version): fine-tune sliders, Properties section.
   const tuneKey = useRef("");
   const [tuneTick, setTuneTick] = useState(0);
   const [ftHosts, setFtHosts] = useState<FineTuneHosts>({});
+  const [moreHosts, setMoreHosts] = useState<StyleMoreHosts>({});
   const [textStyleHost, setTextStyleHost] = useState<HTMLElement | null>(null);
 
   // Refs hold the latest values for callbacks fired by Excalidraw, IPC and timers.
@@ -475,6 +481,11 @@ export function App() {
       if (appState.isLoading) return;
       const zoneApi = apis.current.get(id);
       if (zoneApi) zonePositions.current.set(id, followZones(zoneApi, zonePositions.current.get(id), elements, appState));
+      if (zoneApi) {
+        let tr = shadowTrackers.current.get(id);
+        if (!tr) shadowTrackers.current.set(id, (tr = newTracker()));
+        stampNewShadows(zoneApi, tr, elements, appState);
+      }
       if (id === activeRef.current) {
         const sel = appState.viewModeEnabled ? NO_ICONS : iconSelection(elements, appState, files);
         const sk = Object.keys(appState.selectedElementIds).sort().join(",");
@@ -702,6 +713,8 @@ export function App() {
       tagArrangeSection(column);
       const ft = attachFineTuneHosts(column);
       setFtHosts((prev) => (sameHosts(prev, ft) ? prev : ft));
+      const more = attachStyleMoreHosts(column);
+      setMoreHosts((prev) => (sameMoreHosts(prev, more) ? prev : more));
       const tsHost = attachTextStyleHost(column);
       setTextStyleHost((prev) => (prev === tsHost ? prev : tsHost));
       // Section order (drag a section by its title; global setting): inline CSS `order`.
@@ -1607,7 +1620,7 @@ export function App() {
         api()
           .getSceneElements()
           .filter((e) => e.type === type)
-          .map((e) => ({ id: e.id, strokeColor: e.strokeColor, backgroundColor: e.backgroundColor, roughness: e.roughness, strokeStyle: e.strokeStyle, strokeWidth: e.strokeWidth, roundness: e.roundness })),
+          .map((e) => ({ id: e.id, strokeColor: e.strokeColor, backgroundColor: e.backgroundColor, roughness: e.roughness, strokeStyle: e.strokeStyle, fillStyle: e.fillStyle, customData: e.customData ?? null, strokeWidth: e.strokeWidth, roundness: e.roundness })),
       viewBackground: () => api().getAppState().viewBackgroundColor,
       imageColors: () =>
         api()
@@ -1651,8 +1664,9 @@ export function App() {
             onGridHealth={onGridHealth}
           />
         ))}
-        {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} changeTick={tuneTick} onToast={showToast} custom={customColor} palette={palette} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} pinned={panelPinned} onTogglePin={togglePinPanel} /><PropertiesSection api={apis.current.get(activeId)} tick={tuneTick} /></>, styleHost)}
+        {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} changeTick={tuneTick} onToast={showToast} custom={customColor} palette={palette} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} pinned={panelPinned} onTogglePin={togglePinPanel} /><ShadowSection key={`shadow-${activeId}`} api={apis.current.get(activeId)} tick={tuneTick + selTick} palette={palette} onToast={showToast} /><PropertiesSection api={apis.current.get(activeId)} tick={tuneTick} /></>, styleHost)}
         <FineTune api={apis.current.get(activeId)} tick={tuneTick} hosts={ftHosts} />
+        <StyleMore api={apis.current.get(activeId)} tick={tuneTick} hosts={moreHosts} />
         <TextStyle api={apis.current.get(activeId)} tick={tuneTick} host={textStyleHost} onToast={showToast} />
         {footHost &&
           createPortal(

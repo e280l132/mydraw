@@ -1,6 +1,10 @@
 // Themes (whole-diagram looks) and style presets (named element styles). Pure data + helpers.
+import { resolveShadowInput, SHADOW_PRESETS, type Shadow } from "./shadow";
 import { fontIdFor } from "./fonts";
-import { requireColor } from "./palettes";
+import { requireColor, resolveColor } from "./palettes";
+import { GRADIENT_PRESETS, resolveGradientInput, type Gradient } from "./gradient";
+import { requireFillStyle, type FillStyleId } from "./fills";
+import { requireStrokeStyle, type StrokeStyleName } from "./dash";
 
 /** Excalidraw 0.18 font family ids. */
 export const FONTS: Record<string, number> = {
@@ -38,8 +42,9 @@ function normalizeFont(font: unknown): string | undefined {
 const FONT_HELP = `fontFamily must be one of ${Object.keys(FONTS).join(", ")} or a font name from list_fonts (e.g. "Inter", "Caveat Bold")`;
 
 export type Roundness = "sharp" | "round";
-export type FillStyle = "solid" | "hachure" | "cross-hatch" | "zigzag";
-export type StrokeStyle = "solid" | "dashed" | "dotted";
+export type FillStyle = FillStyleId;
+/** Excalidraw's three plus the extra dash styles (shared/dash.ts). */
+export type StrokeStyle = StrokeStyleName;
 
 /** Properties a style can set. Colors may be names; they are resolved when applied. */
 export interface StyleSpec {
@@ -53,6 +58,10 @@ export interface StyleSpec {
   roundness?: Roundness;
   fontFamily?: string;
   fontSize?: number;
+  /** Shadow (shared/shadow.ts); null removes one. */
+  shadow?: Shadow | null;
+  /** Gradient fill for rectangles, diamonds and ellipses (shared/gradient.ts); null = flat fill. */
+  gradient?: Gradient | null;
 }
 
 export interface StylePreset {
@@ -205,6 +214,13 @@ export const BUILTIN_PRESETS: StylePreset[] = [
   P("note", "Sticky note", "Emphasis", "Yellow note card.", { strokeColor: "yellow-700", backgroundColor: "yellow-100", fillStyle: "solid", strokeWidth: 1, roundness: "sharp" }),
   P("outline", "Outline only", "Emphasis", "No fill, normal outline.", { backgroundColor: "transparent", strokeWidth: 2 }),
   P("solid-dark", "Solid dark", "Emphasis", "Dark fill, for headers and primary boxes.", { strokeColor: "slate-900", backgroundColor: "slate-700", fillStyle: "solid" }),
+  P("card", "Card", "Emphasis", "White card with a soft shadow.", { strokeColor: "gray-300", backgroundColor: "white", fillStyle: "solid", strokeWidth: 1, roundness: "round", shadow: { ...SHADOW_PRESETS.soft.shadow } }),
+  P("floating", "Floating", "Emphasis", "Lifted off the page: wide faint shadow.", { shadow: { ...SHADOW_PRESETS.lifted.shadow } }),
+  P("glow", "Glow", "Emphasis", "Blue glow around the item.", { shadow: { ...SHADOW_PRESETS.glow.shadow } }),
+  P("no-shadow", "No shadow", "Emphasis", "Remove the shadow.", { shadow: null }),
+  P("gradient-sky", "Sky gradient", "Emphasis", "Light-to-blue gradient fill with a blue outline.", { strokeColor: "blue-700", gradient: { ...GRADIENT_PRESETS.sky.gradient } }),
+  P("gradient-sunset", "Sunset gradient", "Emphasis", "Yellow-to-red gradient fill.", { strokeColor: "red-700", gradient: { ...GRADIENT_PRESETS.sunset.gradient } }),
+  P("flat-fill", "Flat fill", "Emphasis", "Remove a gradient (keeps its start color).", { gradient: null }),
 
   P("title", "Title", "Text", "Large heading.", { fontSize: 36 }),
   P("subtitle", "Subtitle", "Text", "Medium heading.", { fontSize: 24 }),
@@ -213,8 +229,6 @@ export const BUILTIN_PRESETS: StylePreset[] = [
   P("code", "Code", "Text", "Monospaced text.", { fontFamily: "cascadia", fontSize: 14 }),
 ];
 
-const FILLS: FillStyle[] = ["solid", "hachure", "cross-hatch", "zigzag"];
-const STROKES: StrokeStyle[] = ["solid", "dashed", "dotted"];
 
 /** Validate an untrusted style object (from MCP or localStorage); colors are checked, not resolved. */
 export function normalizeStyle(raw: unknown): StyleSpec {
@@ -227,14 +241,8 @@ export function normalizeStyle(raw: unknown): StyleSpec {
       out[k] = String(r[k]);
     }
   }
-  if (r.fillStyle !== undefined) {
-    if (!FILLS.includes(r.fillStyle as FillStyle)) throw new Error(`fillStyle must be one of ${FILLS.join(", ")}`);
-    out.fillStyle = r.fillStyle as FillStyle;
-  }
-  if (r.strokeStyle !== undefined) {
-    if (!STROKES.includes(r.strokeStyle as StrokeStyle)) throw new Error(`strokeStyle must be one of ${STROKES.join(", ")}`);
-    out.strokeStyle = r.strokeStyle as StrokeStyle;
-  }
+  if (r.fillStyle !== undefined) out.fillStyle = requireFillStyle(r.fillStyle);
+  if (r.strokeStyle !== undefined) out.strokeStyle = requireStrokeStyle(r.strokeStyle);
   for (const [k, lo, hi] of [["strokeWidth", 0.5, 12], ["roughness", 0, 2], ["opacity", 0, 100], ["fontSize", 6, 200]] as const) {
     if (r[k] !== undefined) {
       const n = Number(r[k]);
@@ -250,6 +258,16 @@ export function normalizeStyle(raw: unknown): StyleSpec {
     const f = normalizeFont(r.fontFamily);
     if (f === undefined) throw new Error(FONT_HELP);
     out.fontFamily = f;
+  }
+  if (r.shadow !== undefined) out.shadow = resolveShadowInput(r.shadow) ?? null;
+  if (r.gradient !== undefined) {
+    let g = r.gradient;
+    if (g && typeof g === "object") {
+      const o = { ...(g as Record<string, unknown>) };
+      for (const k of ["from", "to"] as const) if (o[k] !== undefined) o[k] = resolveColor(String(o[k])) ?? o[k];
+      g = o;
+    }
+    out.gradient = resolveGradientInput(g) ?? null;
   }
   return out;
 }
@@ -268,12 +286,14 @@ export function stylePatch(style: StyleSpec, kind: "shape" | "text" | "line"): E
     if (style.roughness !== undefined) p.roughness = style.roughness;
   }
   if (style.opacity !== undefined) p.opacity = style.opacity;
+  if (style.shadow !== undefined) p.shadow = style.shadow;
   if (kind === "shape") {
     if (style.backgroundColor !== undefined) {
       p.backgroundColor = requireColor(style.backgroundColor, "backgroundColor");
       if (style.fillStyle === undefined && p.backgroundColor !== "transparent") p.fillStyle = "solid";
     }
     if (style.fillStyle !== undefined) p.fillStyle = style.fillStyle;
+    if (style.gradient !== undefined) p.gradient = style.gradient;
     if (style.roundness !== undefined) p.roundness = style.roundness === "round" ? { type: 3 } : null;
   }
   if (kind === "text") {

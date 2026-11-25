@@ -24,6 +24,16 @@ export function commitElements(
   });
 }
 
+/** Put `els` into the scene (merged by id) without an undo entry: slider previews and their restore. */
+export function replaceQuietly(api: ExcalidrawImperativeAPI, els: readonly ExcalidrawElement[]) {
+  if (!els.length) return;
+  const byId = new Map(els.map((e) => [e.id, e]));
+  api.updateScene({
+    elements: api.getSceneElementsIncludingDeleted().map((e) => byId.get(e.id) ?? e),
+    captureUpdate: CaptureUpdateAction.NEVER,
+  });
+}
+
 const commitStyle = (api: ExcalidrawImperativeAPI, r: StyleResult, appState?: Partial<AppState>) =>
   commitElements(api, r.changed, r.added, appState);
 

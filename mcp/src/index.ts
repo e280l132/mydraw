@@ -191,6 +191,7 @@ const server = new McpServer(
       "Icons (AWS, Azure, GCP, Kubernetes, network, logos) come from the stencil library: search_stencils then place_stencil (or `icon` on a build_diagram node); connect arrows to the returned node id.",
       "Zones (VPC, subnet, VLAN, ...) are locked tinted boxes; moving a zone moves what is inside it.",
       "Draw clean diagrams: about 40 arrows at most, one arrow to a zone instead of many to its nodes, labels only on short arrows, one colour per kind of relationship. After build_diagram read `quality` (and `advice`), run lint_diagram (it finds arrows on top of each other or through nodes, labels in the way; fix:true repairs labels and re-routes) and look at a screenshot before telling the user it is done. Save the drawing to a file when it is finished: an unsaved drawing is lost if the app quits.",
+      "Styling beyond Excalidraw's own: fillStyle patterns (hachure, cross-hatch, solid, zigzag, zigzag-line, dots, dashed), gradient fills on rectangles/diamonds/ellipses (`gradient`: a preset like \"sky\" or {from, to, kind: linear|radial, angle}), extra dash styles (strokeStyle short-dash, long-dash, dash-dot, dash-dot-dot, fine-dot, sparse-dot), shadow kinds (drop, inner, layered, extrude = 3D, contact = ground; presets soft, drop, lifted, hard, glow, long, inner, elevated, neon, extrude, float) and text outlines. They work in add_elements, update_elements, build_diagram nodes/edges/zones and style presets, and show in every export.",
       "Every tool takes an optional `drawing` (tab id, file path or title); default is the active drawing.",
     ].join("\n"),
   },
@@ -199,6 +200,12 @@ const server = new McpServer(
 const drawing = z.string().optional().describe("Tab id, file path or title of an open drawing. Default: the active drawing.");
 const ids = z.array(z.string()).describe("Element ids");
 const loose = z.record(z.string(), z.any());
+const shadowArg = z
+  .union([z.boolean(), z.enum(["soft", "drop", "lifted", "hard", "glow", "long", "inner", "elevated", "neon", "extrude", "float", "none"]), loose, z.null()])
+  .optional()
+  .describe(
+    "Shadow: true (soft), a preset (soft, drop, lifted, hard, glow, long, inner, elevated, neon, extrude = 3D block, float = ground shadow), {preset?, kind (drop | inner | layered | extrude | contact), color (hex), opacity 0-1, blur 0-80, distance 0-80, angle (degrees, 90 = straight down), amount 0-100 (blur + distance)}, or null/none to remove",
+  );
 
 function ok(result: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 1) }] };
@@ -330,8 +337,8 @@ tool(
   "add_elements",
   [
     "Add elements from Excalidraw element skeletons (all added as one undo step). Each needs type, x, y; id optional (returned).",
-    'Shapes: {type:"rectangle"|"ellipse"|"diamond", x, y, width, height, label:"text" or {text, fontSize}, strokeColor, backgroundColor, fillStyle:"solid"|"hachure"|"cross-hatch", strokeWidth, strokeStyle:"solid"|"dashed"|"dotted", roundness:{type:3}|null}.',
-    'Text: {type:"text", x, y, text, fontSize, fontFamily (a name from list_fonts, e.g. "Inter Bold" or "Caveat"), textAlign}; labels take fontFamily too. Frames: {type:"frame", x, y, width, height, name, children:[ids]}.',
+    'Shapes: {type:"rectangle"|"ellipse"|"diamond", x, y, width, height, label:"text" or {text, fontSize}, strokeColor, backgroundColor, fillStyle:"solid"|"hachure"|"cross-hatch"|"zigzag"|"zigzag-line"|"dots"|"dashed", strokeWidth, strokeStyle:"solid"|"dashed"|"dotted"|"short-dash"|"long-dash"|"dash-dot"|"dash-dot-dot"|"fine-dot"|"sparse-dot", roundness:{type:3}|null}.',
+    'Text: {type:"text", x, y, text, fontSize, fontFamily (a name from list_fonts, e.g. "Inter Bold" or "Caveat"), textAlign, textOutline:{color, width?} (outline around the letters)}; labels take fontFamily too. Any shape, text, line, arrow, freedraw or image takes shadow: true | "soft"|"drop"|"lifted"|"hard"|"glow"|"long"|"inner"|"elevated"|"neon"|"extrude"|"float" | {preset?, kind: drop|inner|layered|extrude|contact, color, opacity, blur, distance, angle, amount}. Rectangles, diamonds and ellipses take gradient: "sky"|"sunset"|"mint"|"grape"|"slate"|"peach"|"glow"|"spot" (preset) or {from, to (names or hex), kind: "linear"|"radial", angle (degrees, 90 = top to bottom)}. Frames: {type:"frame", x, y, width, height, name, children:[ids]}.',
     'Arrows/lines: {type:"arrow"|"line", from:id, to:id, label, routing:"straight"|"elbow"|"curved"} draws a bound connector edge to edge (ids may be earlier in the same call or already in the drawing); or give x, y, points:[[0,0],[dx,dy],...] for a free line.',
     "Colors are hex. Unset style fields use the drawing's current style.",
   ].join("\n"),
@@ -356,7 +363,7 @@ tool(
       .object({
         strokeColor: z.string().optional(),
         strokeWidth: z.number().optional(),
-        strokeStyle: z.enum(["solid", "dashed", "dotted"]).optional(),
+        strokeStyle: z.enum(["solid", "dashed", "dotted", "short-dash", "long-dash", "dash-dot", "dash-dot-dot", "fine-dot", "sparse-dot"]).optional(),
         roughness: z.number().optional(),
         opacity: z.number().optional(),
       })
@@ -367,8 +374,9 @@ tool(
 tool(
   "update_elements",
   [
-    "Change elements: [{id, ...fields}]. Fields: x, y, dx, dy, width, height, angle, strokeColor, backgroundColor, fillStyle, strokeWidth, strokeStyle, roughness, opacity, roundness, text, fontSize, fontFamily, textAlign, link, locked, name (frames), startArrowhead, endArrowhead,",
-    "label (shape/arrow label text, icon-node caption or zone title; null removes it), data (merged into custom properties, e.g. {ip, hostname}), routing (arrows: straight|elbow|curved).",
+    "Change elements: [{id, ...fields}]. Fields: x, y, dx, dy, width, height, angle, strokeColor, backgroundColor, fillStyle (solid|hachure|cross-hatch|zigzag|zigzag-line|dots|dashed), strokeWidth, strokeStyle (solid|dashed|dotted|short-dash|long-dash|dash-dot|dash-dot-dot|fine-dot|sparse-dot), roughness, opacity, roundness, text, fontSize, fontFamily, textAlign, link, locked, name (frames), startArrowhead, endArrowhead,",
+    "label (shape/arrow label text, icon-node caption or zone title; null removes it), data (merged into custom properties, e.g. {ip, hostname}), routing (arrows: straight|elbow|curved), textOutline ({color, width?} = a colored outline around the letters, width 0.5-16 px, default 2, drawn at most fontSize/4; on a shape or arrow it outlines the label; null removes it),",
+    "shadow (true = soft, a preset soft|drop|lifted|hard|glow|long|inner|elevated|neon|extrude|float, or {preset?, kind drop|inner|layered|extrude|contact, color hex, opacity 0-1, blur 0-80, distance 0-80, angle degrees with 90 = down, amount 0-100}; null removes; on an icon node it goes under the icon), shadowLabel (true: the label or caption gets the same shadow; false removes it). gradient (rectangles/diamonds/ellipses: preset sky|sunset|mint|grape|slate|peach|glow|spot, or {from, to, kind linear|radial, angle}; null = flat fill).",
     "Moved or resized shapes keep their label centred and their arrows attached.",
   ].join(" "),
   { drawing, updates: z.array(loose) },
@@ -395,7 +403,7 @@ tool("undo", "Undo the last change(s) in a drawing (each tool call is one step).
 tool("redo", "Redo undone change(s).", { drawing, steps: z.number().int().optional() }, call("redo"));
 
 // diagrams
-const lineStyle = z.enum(["solid", "dashed", "dotted"]);
+const lineStyle = z.enum(["solid", "dashed", "dotted", "short-dash", "long-dash", "dash-dot", "dash-dot-dot", "fine-dot", "sparse-dot"]);
 const node = z
   .object({
     id: z.string().describe("Your id for the node (becomes the element id)"),
@@ -408,6 +416,13 @@ const node = z
       .describe("For nodes without an icon (default rectangle). cylinder = database, cloud = internet/SaaS, queue = message queue, document = file/report, actor = person (label under it), server = server (label under it), hexagon = service, folder = storage"),
     emphasis: z.enum(["primary", "muted"]).optional().describe("primary: thicker border and bold label (the main components); muted: grey and thin (external or less important)"),
     subtitle: z.string().optional().describe("Second, smaller grey line under the label, e.g. an IP address or a role"),
+    shadow: shadowArg,
+    gradient: z
+      .union([z.string(), loose, z.null()])
+      .optional()
+      .describe('Shape nodes: gradient fill, a preset (sky, sunset, mint, grape, slate, peach, glow, spot) or {from, to (names or hex), kind: "linear"|"radial", angle (90 = top to bottom)}; overrides fill'),
+    fillStyle: z.enum(["solid", "hachure", "cross-hatch", "zigzag", "zigzag-line", "dots", "dashed"]).optional().describe("Shape nodes: fill pattern (default solid)"),
+    strokeStyle: lineStyle.optional().describe("Shape nodes: border style (default solid)"),
     zone: z.string().optional().describe("Id of the zone the node sits in"),
     color: z.string().optional().describe("Stroke/text color (hex)"),
     fill: z.string().optional().describe("Fill color (hex), default white"),
@@ -483,6 +498,7 @@ tool(
     zones: z.array(zone).optional(),
     ...layoutOpts,
     iconSize: z.number().optional().describe("Icon size (longest side), default 64"),
+    shadow: shadowArg.describe("Default shadow for every node (a node's own shadow wins); e.g. \"soft\" for a card look. Same values as node shadow"),
     ...placeOpts,
   },
   call("build_diagram"),
@@ -663,7 +679,7 @@ tool(
 );
 tool(
   "apply_style_preset",
-  "Apply a named style preset (see list_themes; e.g. 'DMZ', 'Critical') or an inline style to elements. Labels follow. style fields: strokeColor, backgroundColor (names or hex), fillStyle, strokeWidth, strokeStyle (solid|dashed|dotted), roughness, opacity (0-100), roundness (sharp|round), fontFamily (slug like cascadia or a list_fonts name like \"Inter Bold\"), fontSize.",
+  "Apply a named style preset (see list_themes; e.g. 'DMZ', 'Critical') or an inline style to elements. Labels follow. style fields: strokeColor, backgroundColor (names or hex), fillStyle, strokeWidth, strokeStyle (solid|dashed|dotted|short-dash|long-dash|dash-dot|dash-dot-dot|fine-dot|sparse-dot), roughness, opacity (0-100), roundness (sharp|round), fontFamily (slug like cascadia or a list_fonts name like \"Inter Bold\"), fontSize, shadow (preset name or object, null removes), gradient (preset name or {from, to, kind, angle}; rectangles/diamonds/ellipses; null = flat fill). fillStyle: solid|hachure|cross-hatch|zigzag|zigzag-line|dots|dashed.",
   {
     drawing,
     ids,

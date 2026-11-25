@@ -1,6 +1,9 @@
 // Diagram generation for agent commands: icon nodes, zones, ELK-laid-out diagrams (build_diagram,
 // mermaid_to_scene, apply_template), legends and auto layout of existing elements. Like sceneOps,
 // nothing here calls updateScene: callers commit the returned elements as one undo step.
+import { withShadow } from "../../../shared/shadow";
+import { DASH_KEY, dashPatch, isDashId, type StrokeStyleName } from "../../../shared/dash";
+import { canGradient, gradientPatch } from "../../../shared/gradient";
 import { convertToExcalidrawElements, newElementWith } from "@excalidraw/excalidraw";
 import type { ExcalidrawImageElement, FileId } from "@excalidraw/excalidraw/element/types";
 import type { AppState, BinaryFileData, BinaryFiles, DataURL } from "@excalidraw/excalidraw/types";
@@ -209,7 +212,7 @@ export interface ZoneOptions {
   box: Box;
   stroke: string;
   fill: string;
-  style?: "solid" | "dashed" | "dotted";
+  style?: StrokeStyleName;
   strokeWidth?: number;
   roughness: number;
   fontFamily: number;
@@ -234,14 +237,15 @@ export function makeZone(o: ZoneOptions): El[] {
         backgroundColor: o.fill,
         fillStyle: "solid",
         strokeWidth: o.strokeWidth ?? 2,
-        strokeStyle: o.style ?? "solid",
+        // Extra dash styles: the fallback here, the pattern in customData (below).
+        strokeStyle: dashPatch(null, isDashId(o.style) ? o.style : null, isDashId(o.style) ? "dashed" : (o.style ?? "solid")).strokeStyle,
         roughness: o.roughness,
         roundness: { type: 3 },
       } as never,
     ],
     { regenerateIds: false },
   );
-  const data: Loose = { ...(o.customData ?? {}), mydrawZone: true };
+  const data: Loose = { ...(o.customData ?? {}), mydrawZone: true, ...(isDashId(o.style) ? { [DASH_KEY]: o.style } : {}) };
   if (o.parent) data.mydrawZoneId = o.parent;
   const out: El[] = [{ ...rect, locked, groupIds: [g], customData: data } as El];
   if (o.label) {
@@ -605,6 +609,32 @@ export async function buildDiagram(
     }
   }
 
+  // Fill pattern, gradient and border style of plain shape nodes (icon and drawn-shape nodes are images).
+  for (const n of spec.nodes) {
+    if (n.gradient === undefined && n.fillStyle === undefined && n.strokeStyle === undefined) continue;
+    const i = nodeEls.findIndex((e) => e.id === n.id);
+    if (i < 0 || nodeEls[i].customData?.mydrawNode) continue;
+    let el = nodeEls[i] as El & Loose;
+    if (n.fillStyle) el = { ...el, fillStyle: n.fillStyle as never };
+    if (n.strokeStyle) el = { ...el, ...dashPatch(el.customData as Loose | undefined, isDashId(n.strokeStyle) ? n.strokeStyle : null, isDashId(n.strokeStyle) ? "dashed" : (n.strokeStyle as "solid" | "dashed" | "dotted")) };
+    if (n.gradient !== undefined && canGradient(el.type)) el = { ...el, ...gradientPatch(el.customData as Loose | undefined, n.gradient) };
+    nodeEls[i] = el as El;
+    byId.set(n.id, nodeEls[i]);
+  }
+
+  // Shadows: a node's own, else the diagram's. Icon and drawn-shape nodes carry it on their image.
+  for (const n of spec.nodes) {
+    const sh = n.shadow !== undefined ? n.shadow : spec.shadow;
+    if (!sh) continue;
+    const container = byId.get(n.id);
+    if (!container) continue;
+    const g = container.groupIds[0];
+    const i = container.customData?.mydrawNode === "icon" && g ? nodeEls.findIndex((e) => e.type === "image" && e.groupIds[0] === g) : nodeEls.findIndex((e) => e.id === container.id);
+    if (i < 0) continue;
+    nodeEls[i] = { ...nodeEls[i], customData: withShadow(nodeEls[i].customData as Loose | undefined, sh) } as El;
+    if (nodeEls[i].id === container.id) byId.set(n.id, nodeEls[i]);
+  }
+
   // Arrows: colour, dash, width, opacity and arrowheads from the edge, its kind and the look.
   const kinds = kindStyles(edges.map((e) => e.kind), spec.kinds);
   const arrowEls: El[] = [];
@@ -620,13 +650,12 @@ export async function buildDiagram(
       id: e.id,
       strokeColor: L.color,
       strokeWidth: L.width,
-      strokeStyle: L.style,
+      ...dashPatch(e.kind ? { mydrawKind: e.kind } : null, isDashId(L.style) ? L.style : null, isDashId(L.style) ? "dashed" : (L.style as "solid" | "dashed" | "dotted")),
       opacity: L.opacity,
       roughness,
       startArrowhead: L.startArrowhead,
       endArrowhead: L.endArrowhead,
       ...(e.label ? { label: { text: e.label, fontSize: look.edgeLabel.size, fontFamily: fonts.edge, strokeColor: L.color } } : {}),
-      ...(e.kind ? { customData: { mydrawKind: e.kind } } : {}),
     };
     arrowEls.push(...connectorElements(sk, a, b, routing, given?.points, given?.label?.center));
     for (const id of [a.id, b.id]) boundTo.set(id, [...(boundTo.get(id) ?? []), { id: e.id!, type: "arrow" }]);

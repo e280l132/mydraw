@@ -2,7 +2,7 @@
 // the icon color section). Acts on the active drawing's API; each click is one undo step. Presets and
 // themes come from the global style library (styleStore), so every drawing sees the same ones.
 import { customFonts, fontById } from "./fontRegistry";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { ColorPicker, EyedropperIcon } from "./library/IconColorSection";
@@ -10,7 +10,9 @@ import { paletteById, resolveColor, shadesOf } from "../../shared/palettes";
 import { FONTS, fontIdOf, type StylePreset, type StyleSpec, type Theme } from "../../shared/styles";
 import type { IconSelection } from "./library/iconColor";
 import { applyThemeToScene, styleElements, type StyleResult } from "./agent/styles";
-import { isIconNode, withGroupsAndLabels } from "./agent/sceneOps";
+import { isIconNode, withGroupsAndLabels, type El } from "./agent/sceneOps";
+import { commitOutlineWidth, outlineTargets, previewOutlineWidth, setTextOutline } from "./textOutline";
+import { commonOutline, OUTLINE_DEFAULT_WIDTH, OUTLINE_MAX, OUTLINE_MIN, type TextOutline } from "../../shared/textOutline";
 import {
   allPresets,
   allThemes,
@@ -49,7 +51,7 @@ interface Props {
 }
 
 type Tab = "colors" | "presets" | "themes";
-type Target = "stroke" | "fill" | "icon";
+type Target = "stroke" | "fill" | "icon" | "outline";
 
 function commit(api: ExcalidrawImperativeAPI, r: StyleResult, appState?: Partial<AppState>) {
   const byId = new Map(r.changed.map((e) => [e.id, e]));
@@ -425,6 +427,124 @@ function Well({ color }: { color: string | null }) {
   );
 }
 
+/**
+ * Outline thickness: slider (live preview, one undo step on release) + number box + None.
+ * The slider tops out at what the biggest selected text can draw (fontSize / 4, see drawnOutlineWidth).
+ */
+function OutlineWidth({ api, texts, outline, onError }: { api: ExcalidrawImperativeAPI | undefined; texts: El[]; outline: TextOutline | null | "mixed"; onError(e: unknown): void }) {
+  const current = outline && outline !== "mixed" ? outline.width : null;
+  const [drag, setDrag] = useState<number | null>(null);
+  const session = useRef<{ originals: El[]; width: number } | null>(null);
+  const biggest = Math.max(0, ...texts.map((t) => ((t as El & { fontSize?: number }).fontSize ?? 20) / 4));
+  const max = Math.min(OUTLINE_MAX, Math.max(1, Math.floor(biggest * 2) / 2));
+  const value = drag ?? current ?? OUTLINE_DEFAULT_WIDTH;
+  const enabled = !!outline && !!api;
+  const clamp = (w: number) => Math.min(OUTLINE_MAX, Math.max(OUTLINE_MIN, Math.round(w * 2) / 2));
+  const guard = (fn: () => void) => {
+    try {
+      fn();
+    } catch (e) {
+      onError(e);
+    }
+  };
+  const preview = (w: number) => {
+    if (!api) return;
+    session.current ??= { originals: texts, width: w };
+    session.current.width = w;
+    setDrag(w);
+    guard(() => previewOutlineWidth(api, session.current!.originals, w));
+  };
+  const finish = () => {
+    const s = session.current;
+    session.current = null;
+    setDrag(null);
+    if (api && s) guard(() => commitOutlineWidth(api, s.originals, s.width));
+  };
+  const typed = (raw: string) => {
+    const w = Number(raw);
+    if (!api || !raw.trim() || !Number.isFinite(w)) return;
+    guard(() => setTextOutline(api, texts, { width: clamp(w) }));
+  };
+  return (
+    <div className="md-outline-width" role="group" aria-label="Outline width">
+      <div className="md-outline-width-row">
+        <span className="md-outline-width-label">Width</span>
+        <input
+          key={`${drag ?? current ?? "none"}`}
+          className="md-ft-num md-outline-num"
+          type="number"
+          min={OUTLINE_MIN}
+          max={OUTLINE_MAX}
+          step={0.5}
+          defaultValue={drag ?? current ?? ""}
+          disabled={!enabled}
+          aria-label="Outline width in pixels"
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") typed((e.target as HTMLInputElement).value);
+          }}
+          onBlur={(e) => typed(e.target.value)}
+        />
+        <span className="md-outline-width-unit">px</span>
+        <button
+          className={`md-chip md-outline-none${outline === null ? " on" : ""}`}
+          title="Remove the outline"
+          disabled={!api}
+          onClick={() => api && guard(() => setTextOutline(api, texts, null))}
+        >
+          None
+        </button>
+      </div>
+      <input
+        type="range"
+        className="md-ft-range md-outline-range"
+        min={OUTLINE_MIN}
+        max={Math.max(max, value)}
+        step={0.5}
+        value={value}
+        disabled={!enabled}
+        aria-label="Outline width"
+        title={enabled ? `Outline width (up to ${max}px for this text size)` : "Pick an outline color first"}
+        onChange={(e) => preview(Number(e.target.value))}
+        onPointerUp={finish}
+        onKeyUp={finish}
+        onBlur={() => session.current && finish()}
+      />
+    </div>
+  );
+}
+
+/** New + Manage as two small icon buttons at the end of a tab's toolbar row. */
+function ToolButtons({ what, manage, onNew, onManage }: { what: string; manage: boolean; onNew(): void; onManage(): void }) {
+  return (
+    <>
+      <button type="button" className="md-icon-btn md-tool-new" title={`New ${what}…`} aria-label={`New ${what}`} onClick={onNew}>
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        className={`md-icon-btn md-tool-manage${manage ? " on" : ""}`}
+        title={manage ? "Done editing" : `Edit or delete ${what}s`}
+        aria-label={manage ? "Done editing" : `Manage ${what}s`}
+        aria-pressed={manage}
+        onClick={onManage}
+      >
+        {manage ? (
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <path d="M3 8.5 6.5 12 13 4.5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <path d="M10.5 2.5 13.5 5.5 6 13H3v-3Z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+          </svg>
+        )}
+      </button>
+    </>
+  );
+}
+
 export function StyleSection({ api, tick, changeTick, onToast, custom: customColor, palette, onCustomChange, onPick, picking, icons, onIconColor, pinned, onTogglePin }: Props) {
   useStyleLibrary();
   const [tab, setTab] = useState<Tab>("colors");
@@ -433,7 +553,7 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
   // A pick made for the current selection (Icon is only ever this); cleared when the selection changes.
   const [pick, setPick] = useState<Target | null>(null);
   const setTarget = (t: Target) => {
-    if (t !== "icon") {
+    if (t === "stroke" || t === "fill") {
       setSticky(t);
       localStorage.setItem(TARGET_KEY, t);
     }
@@ -459,6 +579,11 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
     return api.getSceneElements().filter((e) => st.selectedElementIds[e.id] || e.id === editing);
   }, [api, tick, changeTick]);
   const styleable = selected.filter((e) => e.type !== "image");
+  // Text the Outline target reaches (selected text, labels of selected shapes/arrows, text being edited).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const outlineTexts = useMemo(() => (api ? outlineTargets(api) : []), [api, tick, changeTick]);
+  const hasText = outlineTexts.length > 0;
+  const outline = commonOutline(outlineTexts);
   const first = styleable[0];
   // Icons are recolored, not stroked: with only icons selected the Icon target is the only one that
   // does anything; with none selected it can't be used.
@@ -477,6 +602,7 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
   const target: Target = (() => {
     let t = asked;
     if (t === "icon" && !hasIcons) t = sticky;
+    if (t === "outline" && !hasText) t = sticky;
     if (t === "fill" && !canFill) t = canStroke ? "stroke" : "icon";
     if (t === "stroke" && !canStroke) t = hasIcons ? "icon" : "stroke";
     return t;
@@ -532,6 +658,11 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
     if (!c) return onToast(`"${color}" isn't a color`, true);
     const to = toOther && other ? other : target;
     if (to === "icon") return onIconColor(c, preview);
+    if (to === "outline") {
+      if (preview) return;
+      if (c === "transparent") return run((a) => setTextOutline(a, outlineTexts, null));
+      return run((a) => setTextOutline(a, outlineTexts, { color: c }));
+    }
     applyStyle(to === "stroke" ? { strokeColor: c } : { backgroundColor: c });
   };
   /** Swatch click: ⌥-click sets the other of Stroke/Fill without switching. */
@@ -560,7 +691,11 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
     return palette.slice(1).filter((c) => !builtin.has(c.toLowerCase()));
   }, [palette, basics]);
   const current =
-    target === "icon"
+    target === "outline"
+      ? outline && outline !== "mixed"
+        ? outline.color
+        : null
+      : target === "icon"
       ? icons.color && icons.color !== "original"
         ? icons.color
         : null
@@ -575,6 +710,7 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
   const strokeWell = noSelection ? appState?.currentItemStrokeColor ?? null : wellColor(styleable.map((e) => e.strokeColor));
   const fillWell = noSelection ? appState?.currentItemBackgroundColor ?? null : wellColor(fillable.map((e) => e.backgroundColor));
   const iconWell = icons.color && icons.color !== "original" ? icons.color : null;
+  const outlineWell = outline && outline !== "mixed" ? outline.color : null;
   const pickerValue = current && current !== "transparent" && resolveColor(current) ? current : "#1971c2";
   // Shades ramp off the chosen basic color; before one is chosen, off the selection's current color.
   const shadeBase = base ?? (current && current !== "transparent" ? resolveColor(current) : null) ?? customColor;
@@ -583,12 +719,12 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
 
   const colorsTab = (
     <>
-      <div className="md-iconcolor-actions md-seg">
+      <div className={`md-iconcolor-actions md-seg md-targets${hasIcons && hasText ? " md-targets-4" : ""}`}>
         <button
           className={`md-chip md-target${target === "stroke" ? " on" : ""}`}
           data-target="stroke"
           disabled={!canStroke}
-          title={canFill ? "Swatches set the outline. ⌥-click a swatch to set the fill instead." : "Swatches set the outline."}
+          title={canFill ? "Swatches set the stroke (borders, lines and text). ⌥-click a swatch to set the fill instead." : "Swatches set the stroke (borders, lines and text)."}
           onClick={() => setTarget("stroke")}
         >
           <Well color={strokeWell} /> Stroke
@@ -597,7 +733,7 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
           className={`md-chip md-target${target === "fill" ? " on" : ""}`}
           data-target="fill"
           disabled={!canFill}
-          title={canFill ? "Swatches set the fill. ⌥-click a swatch to set the outline instead." : "The selection has no fill (text, lines, arrows and icons don't)"}
+          title={canFill ? "Swatches set the fill. ⌥-click a swatch to set the stroke instead." : "The selection has no fill (text, lines, arrows and icons don't)"}
           onClick={() => setTarget("fill")}
         >
           <Well color={canFill ? fillWell : null} /> Fill
@@ -605,6 +741,16 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
         {hasIcons && (
           <button className={`md-chip md-target${target === "icon" ? " on" : ""}`} data-target="icon" onClick={() => setTarget("icon")} title="Recolor the selected SVG icons">
             <Well color={iconWell} /> Icon
+          </button>
+        )}
+        {hasText && (
+          <button
+            className={`md-chip md-target${target === "outline" ? " on" : ""}`}
+            data-target="outline"
+            onClick={() => setTarget("outline")}
+            title="Swatches set a colored outline around the letters of the selected text and labels"
+          >
+            <Well color={outlineWell} /> Outline
           </button>
         )}
       </div>
@@ -622,8 +768,8 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
             }}
           />
         ))}
-        {target === "fill" && (
-          <button className={`md-swatch md-swatch-none${current === "transparent" ? " on" : ""}`} title="Transparent" aria-label="Transparent" onClick={(e) => swatchClick("transparent", e)} />
+        {(target === "fill" || target === "outline") && (
+          <button className={`md-swatch md-swatch-none${current === "transparent" ? " on" : ""}`} title={target === "outline" ? "No outline" : "Transparent"} aria-label={target === "outline" ? "No outline" : "Transparent"} onClick={(e) => swatchClick("transparent", e)} />
         )}
         <button
           className={`md-swatch md-swatch-slot${customColor ? "" : " empty"}${customColor && current === customColor ? " on" : ""}`}
@@ -640,7 +786,7 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
       </div>
       {extraColors.length > 0 && (
         <>
-          <div className="md-iconcolor-note md-shades-label">Colors in this drawing (saved with the file)</div>
+          <div className="md-iconcolor-note md-shades-label" title="Custom colors picked in this drawing; saved with the file">In this drawing</div>
           <div className="md-drawing-palette" role="group" aria-label="Colors in this drawing">
             {extraColors.map((c) => (
               <button
@@ -689,6 +835,9 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
           <EyedropperIcon />
         </button>
       </div>
+      {target === "outline" && (
+        <OutlineWidth api={api} texts={outlineTexts} outline={outline} onError={fail} />
+      )}
       {target === "icon" && (
         <div className="md-iconcolor-actions md-seg">
           <button className={`md-chip${icons.color === "original" ? " on" : ""}`} onClick={() => onIconColor(null)} title="Put the icons back to their real colors">
@@ -748,14 +897,14 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
 
   const presetsTab = (
     <>
-      <input className="md-style-select" value={filter} placeholder="Search presets…" aria-label="Search presets" onChange={(e) => setFilter(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
-      <div className="md-iconcolor-actions md-seg">
-        <button className="md-chip" onClick={() => setPresetDraft(first ? draftFromStyle(styleOf(first as unknown as StyledEl), { category: "My presets" }) : blankPreset("My presets"))}>
-          + New
-        </button>
-        <button className={`md-chip${manage ? " on" : ""}`} onClick={() => setManage((v) => !v)}>
-          {manage ? "Done" : "Manage"}
-        </button>
+      <div className="md-tools">
+        <input className="md-style-select" value={filter} placeholder="Search presets…" aria-label="Search presets" onChange={(e) => setFilter(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
+        <ToolButtons
+          what="preset"
+          manage={manage}
+          onNew={() => setPresetDraft(first ? draftFromStyle(styleOf(first as unknown as StyledEl), { category: "My presets" }) : blankPreset("My presets"))}
+          onManage={() => setManage((v) => !v)}
+        />
       </div>
       {presetDraft && (
         <PresetEditor
@@ -832,21 +981,21 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
 
   const themesTab = (
     <>
-      <div className="md-iconcolor-actions md-seg">
-        <button className={`md-chip${wholeDrawing ? " on" : ""}`} onClick={() => setWholeDrawing(true)}>
-          Whole drawing
-        </button>
-        <button className={`md-chip${!wholeDrawing ? " on" : ""}`} disabled={!styleable.length} onClick={() => setWholeDrawing(false)}>
-          Selection
-        </button>
-      </div>
-      <div className="md-iconcolor-actions md-seg">
-        <button className="md-chip" onClick={() => setThemeDraft({ ...blankTheme(), ...(api ? currentLook(api.getAppState(), "nunito") : {}) })}>
-          + New
-        </button>
-        <button className={`md-chip${manage ? " on" : ""}`} onClick={() => setManage((v) => !v)}>
-          {manage ? "Done" : "Manage"}
-        </button>
+      <div className="md-tools">
+        <div className="md-iconcolor-actions md-seg">
+          <button className={`md-chip${wholeDrawing ? " on" : ""}`} title="Apply themes to the whole drawing" onClick={() => setWholeDrawing(true)}>
+            Drawing
+          </button>
+          <button className={`md-chip${!wholeDrawing ? " on" : ""}`} disabled={!styleable.length} onClick={() => setWholeDrawing(false)}>
+            Selection
+          </button>
+        </div>
+        <ToolButtons
+          what="theme"
+          manage={manage}
+          onNew={() => setThemeDraft({ ...blankTheme(), ...(api ? currentLook(api.getAppState(), "nunito") : {}) })}
+          onManage={() => setManage((v) => !v)}
+        />
       </div>
       {themeDraft && (
         <ThemeEditor
@@ -897,6 +1046,11 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
     <fieldset className="md-style" data-md-section="colors" onMouseDown={(e) => e.stopPropagation()}>
       <legend>
         <span className="md-legend-text">Colors &amp; styles</span>
+        {!selected.length && (
+          <span className="md-head-badge" title="Nothing selected: colors and styles set what you draw next">
+            New shapes
+          </span>
+        )}
         <button
           type="button"
           className={`md-pin-btn${pinned ? " on" : ""}`}

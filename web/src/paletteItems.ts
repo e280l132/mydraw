@@ -1,4 +1,10 @@
 // Builds the list of things the command palette can run, from the current app state.
+import { EXTRA_FILLS } from "../../shared/fills";
+import { DASH_IDS, DASH_STYLES } from "../../shared/dash";
+import { GRADIENT_PRESET_IDS, GRADIENT_PRESETS } from "../../shared/gradient";
+import { applyFill } from "./StyleMore";
+import { applyDash } from "./dashOps";
+import { applyGradient, gradientTargets } from "./gradientOps";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { TEMPLATES } from "../../shared/templates";
@@ -12,6 +18,8 @@ import { allPresets, allThemes } from "./styleStore";
 import { applyPresetTo, applyThemeTo, selectedIds } from "./uiActions";
 import { routeArrowsAround } from "./linkOps";
 import { ARRANGE_ACTIONS, runArrange } from "./arrange";
+import { applyShadow, shadowTargets, type ShadowChange } from "./shadowOps";
+import { DEFAULT_SHADOW, SHADOW_PRESET_IDS, SHADOW_PRESETS, shadowAmount, withAmount } from "../../shared/shadow";
 
 export interface PaletteContext {
   api: ExcalidrawImperativeAPI | undefined;
@@ -146,6 +154,38 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
         },
         { keywords: `${p.category} ${p.description}` },
       );
+    }
+    // ----- shadows (the Shadow section of the style panel has the full controls) -----
+    const shadowOn = (change: ShadowChange, what: string) => () => {
+      const targets = shadowTargets(api, false);
+      if (!targets.els.length) return c.toast(`Select shapes, text, lines or icons first, then ${what}.`, true);
+      applyShadow(api, targets.els, change);
+    };
+    for (const id of SHADOW_PRESET_IDS) {
+      const p = SHADOW_PRESETS[id];
+      add("Shadow", `Shadow: ${p.label}`, shadowOn(() => ({ ...p.shadow }), "apply a shadow"), { keywords: `drop shadow glow depth ${p.hint}` });
+    }
+    add("Shadow", "Remove shadow", shadowOn(() => null, "remove their shadow"), { keywords: "drop shadow none clear" });
+    add("Shadow", "Stronger shadow", shadowOn((cur) => withAmount(cur ?? DEFAULT_SHADOW, shadowAmount(cur ?? DEFAULT_SHADOW) + 10), "make the shadow stronger"), { keywords: "shadow amount more bigger" });
+    add("Shadow", "Weaker shadow", shadowOn((cur) => (cur ? withAmount(cur, shadowAmount(cur) - 10) : null), "make the shadow weaker"), { keywords: "shadow amount less smaller" });
+    // ----- fills, gradients and stroke styles (the Fill / Stroke style "more" popovers) -----
+    for (const f of EXTRA_FILLS) {
+      add("Style", `Fill: ${f.label}`, () => applyFill(api, f.id), { keywords: `fill pattern ${f.id} ${f.hint}` });
+    }
+    for (const id of GRADIENT_PRESET_IDS) {
+      add("Style", `Gradient: ${GRADIENT_PRESETS[id].label}`, () => {
+        const els = gradientTargets(api);
+        if (!els.length) return c.toast("Select rectangles, diamonds or ellipses first, then pick a gradient.", true);
+        applyGradient(api, els, () => ({ ...GRADIENT_PRESETS[id].gradient }));
+      }, { keywords: `gradient fill ${GRADIENT_PRESETS[id].gradient.kind} ${id}` });
+    }
+    add("Style", "Remove gradient (flat fill)", () => {
+      const els = gradientTargets(api);
+      if (!els.length) return c.toast("Select shapes with a gradient first.", true);
+      applyGradient(api, els, () => null);
+    }, { keywords: "gradient flat solid fill" });
+    for (const id of DASH_IDS) {
+      add("Style", `Stroke: ${DASH_STYLES[id].label}`, () => applyDash(api, id), { keywords: `stroke style line dash dot ${id} ${DASH_STYLES[id].hint}` });
     }
     // ----- jump to an element by its text -----
     const scene = api.getSceneElements();

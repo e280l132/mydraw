@@ -48,6 +48,11 @@ export function helpSections(): Section[] {
       title: "Colors and styles",
       rows: [
         { text: "Colors tab: two palettes and an any-color picker; Stroke, Fill and Icon targets. Custom colors you pick are kept in the drawing file, so they travel with it" },
+        { text: "Outline target (text or a labelled shape selected): a colored outline around the letters; the Width slider sets its thickness, None removes it" },
+        { text: "Shadow section: None, Soft, Drop, and the sliders button for every shadow: presets, kind (drop, inner, layered, 3D, ground), Amount, color, opacity, blur, distance and angle. Works on shapes, text, lines, arrows and icons; with nothing selected it sets the shadow for shapes you draw next. Command palette: \"Shadow\"" },
+        { text: "The … button after the Fill buttons: Scribble, Zigzag, Dots and Dashes patterns, and gradients (presets, start and end color, linear or radial, direction). Excalidraw's own Fill buttons turn a gradient back into a plain fill" },
+        { text: "Windows opened from the panel (Fill, Stroke style, Shadow, the slider buttons) can be dragged by their title bar; a moved window stays open and reopens there; the dock button puts it back" },
+        { text: "The … button after the Stroke style buttons: short dash, long dash, dash dot, dash dot dot, dense and sparse dots" },
         { text: "Presets and Themes tabs: built-in and your own, saved globally; apply to the selection or the whole drawing" },
         { text: "Slider buttons next to stroke width, sloppiness, edges and font size set values beyond the presets (with nothing selected they set the next shape or text you draw)" },
       ],

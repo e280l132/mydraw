@@ -2,6 +2,9 @@
 // the same builders as the agent tools: zones are mydraw zones (makeZone), labelled images are icon
 // nodes (makeIconNode), shapes/text/edges go through buildElements (bound arrows). Several pages
 // become frames stacked top to bottom. Used by the CLI (`mydraw convert x.drawio`).
+import { strokeFromDrawio } from "../../shared/dash";
+import { gradientFromDrawio } from "../../shared/gradient";
+import { SHADOW_PRESETS, withShadow } from "../../shared/shadow";
 import { linkProblem } from "../../shared/links";
 import { convertToExcalidrawElements, newElementWith } from "@excalidraw/excalidraw";
 import type { AppState, BinaryFileData, DataURL } from "@excalidraw/excalidraw/types";
@@ -125,13 +128,14 @@ async function buildPage(page: ImportPage, st: AppState, ids: (id: string) => st
     );
     const zone = zoneOf(s);
     if (!s.label) {
-      out.push({ ...image, customData: Object.keys(data(s, zone)).length ? data(s, zone) : undefined, link: keepLink(s.link, warnings) } as El);
+      const imgData = s.shadow ? withShadow(data(s, zone), SHADOW_PRESETS.drop.shadow) : data(s, zone);
+      out.push({ ...image, customData: Object.keys(imgData).length ? imgData : undefined, link: keepLink(s.link, warnings) } as El);
       bindable.add(s.id);
       continue;
     }
     const node = makeIconNode({
       id: ids(s.id),
-      image: image as El,
+      image: (s.shadow ? { ...image, customData: withShadow(image.customData as Loose | undefined, SHADOW_PRESETS.drop.shadow) } : image) as El,
       caption: s.label,
       fontSize: s.fontSize,
       fontFamily: font,
@@ -159,7 +163,10 @@ async function buildPage(page: ImportPage, st: AppState, ids: (id: string) => st
       angle: s.rotation ? (s.rotation * Math.PI) / 180 : undefined,
       customData: data(s, zone),
       link: keepLink(s.link, warnings),
+      shadow: s.shadow ? "drop" : undefined,
     };
+    const grad = s.kind !== "text" ? gradientFromDrawio(s.fill, s.gradient?.color, s.gradient?.direction) : null;
+    if (grad) common.gradient = grad;
     if (s.kind === "text") {
       if (!s.label) continue;
       const fontSize = s.fontSize ?? 12;
@@ -190,7 +197,7 @@ async function buildPage(page: ImportPage, st: AppState, ids: (id: string) => st
       backgroundColor: s.fill ?? "transparent",
       fillStyle: "solid",
       strokeWidth: s.strokeWidth ?? 1,
-      strokeStyle: s.dashed ? "dashed" : "solid",
+      strokeStyle: s.dashed ? strokeFromDrawio(s.dashPattern, s.strokeWidth ?? 1) : "solid",
       roughness: s.sketch ? 1 : 0,
       roundness: s.rounded && s.kind !== "ellipse" ? { type: 3 } : null,
       ...(s.label
@@ -215,11 +222,12 @@ async function buildPage(page: ImportPage, st: AppState, ids: (id: string) => st
       id: ids(e.id),
       strokeColor: e.stroke && e.stroke !== "transparent" ? e.stroke : INK,
       strokeWidth: e.strokeWidth ?? 1,
-      strokeStyle: e.dashed ? "dashed" : "solid",
+      strokeStyle: e.dashed ? strokeFromDrawio(e.dashPattern, e.strokeWidth ?? 1) : "solid",
       roughness: 0,
       startArrowhead: e.startArrow,
       endArrowhead: e.endArrow,
       customData: Object.keys(e.data).length ? { ...e.data } : undefined,
+      shadow: e.shadow ? "drop" : undefined,
       ...(e.label ? { label: { text: e.label, fontSize: e.fontSize ?? 12, fontFamily: font } } : {}),
     };
     if (e.from && e.to && bindable.has(e.from) && bindable.has(e.to) && e.from !== e.to) {

@@ -8,7 +8,7 @@
 // and commits once (IMMEDIATELY), so one drag = one undo step (same pattern as IconRecolorSession).
 // Font size is different: it also changes labels' shapes and arrows, so its session snapshots the whole
 // scene and restores every element a preview touched (web/src/fontSizeOps.ts).
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CaptureUpdateAction, newElementWith } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
@@ -30,6 +30,7 @@ import {
 import type { El } from "./agent/sceneOps";
 import { fontSizeChanges, fontSizeTargets } from "./fontSizeOps";
 import { commitElements } from "./uiActions";
+import { FloatHead, useFloating } from "./MorePopover";
 
 export type FineTuneHosts = Partial<Record<FineTuneKind, HTMLElement>>;
 
@@ -174,7 +175,7 @@ class TuneSession {
   }
 }
 
-const SlidersIcon = () => (
+export const SlidersIcon = () => (
   <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
     <path d="M3 5h8M15 5h2M3 10h3M10 10h7M3 15h9M16 15h1" />
     <circle cx="13" cy="5" r="1.8" />
@@ -271,20 +272,11 @@ function FineTunePopover({ api, kind, els, anchor, onClose }: PopoverProps) {
   const current = defaults ? { value: defaultVal, mixed: false } : selectionValue(kind, list);
   const session = useRef(new TuneSession(api));
   const box = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   // Value being dragged / typed (null = show the selection's value).
   const [draft, setDraft] = useState<number | null>(null);
   const [text, setText] = useState<string | null>(null);
 
   const value = draft ?? Math.min(current?.value ?? spec.min, max);
-
-  useLayoutEffect(() => {
-    if (!anchor) return;
-    const r = anchor.getBoundingClientRect();
-    const island = anchor.closest(".App-menu__left")?.getBoundingClientRect();
-    const h = box.current?.offsetHeight ?? 120;
-    setPos({ left: (island?.right ?? r.right) + 8, top: Math.max(8, Math.min(r.top - 12, window.innerHeight - h - 8)) });
-  }, [anchor]);
 
   const commit = useCallback(
     (v: number) => {
@@ -302,28 +294,11 @@ function FineTunePopover({ api, kind, els, anchor, onClose }: PopoverProps) {
     setText(null);
   }, []);
 
-  // Outside click closes (committing nothing pending: a drag always ends with a commit); Esc reverts.
-  useEffect(() => {
-    const onDown = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (box.current?.contains(t) || anchor?.contains(t)) return;
-      if (session.current.active) cancel();
-      onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      e.stopPropagation();
-      cancel();
-      onClose();
-    };
-    window.addEventListener("pointerdown", onDown, true);
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      window.removeEventListener("pointerdown", onDown, true);
-      window.removeEventListener("keydown", onKey, true);
-    };
-  }, [anchor, cancel, onClose]);
+  // Outside click (docked only) or Esc closes; a pending preview is reverted (a drag always ends with a commit).
+  const onOutside = useCallback(() => {
+    if (session.current.active) cancel();
+  }, [cancel]);
+  const f = useFloating(`ft-${kind}`, anchor, box, onClose, onOutside);
 
   // Never leave a preview behind.
   useEffect(() => () => session.current.restore(), []);
@@ -347,20 +322,19 @@ function FineTunePopover({ api, kind, els, anchor, onClose }: PopoverProps) {
   return createPortal(
     <div
       ref={box}
-      className="md-ft-pop"
+      className={`md-ft-pop${f.floating ? " md-floating" : ""}`}
       data-ft-pop={kind}
       role="dialog"
       aria-label={spec.title}
-      style={pos ? { left: pos.left, top: pos.top } : { visibility: "hidden" }}
+      style={f.pos ? { left: f.pos.left, top: f.pos.top } : { visibility: "hidden" }}
       onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
     >
-      <div className="md-ft-head">
-        <span>{spec.title}</span>
+      <FloatHead title={spec.title} f={f} onClose={onClose}>
         <span className="md-ft-value">
           {current?.mixed && draft === null ? "mixed" : `${fmt(value)}${spec.unit ? ` ${spec.unit}` : ""}`}
         </span>
-      </div>
+      </FloatHead>
       <input
         className="md-ft-range"
         type="range"
@@ -404,6 +378,7 @@ function FineTunePopover({ api, kind, els, anchor, onClose }: PopoverProps) {
       {kind === "roughness" && <p className="md-ft-note">Very small shapes are drawn with at most 2.5.</p>}
       {kind === "fontSize" && !defaults && <p className="md-ft-note">Text in shapes and on arrows follows; a shape grows to fit its text.</p>}
     </div>,
-    document.body,
+    // Inside the drawing's Excalidraw root, so the app's and Excalidraw's theme variables (dark mode) apply.
+    anchor?.closest<HTMLElement>(".excalidraw") ?? document.body,
   );
 }
