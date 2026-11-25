@@ -7,7 +7,7 @@ Brian wants a standalone draw.io-style desktop app built on the latest Excalidra
 - **Canvas:** `@excalidraw/excalidraw@0.18.1` (npm `latest`) + `@excalidraw/mermaid-to-excalidraw@3.6.0`. MIT package only; no ExcaliDash code (LGPL).
 - **Shell:** Electron + Vite + React + TypeScript, single npm workspace. Node v26 installed.
 - **Agent control:** stdio MCP server bridging to a local control server in the app (WordCraft pattern).
-- **Stencils:** SVG icon packs in an app-owned catalog, inserted as image elements. draw.io stencils via later importer.
+- **Stencils:** SVG icon packs in an app-owned catalog, inserted as image elements. draw.io drawings import (Phase 8); draw.io stencil XML is still open (§3).
 - **Colors:** custom color panel (Excalidraw's `palette` prop is internal, not public).
 - **Default look:** "Clean" theme (roughness 0, sharp edges, Nunito/Helvetica-style font) for professional network diagrams; "Sketch" theme one click away.
 
@@ -19,10 +19,10 @@ Claude Code --MCP stdio--> mcp/ --HTTP 127.0.0.1:<port> + key--> app/ (Electron 
 - `web/` renderer: `<Excalidraw>`, `excalidrawAPI`, side panels (stencils, colors, properties, inventory), command palette, command executor (`updateScene` / `addFiles`). Single source of truth for the scene.
 - `app/` main: window + tabs, menus, file dialogs, `.excalidraw` association, autosave, recent files, file watcher, export pipeline (offscreen window for PDF), control server. `{port, key}` in `~/Library/Application Support/mydraw/control.json` (chmod 600). Loopback only, key required, context isolation on, no remote content.
 - `mcp/`: `@modelcontextprotocol/sdk` stdio server; reads `control.json`; launches app if not running.
-- `cli/`: `mydraw` command (export/convert/open), reuses the app's export pipeline headless.
+- `bin/mydraw.mjs` + `app/src/cli.ts`: `mydraw` command (export/convert), reuses the app's export pipeline headless. No `open` subcommand.
 - Stencil library is stored outside the repo in `~/Documents/mydraw/Library/` (see §3). The repo holds only the downloader and index builder.
-- `tools/`: `fetch-stencil-packs`, `build-library-index`, `import-excalidrawlib`, later `import-drawio`.
-- `templates/`: 3-tier web app, AWS VPC, GCP project, home network, k8s cluster, homelab rack.
+- `scripts/`: `fetch-packs.mjs` (icon pack downloader), `build-app.mjs`, `build-mcp.mjs`, `dev.mjs`, `smoke.mjs`. The library index, `.excalidrawlib` import and draw.io import live in the app (`app/src/library.ts`, `web/src/drawioImport.ts`), not in a tools folder.
+- Templates are code, not files: `shared/templates.ts` (3-tier web app, AWS VPC, GCP project, home network, k8s cluster, homelab rack).
 - `CLAUDE.md`: project notes + "how to drive mydraw" + diagram workflows (below).
 
 ## Features
@@ -81,7 +81,7 @@ Common options: whole canvas / selection / single frame / every frame (batch), p
 
 ### 5. Ease of use
 - **Command palette (Cmd+K):** fuzzy search every action, stencil, color, template, export.
-- **Quick connect:** hover a shape → 4 "+" handles; click adds a connected copy or opens stencil search to pick the next node (draw.io style).
+- **Quick connect:** hover or select a shape → 4 "+" handles; click adds a copy (no arrow), Option-click a connected copy, Shift-click stencil search, ⌘-click draws an arrow routed around shapes. Done in Phase 7.
 - **Themes:** Clean / Sketch / Blueprint / Dark; apply to whole diagram in one click (fonts, roughness, stroke widths, colors).
 - **Style presets:** saved styles ("Prod zone", "DMZ", "Critical link"); format painter (Excalidraw copy/paste styles).
 - **Snap, grid, alignment guides:** toggles in toolbar (Excalidraw built-ins); align/distribute buttons.
@@ -197,19 +197,20 @@ Haiku 5.5 $0.10 / $0.50 · Sonnet 5.5 $2 / $10 · Opus 5.5 $4 / $20 · Fable 5.2
 - Image elements + `files` must persist in saves and every export format (verify phase 3).
 - PDF/PPTX fidelity of hand-drawn fonts; embed fonts in SVG before printing.
 - drawio export is approximate (Excalidraw styles don't map 1:1); keep icons as embedded images.
-- Vendor icon licenses; record in `stencils/LICENSES.md`, don't redistribute packs publicly.
+- Vendor icon licenses; record in `stencils/LICENSES.md`, don't redistribute packs publicly. (File does not exist yet; packs download at runtime.)
 - User + agent editing at once: agent commands applied serially by element id against the latest scene.
 - Check Excalidraw 0.18 setup (CSS import, asset path, ESM) against its docs.
 
 ## Verification
-1. `npm run dev`: draw, save, quit, reopen; file persists; two tabs open.
-2. Export one diagram to every format; open each in its native viewer (Preview, browser, Keynote/PowerPoint, draw.io); JPG has solid bg; PNG with embedded scene re-opens editable.
-3. `mydraw export test.excalidraw --format jpg` works with the app closed.
-4. Stencil search "ec2", "cloud run", "router"; drag; save/reopen keeps icons.
-4b. Library persistence: select a firewall + label → "Add to library"; quit; relaunch; File → New → item is in "My Stencils". Also in a second tab and after reinstalling the app. Delete the stencil → older drawings that used it still render.
-5. Color panel: custom hex applied, swatch persists after restart; Clean ↔ Sketch theme switch.
-6. `claude mcp list` shows `mydraw` connected.
-7. Ask Claude: "Build an AWS 3-tier diagram: ALB, two EC2 in private subnets, RDS, in a VPC zone, AWS colors, add a legend, export JPG and PDF." Confirm live build, bound arrows, layout, files written.
-8. Edit by hand while Claude adds shapes; no lost edits; undo removes Claude's last call as one step.
-9. Import a CSV of hosts → diagram; inventory table edit updates labels. (Built.)
-10. Build DMG, install, launch outside dev.
+Status checked against the code and the smoke test (`scripts/smoke.mjs`, run 2026-11-25) and `claude mcp list`.
+1. ⚠️ `npm run dev`, draw, save, quit, reopen: smoke covers save (valid file, clean dirty flag), autosave, reload from disk and crash recovery. Manual quit/reopen not in smoke.
+2. ⚠️ Export to every format: smoke checks PNG, JPG, SVG, WebP, Mermaid, CSV, Markdown, HTML, PDF, PPTX and draw.io (magic bytes, structure). Opening each in its native viewer (Preview, browser, Keynote, draw.io) not done.
+3. ✅ `mydraw export … --format jpg` with the app closed (smoke "CLI: export and convert with the app closed").
+4. ⚠️ Stencil search, drag, save/reopen: smoke inserts by click and drag and checks images persist in the saved file, using a fake pack and the query "testrouter". Real searches ("ec2", "cloud run") with the real packs not checked.
+4b. ⚠️ Library persistence: "Add to library" / save selection as stencil and survival across restart are in smoke. Not checked: relaunch-then-New-tab, a second tab, reinstall, deleted stencil still rendering in old drawings.
+5. ⚠️ Color panel: custom hex applied and Clean ↔ Sketch switch are in smoke. Swatch surviving restart not checked.
+6. ✅ `claude mcp list` shows `mydraw` connected.
+7. ⚠️ Ask Claude AWS 3-tier build: smoke drives the MCP tools end to end (build_diagram with zones, icons, elbow arrows, legend; export JPG and PDF). A live Claude Code conversation with that prompt not run.
+8. ⚠️ Undo removes Claude's last call as one step: covered (smoke, `undo` after `update_elements`). Hand edits kept while Claude adds shapes: not in smoke.
+9. ✅ CSV hosts → diagram; inventory table edits update labels (smoke Phase 8 steps).
+10. ⬜ Build DMG, install, launch outside dev: open, Phase 9.
