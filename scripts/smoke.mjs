@@ -1117,6 +1117,13 @@ await call("undo");
 await waitFor(async () => (await call("get_scene")).elements.length === shBefore, "drawing + default shadow undo as one step");
 await page.evaluate(() => window.__mydrawTest.api().setActiveTool({ type: "rectangle" }));
 await page.waitForSelector(`${SH}[data-mode="new"]`);
+// The shadow window says it is setting the default for new shapes, and can turn it off.
+await page.locator(`${SH} .md-shadow-open`).click();
+await page.waitForSelector('.md-more-pop[data-more-pop="shadow"][data-mode="new"] .md-new-banner');
+assert.match(await page.textContent('.md-more-pop[data-more-pop="shadow"] .md-float-title'), /new shapes/, "title says new shapes");
+await page.click('.md-more-pop[data-more-pop="shadow"] .md-new-clear');
+await waitFor(() => page.evaluate(() => localStorage.getItem("mydraw.newShadow") === null), "No default clears the new-shape shadow");
+await page.keyboard.press("Escape");
 await page.locator(`${SH} .md-shadow-preset[data-preset="none"]`).click();
 await waitFor(() => page.evaluate(() => localStorage.getItem("mydraw.newShadow") === null), "new-shape shadow cleared");
 await page.evaluate(() => window.__mydrawTest.api().setActiveTool({ type: "selection" }));

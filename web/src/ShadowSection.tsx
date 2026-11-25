@@ -268,7 +268,21 @@ export function ShadowSection({ api, tick, palette, onToast }: Props) {
         </button>
       </div>
       {open && (
-        <MorePopover title="Shadow" kind="shadow" anchor={moreBtn.current} onClose={() => setOpen(false)}>
+        <MorePopover
+          title="Shadow"
+          kind="shadow"
+          anchor={moreBtn.current}
+          onClose={() => setOpen(false)}
+          newShapes={
+            forNew
+              ? {
+                  text: current ? "Nothing selected: every shape, text and line you draw next gets this shadow." : "Nothing selected: a pick here becomes the shadow of every shape you draw next.",
+                  clearLabel: "No default",
+                  onClear: current ? () => run(() => null) : undefined,
+                }
+              : null
+          }
+        >
           <div className="md-more-grid md-shadow-all" role="group" aria-label="All shadow presets">
             {SHADOW_PRESET_IDS.map((id) => (
               <button
@@ -354,7 +368,6 @@ export function ShadowSection({ api, tick, palette, onToast }: Props) {
               Labels and captions too
             </label>
           )}
-          {forNew && <p className="md-ft-note md-shadow-note">Nothing selected: shapes, text and lines you draw next get this shadow.</p>}
         </MorePopover>
       )}
     </fieldset>

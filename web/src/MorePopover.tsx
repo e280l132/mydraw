@@ -188,26 +188,43 @@ interface PopoverProps {
   kind: string;
   anchor: HTMLElement | null;
   onClose(): void;
+  /**
+   * Nothing is selected: the window sets the default for shapes drawn next. Shown as a banner at the
+   * top (a floating window stays open when the selection is cleared, so the switch must be obvious),
+   * with `onClear` = a button that turns the default off.
+   */
+  newShapes?: { text: string; clearLabel?: string; onClear?(): void } | null;
   children: ReactNode;
 }
 
 /** A "More…" sub-window (Fill, Stroke style, Shadow). */
-export function MorePopover({ title, kind, anchor, onClose, children }: PopoverProps) {
+export function MorePopover({ title, kind, anchor, onClose, newShapes, children }: PopoverProps) {
   const box = useRef<HTMLDivElement>(null);
   const f = useFloating(kind, anchor, box, onClose);
 
   return createPortal(
     <div
       ref={box}
-      className={`md-ft-pop md-more-pop${f.floating ? " md-floating" : ""}`}
+      className={`md-ft-pop md-more-pop${f.floating ? " md-floating" : ""}${newShapes ? " md-new-mode" : ""}`}
       data-more-pop={kind}
+      data-mode={newShapes ? "new" : "selection"}
       role="dialog"
       aria-label={title}
       style={f.pos ? { left: f.pos.left, top: f.pos.top } : { visibility: "hidden" }}
       onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
     >
-      <FloatHead title={title} f={f} onClose={onClose} />
+      <FloatHead title={newShapes ? `${title} · new shapes` : title} f={f} onClose={onClose} />
+      {newShapes && (
+        <div className="md-new-banner" role="note">
+          <span>{newShapes.text}</span>
+          {newShapes.onClear && (
+            <button type="button" className="md-chip md-new-clear" onClick={newShapes.onClear}>
+              {newShapes.clearLabel ?? "None"}
+            </button>
+          )}
+        </div>
+      )}
       {children}
     </div>,
     // Inside the drawing's Excalidraw root, so the app's and Excalidraw's theme variables (dark mode) apply.

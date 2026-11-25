@@ -267,7 +267,27 @@ export function StyleMore({ api, tick, hosts }: Props) {
           "stroke",
         )}
       {open === "stroke" && hosts.stroke && (
-        <MorePopover title="Stroke style" anchor={anchors.current.stroke ?? null} onClose={() => setOpen(null)} kind="stroke">
+        <MorePopover
+          title="Stroke style"
+          anchor={anchors.current.stroke ?? null}
+          onClose={() => setOpen(null)}
+          kind="stroke"
+          newShapes={
+            dashTargets(api).length
+              ? null
+              : {
+                  text: "Nothing selected: a pick here is the stroke of what you draw next.",
+                  clearLabel: "Solid",
+                  onClear: dash
+                    ? () => {
+                        clearDashAfterNative(api, "solid");
+                        api.updateScene({ appState: { currentItemStrokeStyle: "solid" } as never });
+                        setTickLocal((n) => n + 1);
+                      }
+                    : undefined,
+                }
+          }
+        >
           <div className="md-more-grid md-more-grid-2" role="group" aria-label="More stroke styles">
             {DASH_IDS.map((id) => (
               <button
@@ -287,11 +307,16 @@ export function StyleMore({ api, tick, hosts }: Props) {
               </button>
             ))}
           </div>
-          {!dashTargets(api).length && <p className="md-ft-note">Nothing selected: sets the stroke for what you draw next.</p>}
         </MorePopover>
       )}
       {open === "fill" && hosts.fill && (
-        <MorePopover title="Fill" anchor={anchors.current.fill ?? null} onClose={() => setOpen(null)} kind="fill">
+        <MorePopover
+          title="Fill"
+          anchor={anchors.current.fill ?? null}
+          onClose={() => setOpen(null)}
+          kind="fill"
+          newShapes={fillTargets(api).length ? null : { text: "Nothing selected: a pick here is the fill of what you draw next." }}
+        >
           <div className="md-more-grid" role="group" aria-label="More fills">
             {EXTRA_FILLS.map((f) => (
               <button
@@ -311,7 +336,6 @@ export function StyleMore({ api, tick, hosts }: Props) {
               </button>
             ))}
           </div>
-          {!fillTargets(api).length && <p className="md-ft-note">Nothing selected: sets the fill for what you draw next.</p>}
           <p className="md-ft-note">Patterns use the fill color; a transparent fill shows nothing.</p>
           <GradientEditor api={api} tick={tick + localTick} onChange={() => setTickLocal((n) => n + 1)} />
         </MorePopover>
