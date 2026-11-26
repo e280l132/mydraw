@@ -9,6 +9,8 @@ import { normalizeSpec, tint, uniquifySpec, type DiagramSpec } from "../../../sh
 import { isFlowchart, parseMermaidFlowchart } from "../../../shared/mermaid";
 import { PALETTES, requireColor, resolveColor } from "../../../shared/palettes";
 import { applyProperties } from "../../../shared/properties";
+import { isLookPart, normalizeLookParts } from "../../../shared/styleCopy";
+import { paintLook, pickUpLook } from "../styleBrushOps";
 import { INVENTORY_COLUMNS, inventoryEntries } from "../../../shared/inventory";
 import { extractGraph, type SceneEl } from "../../../shared/sceneGraph";
 import { fontIdOf, normalizeStyle, type StyleSpec } from "../../../shared/styles";
@@ -654,6 +656,18 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
         return { moved: movable.map((e) => e.id), dx, dy };
       }
 
+      case "copy_look": {
+        const { api } = await target(p);
+        if (typeof p.from !== "string") throw new Error("from must be an element id");
+        const loaded = pickUpLook(api, p.from);
+        if (!loaded) throw new Error(`no element with id "${p.from}"`);
+        const to = strArray(p.to, "to");
+        const parts = p.parts === undefined ? undefined : strArray(p.parts, "parts");
+        if (parts?.some((x) => !isLookPart(x))) throw new Error("parts must be fill, stroke, effects or text");
+        const painted = await paintLook(api, loaded.look, to, normalizeLookParts(parts), loaded.sourceId);
+        // Ids are reported per unit (an icon's image or caption counts as its node).
+        return painted.length ? { painted } : { painted, note: "nothing could take these parts (fill: rectangles, diamonds, ellipses, icons; not the source, locked elements, zones or the legend)" };
+      }
       case "align":
       case "distribute": {
         const { api } = await target(p);

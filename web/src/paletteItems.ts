@@ -110,6 +110,10 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
   cmd("Export", "Copy as SVG", { type: "copyAs", format: "svg" }, { keywords: "clipboard" });
   cmd("Export", "Copy as Mermaid", { type: "copyAs", format: "mermaid" }, { keywords: "clipboard" });
 
+  // ----- style brush -----
+  cmd("Style", "Copy look (style brush)", { type: "copyLook" }, { hint: sc("copyLook"), keywords: "format painter paste styles fill gradient pattern" });
+  cmd("Style", "Paste look onto the selection", { type: "pasteLook" }, { keywords: "format painter paste styles fill gradient" });
+
   // ----- stencils panel -----
   cmd("Stencils", "Show / hide stencils panel", { type: "toggleStencils" }, { hint: sc("stencils") });
   cmd("Stencils", "Save selection as stencil…", { type: "saveStencil" });

@@ -211,6 +211,7 @@ const server = new McpServer(
       "Tidying: `tidy` keeps the arrangement (lines up rows/columns, evens gaps, fixes overlaps); auto_layout re-lays out (onlyIfBetter: true keeps a drawing that is already good); align (edge left|center|right|top|middle|bottom, optional `to`) and distribute (axis, optional gap) for peers. Each id moves with its group, label or zone contents. Judge by meaning too (entry points first, data stores last, peers in a row): the tidy_diagram prompt has the full recipe.",
       "Draw clean diagrams: about 40 arrows at most, one arrow to a zone instead of many to its nodes, labels only on short arrows, one colour per kind of relationship. After build_diagram read `quality` (and `advice`), run lint_diagram (it finds arrows on top of each other or through nodes, labels in the way; fix:true repairs labels and re-routes) and look at a screenshot before telling the user it is done. Save the drawing to a file when it is finished: an unsaved drawing is lost if the app quits.",
       "Styling beyond Excalidraw's own: fillStyle patterns (hachure, cross-hatch, solid, zigzag, zigzag-line, dots, dashed), gradient fills on rectangles/diamonds/ellipses (`gradient`: a preset like \"sky\" or {from, to, kind: linear|radial, angle}), extra dash styles (strokeStyle short-dash, long-dash, dash-dot, dash-dot-dot, fine-dot, sparse-dot), shadow kinds (drop, inner, layered, extrude = 3D, contact = ground; presets soft, drop, lifted, hard, glow, long, inner, elevated, neon, extrude, float) and text outlines. They work in add_elements, update_elements, build_diagram nodes/edges/zones and style presets, and show in every export.",
+      "Copy a look from one element to others with copy_look {from, to, parts}: the fill (with its gradient or pattern) by default; add stroke, effects (shadow, opacity) or text (font, size, colour, outline of text or labels).",
       "Fonts: list_fonts, then fontFamily by name (\"Inter Bold\", \"Caveat\") on text, labels, update_elements and style presets. Node data (ip, hostname, vlan, role, owner, url, notes): set_properties / build_diagram `data`; review with get_inventory.",
       "Every tool takes an optional `drawing` (tab id, file path or title); default is the active drawing.",
     ].join("\n"),
@@ -452,6 +453,17 @@ tool(
     gap: z.number().optional().describe("Fixed space in px between neighbours"),
   },
   call("distribute"),
+);
+tool(
+  "copy_look",
+  "Copy an element's look onto other elements (one undo step), like the app's style brush (Copy look). parts: fill (backgroundColor, fillStyle and gradient; default), stroke (color, width, style incl. dashes, sloppiness), effects (shadow, opacity), text (font, size, color and outline of a text or a shape's label). Targets that can't take a part are skipped (a fill only goes on rectangles, diamonds and ellipses; on an icon node it recolors the icon). Returns the ids painted.",
+  {
+    drawing,
+    from: z.string().describe("Id of the element whose look is copied"),
+    to: z.array(z.string()).describe("Ids of the elements to paint"),
+    parts: z.array(z.enum(["fill", "stroke", "effects", "text"])).optional().describe('What to copy. Default ["fill"]'),
+  },
+  call("copy_look"),
 );
 tool(
   "delete_elements",

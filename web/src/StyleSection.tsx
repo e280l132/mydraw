@@ -2,6 +2,7 @@
 // the icon color section). Acts on the active drawing's API; each click is one undo step. Presets and
 // themes come from the global style library (styleStore), so every drawing sees the same ones.
 import { customFonts, fontById } from "./fontRegistry";
+import { sc } from "../../shared/shortcuts";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
@@ -48,6 +49,9 @@ interface Props {
   /** Pin: keep this panel on screen with nothing selected (View > Pin style panel). */
   pinned: boolean;
   onTogglePin(): void;
+  /** Style brush: pick up the selection's look and paint it onto other shapes (⌥⌘C). */
+  brushing: boolean;
+  onBrush(): void;
 }
 
 type Tab = "colors" | "presets" | "themes";
@@ -545,7 +549,7 @@ function ToolButtons({ what, manage, onNew, onManage }: { what: string; manage: 
   );
 }
 
-export function StyleSection({ api, tick, changeTick, onToast, custom: customColor, palette, onCustomChange, onPick, picking, icons, onIconColor, pinned, onTogglePin }: Props) {
+export function StyleSection({ api, tick, changeTick, onToast, custom: customColor, palette, onCustomChange, onPick, picking, icons, onIconColor, pinned, onTogglePin, brushing, onBrush }: Props) {
   useStyleLibrary();
   const [tab, setTab] = useState<Tab>("colors");
   // Stroke/Fill: one app-wide choice that sticks from item to item and across restarts.
@@ -824,6 +828,22 @@ export function StyleSection({ api, tick, changeTick, onToast, custom: customCol
       <div className="md-iconcolor-actions md-seg">
         <button className={`md-chip md-chip-custom${custom ? " on" : ""}`} onClick={() => setCustom((v) => !v)}>
           <span className="md-rainbow" /> Any color…
+        </button>
+        <button
+          type="button"
+          className={`md-chip md-brush-btn${brushing ? " on" : ""}`}
+          style={{ flex: "0 0 2.2rem" }}
+          aria-pressed={brushing}
+          aria-label="Copy look"
+          disabled={!selected.length && !brushing}
+          title={selected.length || brushing ? `Copy look (${sc("copyLook")}): pick up this shape's fill and paint it onto other shapes` : "Copy look: select a shape first, then paint its fill onto others"}
+          onClick={onBrush}
+        >
+          <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
+            <path d="M2.5 2.5h9v3.5h-9z" fill={brushing ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+            <path d="M11.5 4.2h1.7v3.3H7.8v2" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+            <path d="M6.6 9.5h2.4v4.5H6.6z" fill="currentColor" />
+          </svg>
         </button>
         <button
           className={`md-chip md-chip-pick${picking ? " on" : ""}`}

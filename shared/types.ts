@@ -148,6 +148,8 @@ export type MenuCommand =
   | { type: "toggleStencils" }
   | { type: "saveStencil" }
   | { type: "quickSaveStencil" }
+  | { type: "copyLook" }
+  | { type: "pasteLook" }
   | { type: "commandPalette" }
   | { type: "findReplace" }
   | { type: "togglePages" }

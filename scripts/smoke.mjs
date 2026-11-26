@@ -1073,6 +1073,75 @@ await call("update_elements", { updates: [{ id: "grd1", gradient: null }] });
 scene = await call("get_scene");
 assert.equal(el("grd1").gradient, undefined, "gradient: null makes it flat");
 await call("delete_elements", { ids: ["shk1", "shk2", "shk3", "shk4", "shk5", "grd1"] });
+
+step("Style brush: Copy look (⌥⌘C) paints a gradient onto other shapes; drag paints many; chips add parts");
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "br1", x: 2600, y: 2230, width: 90, height: 60, strokeColor: "#c2255c", strokeWidth: 4, gradient: "sky", shadow: "soft" },
+    { type: "rectangle", id: "br2", x: 2750, y: 2230, width: 90, height: 60 },
+    { type: "rectangle", id: "br3", x: 2600, y: 2400, width: 90, height: 60 },
+    { type: "rectangle", id: "br4", x: 2750, y: 2400, width: 90, height: 60 },
+  ],
+});
+await call("select", { ids: ["br1"] });
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*='none']) .excalidraw-container")?.focus());
+await page.keyboard.press("Alt+Meta+C");
+await page.waitForSelector(".md-brush-hud");
+assert.equal(await page.getAttribute('.md-brush-chip[data-brush-part="fill"]', "aria-pressed"), "true", "fill is copied by default");
+const br1Grad = (await call("get_scene")).elements.find((e) => e.id === "br1").gradient;
+const brGrad = async (id) => (await call("get_scene")).elements.find((e) => e.id === id).gradient;
+const br2At = await toPage(2795, 2260);
+await page.mouse.move(br2At.x, br2At.y, { steps: 3 });
+await waitFor(async () => JSON.stringify(await brGrad("br2")) === JSON.stringify(br1Grad), "hover previews the gradient");
+await page.waitForSelector(".md-brush-target:not(.md-brush-nope)");
+const awayAt = await toPage(2900, 2600);
+await page.mouse.move(awayAt.x, awayAt.y, { steps: 3 });
+await waitFor(async () => (await brGrad("br2")) === undefined, "leaving the shape takes the preview off");
+await page.mouse.move(br2At.x, br2At.y, { steps: 3 });
+await page.mouse.down();
+await page.mouse.up();
+await sleep(200);
+await page.mouse.move(awayAt.x, awayAt.y, { steps: 3 });
+await waitFor(async () => JSON.stringify(await brGrad("br2")) === JSON.stringify(br1Grad), "click paints the gradient");
+let brScene = (await call("get_scene")).elements;
+assert.equal(brScene.find((e) => e.id === "br2").shadow, undefined, "fill only: no shadow copied");
+assert.notEqual(brScene.find((e) => e.id === "br2").strokeColor, "#c2255c", "fill only: no stroke copied");
+assert.ok(await page.$(".md-brush-hud"), "the brush stays loaded after painting");
+await page.keyboard.press("Meta+Z");
+await waitFor(async () => (await brGrad("br2")) === undefined, "one undo takes the paint off");
+// Marquee over br3 + br4: both painted, one undo step.
+const mqA = await toPage(2580, 2380);
+const mqB = await toPage(2860, 2480);
+await page.mouse.move(mqA.x, mqA.y);
+await page.mouse.down();
+await page.mouse.move((mqA.x + mqB.x) / 2, (mqA.y + mqB.y) / 2, { steps: 4 });
+await page.mouse.move(mqB.x, mqB.y, { steps: 4 });
+await page.mouse.up();
+await waitFor(async () => (await brGrad("br3")) && (await brGrad("br4")), "drag paints every shape inside");
+await page.keyboard.press("Meta+Z");
+await waitFor(async () => !(await brGrad("br3")) && !(await brGrad("br4")), "the drag was one undo step");
+await page.keyboard.press("Escape");
+await waitFor(async () => !(await page.$(".md-brush-hud")), "Esc puts the brush down");
+// The panel button starts it too; the Shadow chip copies the shadow.
+await call("select", { ids: ["br1"] });
+await page.click(".md-brush-btn");
+await page.waitForSelector(".md-brush-hud");
+await page.click('.md-brush-chip[data-brush-part="effects"]');
+await page.mouse.move(br2At.x, br2At.y, { steps: 3 });
+await page.mouse.down();
+await page.mouse.up();
+await page.mouse.move(awayAt.x, awayAt.y, { steps: 3 });
+await waitFor(async () => (await call("get_scene")).elements.find((e) => e.id === "br2").shadow === "soft", "Shadow chip copies the shadow");
+await page.click('.md-brush-chip[data-brush-part="effects"]'); // back to fill only for later runs
+await page.click(".md-brush-done");
+await waitFor(async () => !(await page.$(".md-brush-hud")), "Done puts the brush down");
+// Agent: copy_look.
+const cl = await call("copy_look", { from: "br1", to: ["br3", "br4"], parts: ["stroke"] });
+assert.deepEqual(cl.painted.sort(), ["br3", "br4"], "copy_look paints both");
+brScene = (await call("get_scene")).elements;
+assert.equal(brScene.find((e) => e.id === "br3").strokeColor, "#c2255c", "copy_look copies the stroke");
+assert.equal(brScene.find((e) => e.id === "br3").gradient, undefined, "copy_look stroke only: no fill");
+await call("delete_elements", { ids: ["br1", "br2", "br3", "br4"] });
 // The agent can use every new style: build_diagram nodes / edges / zones, update_elements, style presets.
 await call("build_diagram", {
   x: 3200,

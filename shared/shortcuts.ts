@@ -26,6 +26,7 @@ export const SHORTCUTS = {
   findReplace: "⌥⌘F",
   stencils: "⇧⌘Y",
   quickSaveStencil: "⌥⌘S",
+  copyLook: "⌥⌘C",
   align: "⇧⌘←/→/↑/↓",
   bold: "⌘B",
   italic: "⌘I",

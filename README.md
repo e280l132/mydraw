@@ -134,6 +134,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 | ⌥⌘P | Pages panel |
 | ⌥⌘U | Import diagram from text |
 | ⌥⌘V | Version history |
+| ⌥⌘C | Copy look: style brush that paints the selected shape's fill (gradient, pattern), and on request its stroke, shadow and text, onto other shapes |
 | ⌥⌘↵ | Presentation |
 | ⇧⌘E | Export |
 | ⇧⌘Y | Stencils panel |

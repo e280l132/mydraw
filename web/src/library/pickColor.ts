@@ -14,7 +14,7 @@ const LINEAR = new Set(["arrow", "line", "freedraw"]);
  * nothing else is hit. With `labels` (the eyedropper) the text itself is returned when the point is
  * on a label, so its own color can be read (a label's color often differs from its shape's).
  */
-export function elementAt(api: ExcalidrawImperativeAPI, x: number, y: number, opts: { labels?: boolean } = {}): ExcalidrawElement | null {
+export function elementAt(api: ExcalidrawImperativeAPI, x: number, y: number, opts: { labels?: boolean; area?: boolean } = {}): ExcalidrawElement | null {
   const elements = api.getSceneElements();
   const byId = new Map(elements.map((e) => [e.id, e]));
   const inside = (el: ExcalidrawElement, pad = 0) => {
@@ -35,7 +35,8 @@ export function elementAt(api: ExcalidrawImperativeAPI, x: number, y: number, op
     // Text gets the same pointer slack: the box hugs the glyphs, so a click on a letter's edge can land just outside.
     if (!inside(el, isHollowShape(el) ? el.strokeWidth / 2 + tol : el.type === "text" ? tol : 0)) continue;
     // Shapes without a fill are only "there" along their outline, like Excalidraw's own selection.
-    if (isHollowShape(el) && !nearOutline(el, x, y, tol)) continue;
+    // `area` (the style brush): an unfilled shape counts anywhere inside its box.
+    if (isHollowShape(el) && !opts.area && !nearOutline(el, x, y, tol)) continue;
     if (el.type === "text" && el.containerId && byId.has(el.containerId) && !opts.labels) return byId.get(el.containerId)!;
     return el;
   }

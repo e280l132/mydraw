@@ -56,6 +56,7 @@ export function helpSections(): Section[] {
         { text: "The … button after the Fill buttons: Scribble, Zigzag, Dots and Dashes patterns, and gradients (presets, start and end color, linear or radial, direction). Excalidraw's own Fill buttons turn a gradient back into a plain fill" },
         { text: "Windows opened from the panel (Fill, Stroke style, Shadow, the slider buttons) can be dragged by their title bar; a moved window stays open and reopens there; the dock button puts it back" },
         { text: "The … button after the Stroke style buttons: short dash, long dash, dash dot, dash dot dot, dense and sparse dots" },
+        { keys: sc("copyLook"), text: "Copy look (style brush, also the brush button in Colors & styles and the right-click menu): click shapes to paint the fill, gradient or pattern onto them, drag to paint many, ⌥-click picks up another look, Esc ends. Chips add Stroke, Shadow and Text. Right-click → Paste look paints the selection" },
         { text: "Presets and Themes tabs: built-in and your own, saved globally; apply to the selection or the whole drawing" },
         { text: "Slider buttons next to stroke width, sloppiness, edges and font size set values beyond the presets (with nothing selected they set the next shape or text you draw)" },
       ],

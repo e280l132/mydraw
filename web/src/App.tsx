@@ -53,6 +53,8 @@ import { PresentationMode } from "./PresentationMode";
 import { LintPanel } from "./LintPanel";
 import { PropertyTip } from "./PropertyTip";
 import { QuickConnect } from "./QuickConnect";
+import { StyleBrush } from "./StyleBrush";
+import { brushParts, loadedLook, paintLook, pickUpSelection, setLoadedLook } from "./styleBrushOps";
 import { listFrames } from "./exportImage";
 import { fileLink } from "../../shared/links";
 import { selectedIds, setSelectionLink } from "./uiActions";
@@ -254,6 +256,10 @@ export function App() {
   const [fontsOpen, setFontsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [presenting, setPresenting] = useState(false);
+  /** Style brush (Copy look) is painting on the active tab. */
+  const [brushing, setBrushing] = useState(false);
+  // The brush paints on the tab it was loaded on: switching tabs puts it down.
+  useEffect(() => setBrushing(false), [activeId]);
   useEffect(() => {
     if (presenting) bridge.setFullScreen(true);
     return () => {
@@ -774,6 +780,36 @@ export function App() {
     setSaveSelection(sel);
   }, [showToast]);
 
+  /** Copy look (⌥⌘C): pick up the selection's look and start painting it onto other shapes. */
+  const copyLook = useCallback(() => {
+    const api = apis.current.get(activeRef.current);
+    if (!api) return;
+    const l = pickUpSelection(api);
+    if (!l) {
+      showToast("Select a shape to copy its look.", true);
+      return;
+    }
+    setLoadedLook(l);
+    setBrushing(true);
+  }, [showToast]);
+
+  /** Paste look: paint the loaded look onto the selection (one undo step). */
+  const pasteLook = useCallback(() => {
+    const api = apis.current.get(activeRef.current);
+    const l = loadedLook();
+    if (!api) return;
+    if (!l) {
+      showToast("Copy a look first (select a shape, ⌥⌘C).", true);
+      return;
+    }
+    const ids = Object.keys(api.getAppState().selectedElementIds);
+    void paintLook(api, l.look, ids, brushParts(), l.sourceId)
+      .then((done) => {
+        if (!done.length) showToast("Nothing selected can take this look.", true);
+      })
+      .catch((e: Error) => showToast(`Could not paste the look: ${e.message}`, true));
+  }, [showToast]);
+
   /** Save the selection to My Stencils without asking for a name. */
   const quickSaveStencil = useCallback(() => {
     const api = apis.current.get(activeRef.current);
@@ -830,6 +866,14 @@ export function App() {
         make("md-ctx-quick", "Quick save as stencil", "⌥⌘S", quickSaveStencil),
         hr,
       );
+      // Copy look / Paste look replace Excalidraw's Copy styles / Paste styles (hidden in CSS),
+      // which drop gradients, dashes, shadows and outlines.
+      const styles = menu.querySelector('li[data-testid="copyStyles"]');
+      if (styles) {
+        const items = [make("md-ctx-copylook", "Copy look", "⌥⌘C", copyLook)];
+        if (loadedLook()) items.push(make("md-ctx-pastelook", "Paste look", "", pasteLook));
+        styles.before(...items);
+      }
     };
     const mo = new MutationObserver((records) => {
       for (const r of records) {
@@ -842,7 +886,7 @@ export function App() {
     });
     mo.observe(document.body, { childList: true, subtree: true });
     return () => mo.disconnect();
-  }, [openSaveStencil, quickSaveStencil]);
+  }, [openSaveStencil, quickSaveStencil, copyLook, pasteLook]);
 
   // The two helps open each other: Excalidraw's (`?`, the corner button, the menu: tools and editing
   // keys) and ours (features and mydraw's shortcuts). Ours has a button for theirs; theirs gets one
@@ -1250,9 +1294,13 @@ export function App() {
           return openSaveStencil();
         case "quickSaveStencil":
           return quickSaveStencil();
+        case "copyLook":
+          return copyLook();
+        case "pasteLook":
+          return pasteLook();
       }
     },
-    [closeTab, newTab, openFiles, openSaveStencil, quickSaveStencil, save, setActive, showToast, toggleLint, togglePinPanel, togglePages, togglePanel, setGridPanel],
+    [closeTab, newTab, openFiles, openSaveStencil, quickSaveStencil, copyLook, pasteLook, save, setActive, showToast, toggleLint, togglePinPanel, togglePages, togglePanel, setGridPanel],
   );
 
   // Main process saves settings and broadcasts them back (settings:changed), which updates state.
@@ -1433,6 +1481,16 @@ export function App() {
         void onCommand({ type: "present" });
         return;
       }
+      if (e.altKey && !e.shiftKey && e.code === "KeyC") {
+        // ⌥⌘C: Copy look (style brush). Excalidraw's own Copy styles uses the same key; ours also
+        // carries gradients, dashes, shadows and outlines.
+        const t = e.target as HTMLElement | null;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        copyLook();
+        return;
+      }
       if (e.altKey && !e.shiftKey && e.code === "KeyV") {
         // ⌥⌘V: version history.
         e.preventDefault();
@@ -1476,7 +1534,7 @@ export function App() {
       offs.forEach((off) => off());
       window.removeEventListener("keydown", onKey, true);
     };
-  }, [beforeClose, onCommand, openFiles, patchTab, reloadFromContent, scheduleBackground, showToast]);
+  }, [beforeClose, onCommand, openFiles, patchTab, reloadFromContent, scheduleBackground, showToast, copyLook]);
 
   const active = tabs.find((t) => t.id === activeId);
   useEffect(() => {
@@ -1743,7 +1801,7 @@ export function App() {
             onGridHealth={onGridHealth}
           />
         ))}
-        {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} changeTick={tuneTick} onToast={showToast} custom={customColor} palette={palette} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} pinned={panelPinned} onTogglePin={togglePinPanel} /><IconStyleSection key={`iconstyle-${activeId}`} api={apis.current.get(activeId)} tick={tuneTick + selTick} settings={settings} onSettings={onSettings} onToast={showToast} /><ShadowSection key={`shadow-${activeId}`} api={apis.current.get(activeId)} tick={tuneTick + selTick} palette={palette} onToast={showToast} /><PropertiesSection api={apis.current.get(activeId)} tick={tuneTick} /></>, styleHost)}
+        {styleHost && createPortal(<><StyleSection api={apis.current.get(activeId)} tick={selTick} changeTick={tuneTick} onToast={showToast} custom={customColor} palette={palette} onCustomChange={setCustomColor} onPick={() => setPicking((v) => !v)} picking={picking} icons={icons} onIconColor={recolorIcons} pinned={panelPinned} onTogglePin={togglePinPanel} brushing={brushing} onBrush={() => (brushing ? setBrushing(false) : copyLook())} /><IconStyleSection key={`iconstyle-${activeId}`} api={apis.current.get(activeId)} tick={tuneTick + selTick} settings={settings} onSettings={onSettings} onToast={showToast} /><ShadowSection key={`shadow-${activeId}`} api={apis.current.get(activeId)} tick={tuneTick + selTick} palette={palette} onToast={showToast} /><PropertiesSection api={apis.current.get(activeId)} tick={tuneTick} /></>, styleHost)}
         <FineTune api={apis.current.get(activeId)} tick={tuneTick} hosts={ftHosts} />
         <StyleMore api={apis.current.get(activeId)} tick={tuneTick} hosts={moreHosts} />
         <TextStyle api={apis.current.get(activeId)} tick={tuneTick} host={textStyleHost} onToast={showToast} />
@@ -1829,6 +1887,17 @@ export function App() {
           captionPrefs={settings}
           blocked={shortcutsOpen || fontsOpen || helpOpen || inventoryOpen || importOpen || historyOpen || exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
           onToast={showToast}
+        />
+      )}
+      {activeId && brushing && (
+        <StyleBrush
+          key={`brush-${activeId}`}
+          getApi={getActiveApi}
+          onToast={showToast}
+          onEnd={(refocus = true) => {
+            setBrushing(false);
+            if (refocus) document.querySelector<HTMLElement>(`[data-md-tab="${activeRef.current}"] .excalidraw`)?.focus();
+          }}
         />
       )}
       {activeId && (

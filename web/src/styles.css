@@ -1566,6 +1566,7 @@ li[data-testid="addToLibrary"] {
   cursor: crosshair !important;
 }
 
+.md-iconcolor-actions .md-brush-btn,
 .md-iconcolor-actions .md-chip-pick {
   flex: 0 0 1.75rem;
   padding: 0;
@@ -4353,4 +4354,92 @@ input.md-is-range {
   margin-top: 0.4rem;
   font-size: 0.7rem;
   color: var(--color-gray-50, #888);
+}
+
+/* Style brush (web/src/StyleBrush.tsx): Copy look ⌥⌘C, then paint shapes. */
+.md-brushing .excalidraw canvas {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M3 3h13v5H3z' fill='%236965db' stroke='white' stroke-width='1.2'/%3E%3Cpath d='M16 5.5h3v5h-8v3' fill='none' stroke='%231b1b1f' stroke-width='1.6'/%3E%3Cpath d='M9.5 13.5h3V21h-3z' fill='%231b1b1f' stroke='white' stroke-width='1'/%3E%3C/svg%3E") 11 22, crosshair !important;
+}
+.md-brush {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+}
+.md-brush-target {
+  position: fixed;
+  border: 2px solid var(--color-primary, #6965db);
+  border-radius: 6px;
+  pointer-events: none;
+}
+.md-brush-target.md-brush-nope {
+  border: 2px dashed #e03131;
+}
+.md-brush-marquee {
+  position: fixed;
+  border: 1px dashed var(--color-primary, #6965db);
+  background: rgba(105, 101, 219, 0.08);
+  pointer-events: none;
+}
+.md-brush-hud {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px 5px 8px;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(20, 20, 24, 0.88);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  pointer-events: auto;
+  white-space: nowrap;
+}
+.md-brush-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  flex: none;
+}
+.md-brush-swatch[data-empty] {
+  background: repeating-conic-gradient(#888 0 25%, #555 0 50%) 0 0 / 8px 8px;
+}
+.md-brush-chips {
+  display: inline-flex;
+  gap: 3px;
+}
+.md-brush-chip,
+.md-brush-done {
+  padding: 3px 8px;
+  font: inherit;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.md-brush-chip.active {
+  background: var(--color-primary, #6965db);
+}
+.md-brush-chip:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.md-brush-chip:not(:disabled):hover,
+.md-brush-done:hover {
+  border-color: rgba(255, 255, 255, 0.45);
+}
+.md-brush-hint {
+  opacity: 0.75;
+  font-size: 11px;
+}
+/* Copy look / Paste look (App.tsx context menu) replace Excalidraw's Copy / Paste styles, which drop
+   gradients, dashes, shadows and outlines. */
+.context-menu li[data-testid="copyStyles"],
+.context-menu li[data-testid="pasteStyles"] {
+  display: none;
 }
