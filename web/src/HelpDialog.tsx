@@ -5,6 +5,7 @@
 // "What it does" and "Keyboard shortcuts".
 import { useEffect, useRef } from "react";
 import { formatShortcut, keyNames, sc } from "../../shared/shortcuts";
+import { APP_VERSION, APP_VERSION_LABEL } from "../../shared/appVersion";
 
 interface Row {
   keys?: string;
@@ -163,7 +164,9 @@ export function HelpDialog({ onClose, onOpenExcalidraw }: Props) {
           onClose();
         }}
       >
-        <h2>mydraw features and shortcuts</h2>
+        <h2>
+          mydraw features and shortcuts <span className="md-help-version" data-md-version={APP_VERSION}>version {APP_VERSION_LABEL}</span>
+        </h2>
         <p className="md-help-hint">
           Full reference: the README in the project folder. The drawing-tool and editing keys are in Excalidraw’s own help (press <kbd>?</kbd> on the canvas).
         </p>

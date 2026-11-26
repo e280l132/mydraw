@@ -2,6 +2,7 @@ import { useState, type ReactElement, type ReactNode } from "react";
 import { MainMenu } from "@excalidraw/excalidraw";
 import type { MenuCommand, Settings } from "../../shared/types";
 import { sc } from "../../shared/shortcuts";
+import { APP_VERSION, APP_VERSION_LABEL } from "../../shared/appVersion";
 import {
   CheckOffIcon,
   CheckOnIcon,
@@ -288,6 +289,10 @@ export function AppMenu({ settings, panels, onCommand, onSettings }: Props) {
           </CheckItem>
           <MainMenu.Item onSelect={run({ type: "quickConnectSettings" })}>Quick connect shortcuts…</MainMenu.Item>
           <MainMenu.Item onSelect={run({ type: "fonts" })}>Fonts…</MainMenu.Item>
+          <MainMenu.Item onSelect={run({ type: "setup" })}>Command line & Claude Code…</MainMenu.Item>
+          <CheckItem checked={settings.updates.check} onToggle={() => onSettings({ updates: { ...settings.updates, check: !settings.updates.check } })}>
+            Check for updates automatically
+          </CheckItem>
         </Section>
       )}
 
@@ -299,6 +304,11 @@ export function AppMenu({ settings, panels, onCommand, onSettings }: Props) {
         mydraw features and shortcuts…
       </MainMenu.Item>
       <MainMenu.DefaultItems.Help />
+      <MainMenu.Item onSelect={run({ type: "checkUpdates" })}>
+        <span className="md-menu-version" data-md-version={APP_VERSION}>
+          mydraw {APP_VERSION_LABEL} · Check for updates…
+        </span>
+      </MainMenu.Item>
 
       <MainMenu.Separator />
       <MainMenu.DefaultItems.ClearCanvas />

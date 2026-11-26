@@ -27,6 +27,11 @@ import { buildId } from "../../shared/buildId";
 import { buildMenu } from "./menu";
 import { getSettings, onSettingsChanged, rememberRecent, updateSettings } from "./settings-store";
 import { getStyleLibrary, saveStyleLibrary } from "./styles-store";
+import { quitCancelled, setupUpdater, updateAction, updateStatus } from "./updater";
+import { setupAction, setupSetup, setupStatus } from "./setup";
+import { SETUP_ACTIONS, type SetupAction } from "../../shared/setup";
+import { UPDATE_ACTIONS, type UpdateAction } from "../../shared/update";
+import { APP_VERSION_LABEL } from "../../shared/appVersion";
 
 app.setName("mydraw");
 
@@ -376,6 +381,22 @@ function registerIpc(): void {
     allowClose = true;
     win?.close();
   });
+  ipcMain.on("app:close-cancelled", () => quitCancelled());
+
+  ipcMain.handle("setup:status", (e) => {
+    if (e.sender !== win?.webContents) throw new Error("invalid request");
+    return setupStatus();
+  });
+  ipcMain.handle("setup:action", (e, action: unknown) => {
+    if (e.sender !== win?.webContents || !SETUP_ACTIONS.includes(action as SetupAction)) throw new Error("invalid request");
+    return setupAction(action as SetupAction);
+  });
+
+  ipcMain.handle("update:get", () => updateStatus());
+  ipcMain.handle("update:action", (e, action: unknown) => {
+    if (e.sender !== win?.webContents || !UPDATE_ACTIONS.includes(action as UpdateAction)) throw new Error("invalid request");
+    return updateAction(action as UpdateAction);
+  });
 }
 
 function createWindow(): void {
@@ -430,13 +451,31 @@ function createWindow(): void {
 // ---------- agent control (MCP) ----------
 
 async function startAgentControl(store: ReturnType<typeof setupLibrary>): Promise<void> {
-  const handler = setupAgent({
+  const agent = setupAgent({
     getWin: () => win,
     isRendererReady: () => rendererReady,
     store,
     openFile: (abs) => open(abs),
     allowPath: (abs) => allowedPaths.add(abs),
   });
+  // Internal methods without an MCP tool, used by scripts/verify-package.mjs and the smoke test.
+  const handler = async (method: string, params: Record<string, unknown>): Promise<unknown> => {
+    if (method === "update_status") return updateStatus();
+    if (method === "setup_status") return setupStatus();
+    if (method === "setup_action") {
+      if (!SETUP_ACTIONS.includes(params.action as SetupAction)) throw new Error("unknown setup action");
+      return setupAction(params.action as SetupAction);
+    }
+    if (method === "update_action") {
+      if (!UPDATE_ACTIONS.includes(params.action as UpdateAction)) throw new Error("unknown update action");
+      return updateAction(params.action as UpdateAction);
+    }
+    if (method === "app_quit") {
+      setTimeout(() => app.quit(), 50);
+      return { quitting: true };
+    }
+    return agent(method, params);
+  };
   ipcMain.handle("ui:apply-template", async (e, name: unknown) => {
     if (e.sender !== win?.webContents || typeof name !== "string") throw new Error("invalid request");
     await handler("apply_template", { name, zoom: true });
@@ -501,7 +540,8 @@ if (!isTest && !app.requestSingleInstanceLock()) {
     if (process.platform === "darwin" && !app.isPackaged && fs.existsSync(iconPng)) app.dock?.setIcon(iconPng);
     app.setAboutPanelOptions({
       applicationName: "mydraw",
-      applicationVersion: app.getVersion(),
+      applicationVersion: APP_VERSION_LABEL,
+      version: "",
       copyright: "Built on Excalidraw (MIT)",
       ...(fs.existsSync(iconPng) ? { iconPath: iconPng } : {}),
     });
@@ -522,6 +562,13 @@ if (!isTest && !app.requestSingleInstanceLock()) {
     const store = setupLibrary(() => win, settings, (patch) => updateSettings(patch));
     setupFonts();
     createWindow();
+    setupUpdater({
+      getWin: () => win,
+      getSettings,
+      updateSettings: (patch) => void updateSettings(patch),
+      quit: () => app.quit(),
+    });
+    setupSetup({ quit: () => app.quit() });
     void startAgentControl(store);
   });
 

@@ -1,0 +1,74 @@
+# Unsigned arm64 macOS app + DMG: npm run package (see CLAUDE.md "Packaging").
+# Everything the app runs is bundled by esbuild/Vite, so no node_modules are packed (all npm
+# packages are devDependencies).
+appId: dev.mydraw.app
+productName: mydraw
+copyright: Built on Excalidraw (MIT)
+directories:
+  output: release
+  buildResources: assets
+asar: true
+# Chromium UI strings: English only (saves ~40 MB of .lproj folders).
+electronLanguages:
+  - en
+files:
+  - package.json
+  - app/dist/*.cjs
+  - web/dist/**/*
+  - assets/icon.png
+  - "!**/*.map"
+extraResources:
+  # Outside the asar: the shell wrapper must be executable, and Node mode imports plain files.
+  - from: packaging/mydraw
+    to: bin/mydraw
+  - from: bin/mydraw.mjs
+    to: bin/mydraw.mjs
+  - from: mcp/dist/index.js
+    to: mcp/index.js
+mac:
+  target:
+    - target: dmg
+      arch: arm64
+  icon: assets/icon.icns
+  category: public.app-category.graphics-design
+  # No Apple certificate: ad-hoc signature (Apple Silicon refuses unsigned code).
+  identity: "-"
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  notarize: false
+  extendInfo:
+    NSDocumentsFolderUsageDescription: mydraw keeps your stencil library and drawings in your Documents folder.
+    NSDesktopFolderUsageDescription: mydraw opens and saves drawings on your Desktop when you ask it to.
+    NSDownloadsFolderUsageDescription: mydraw opens and saves drawings in Downloads when you ask it to.
+dmg:
+  # The updater looks for this exact name (shared/update.ts dmgName).
+  artifactName: mydraw-${version}-arm64.${ext}
+  writeUpdateInfo: false
+  # Background with the title, arrow and first-launch note: packaging/dmg-background.html,
+  # rendered to the TIFF (1x + 2x) by `npm run dmg-background`. Icon positions match it.
+  background: packaging/dmg-background.tiff
+  iconSize: 100
+  window:
+    width: 560
+    # Includes the title bar: the bottom ~28 pt of the background are hidden.
+    height: 400
+  contents:
+    # The app (no path) and the Applications shortcut.
+    - x: 150
+      y: 175
+    - x: 410
+      y: 175
+      type: link
+      path: /Applications
+fileAssociations:
+  - ext: excalidraw
+    name: Excalidraw drawing
+    role: Editor
+    rank: Owner
+    mimeType: application/vnd.excalidraw+json
+  - ext: drawio
+    name: draw.io diagram
+    role: Viewer
+    rank: Alternate
+afterPack: scripts/after-pack.cjs
+publish: null

@@ -9,6 +9,8 @@ export const CLI_USAGE = `mydraw: export and convert drawings without opening th
 Usage:
   mydraw export <drawing> [options]          render a .excalidraw (or .drawio) file
   mydraw convert <drawing> --to <format>     same, the format named explicitly
+  mydraw mcp                                  run the MCP server for Claude Code (stdio)
+  mydraw --version                           print the version
   mydraw help
 
 Formats: ${AGENT_EXPORT_FORMATS.join(", ")}
@@ -56,7 +58,7 @@ export interface CliExport {
   quiet: boolean;
 }
 
-export type CliCommand = { command: "help" } | CliExport;
+export type CliCommand = { command: "help" } | { command: "version" } | CliExport;
 
 export class CliUsageError extends Error {}
 
@@ -66,7 +68,8 @@ export function parseCliArgs(argv: readonly string[]): CliCommand {
   const args = [...argv];
   const cmd = args.shift();
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") return { command: "help" };
-  if (cmd !== "export" && cmd !== "convert") throw new CliUsageError(`unknown command "${cmd}" (use export or convert)`);
+  if (cmd === "version" || cmd === "--version" || cmd === "-v") return { command: "version" };
+  if (cmd !== "export" && cmd !== "convert") throw new CliUsageError(`unknown command "${cmd}" (use export, convert or mcp)`);
 
   const pos: string[] = [];
   const opt: Record<string, string> = {};

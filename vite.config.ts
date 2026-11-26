@@ -1,6 +1,7 @@
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { defineConfig, type Plugin } from "vite";
 // @ts-expect-error plain .mjs without types
 import { excalidrawPanelPin } from "./scripts/excalidrawPatch.mjs";
@@ -37,6 +38,9 @@ export const EXCALIDRAW_FONT_CHUNK = {
   production: path.join(EXCALIDRAW_DIST, "prod/chunk-K2UTITRG.js"),
 };
 
+// The app version (shared/appVersion.ts); also injected by scripts/build-app.mjs and build-mcp.mjs.
+const PKG_VERSION: string = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version;
+
 export default defineConfig(({ mode }) => ({
   root: "web",
   base: "./",
@@ -51,6 +55,7 @@ export default defineConfig(({ mode }) => ({
   optimizeDeps: { include: ["@excalidraw/excalidraw", "mydraw-excalidraw-chunk"] },
   define: {
     "process.env.IS_PREACT": JSON.stringify("false"),
+    __MYDRAW_VERSION__: JSON.stringify(PKG_VERSION),
   },
   server: { port: 5183, strictPort: true },
   build: {

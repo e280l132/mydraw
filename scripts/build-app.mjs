@@ -1,4 +1,4 @@
-// Bundles the Electron main process and preload script to CommonJS in app/dist.
+// Bundles the Electron entry (boot), main process, CLI main and preload script to CommonJS in app/dist.
 import { build, context } from "esbuild";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { brotliDecompressSync } from "node:zlib";
@@ -10,8 +10,14 @@ import { ALLOWED_LICENSES, BUILTIN_FONTS, BUILTIN_SUBSETS } from "./builtin-font
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+/** package.json "version": the app version (shared/appVersion.ts). */
+export function pkgVersion() {
+  return JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
+}
+
 export const buildOptions = {
   entryPoints: {
+    boot: path.join(root, "app/src/boot.ts"),
     main: path.join(root, "app/src/main.ts"),
     preload: path.join(root, "app/src/preload.ts"),
     cli: path.join(root, "app/src/cli.ts"),
@@ -23,6 +29,7 @@ export const buildOptions = {
   format: "cjs",
   target: "node22",
   external: ["electron"],
+  define: { __MYDRAW_VERSION__: JSON.stringify(pkgVersion()) },
   sourcemap: true,
   logLevel: "info",
 };

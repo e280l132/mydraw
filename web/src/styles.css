@@ -263,6 +263,114 @@ li[data-testid="addToLibrary"] {
   cursor: pointer;
 }
 
+.md-update {
+  background: #e8f1ff;
+  color: #123a6b;
+  border-bottom-color: #b5cdf0;
+}
+
+.md-update button {
+  border-color: #8fb0dd;
+  background: #f6f9ff;
+}
+
+.md-update .md-update-install,
+.md-update .md-update-restart {
+  background: var(--md-accent);
+  border-color: var(--md-accent);
+  color: #fff;
+}
+
+.md-update .md-update-close {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.md-update-notes pre {
+  white-space: pre-wrap;
+  font: inherit;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.md-menu-version {
+  color: var(--color-gray-50, #888);
+  font-size: 0.85em;
+}
+
+.md-help-version {
+  font-size: 0.6em;
+  font-weight: normal;
+  color: var(--md-muted);
+  margin-left: 8px;
+}
+
+.md-setup {
+  width: min(620px, 92vw);
+}
+
+.md-setup-hint,
+.md-setup-what,
+.md-setup-muted {
+  color: var(--md-muted);
+  font-size: 0.92em;
+}
+
+.md-setup-row {
+  border-top: 1px solid var(--md-border);
+  padding: 12px 0 6px;
+}
+
+.md-setup-row h3 {
+  margin: 0 0 4px;
+  font-size: 1em;
+}
+
+.md-setup-row p {
+  margin: 4px 0 8px;
+}
+
+.md-setup-row code {
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+.md-setup-btn {
+  margin-right: 8px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--md-border);
+  background: var(--md-panel);
+  color: var(--md-fg);
+  cursor: pointer;
+}
+
+.md-setup-btn.primary {
+  background: var(--md-accent);
+  border-color: var(--md-accent);
+  color: #fff;
+}
+
+.md-setup-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.md-setup-ok {
+  color: #2b8a3e;
+}
+
+.md-setup-warn {
+  color: #a35d00;
+}
+
+.md-setup-error {
+  color: #c92a2a;
+}
+
 /* ---------- modal ---------- */
 
 .md-modal-backdrop {

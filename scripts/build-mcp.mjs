@@ -1,5 +1,6 @@
 // Bundles the MCP server (mcp/src) into a single ESM file: mcp/dist/index.js.
 import { build } from "esbuild";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +15,7 @@ export const mcpBuildOptions = {
   target: "node22",
   sourcemap: true,
   logLevel: "info",
+  define: { __MYDRAW_VERSION__: JSON.stringify(JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version) },
   // Some bundled CommonJS dependencies call require(); give ESM output a working one.
   banner: { js: 'import { createRequire as __cr } from "node:module"; const require = __cr(import.meta.url);' },
 };

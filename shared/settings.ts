@@ -3,6 +3,7 @@ import { normalizePanelOrder } from "./panelOrder";
 import { cloneQuickConnect, defaultQuickConnect, normalizeQuickConnect } from "./quickBindings";
 import { CAPTION_FONT_MODES, DEFAULT_HAND_FONT, DEFAULT_ICON_SKETCH, ICON_STYLE_SETTINGS, type CaptionFontMode, type IconStyleSetting, lookOfSetting, normalizeHandFont, normalizeIconSketch } from "./iconSketch";
 import type { DrawingStyle, Settings, ThemeSetting } from "./types";
+import { tagVersion } from "./version";
 
 export const MAX_RECENT = 10;
 
@@ -20,6 +21,8 @@ export const DEFAULT_SETTINGS: Settings = {
   iconSketch: lookOfSetting(null),
   captionFont: "match",
   captionHandFont: DEFAULT_HAND_FONT,
+  updates: { check: true, lastCheck: 0, skipped: null },
+  setupShown: false,
 };
 
 const THEMES: ThemeSetting[] = ["system", "light", "dark"];
@@ -27,12 +30,13 @@ const STYLES: DrawingStyle[] = ["clean", "sketch"];
 
 /** Merge untrusted JSON (settings file or a renderer patch) onto a base, keeping only valid values. */
 export function mergeSettings(base: Settings, raw: unknown): Settings {
-  const out: Settings = { ...base, recentFiles: [...base.recentFiles], autoExport: { ...base.autoExport }, quickConnect: cloneQuickConnect(base.quickConnect), grid: { ...base.grid }, panelOrder: [...base.panelOrder], iconSketch: { ...base.iconSketch } };
+  const out: Settings = { ...base, recentFiles: [...base.recentFiles], autoExport: { ...base.autoExport }, quickConnect: cloneQuickConnect(base.quickConnect), grid: { ...base.grid }, panelOrder: [...base.panelOrder], iconSketch: { ...base.iconSketch }, updates: { ...base.updates } };
   if (!raw || typeof raw !== "object") return out;
   const r = raw as Record<string, unknown>;
   if (THEMES.includes(r.theme as ThemeSetting)) out.theme = r.theme as ThemeSetting;
   if (STYLES.includes(r.drawingStyle as DrawingStyle)) out.drawingStyle = r.drawingStyle as DrawingStyle;
   if (typeof r.autosave === "boolean") out.autosave = r.autosave;
+  if (typeof r.setupShown === "boolean") out.setupShown = r.setupShown;
   if (Array.isArray(r.recentFiles)) {
     out.recentFiles = r.recentFiles.filter((p): p is string => typeof p === "string").slice(0, MAX_RECENT);
   }
@@ -50,6 +54,12 @@ export function mergeSettings(base: Settings, raw: unknown): Settings {
   if (r.panelOrder !== undefined) out.panelOrder = normalizePanelOrder(r.panelOrder);
   if (ICON_STYLE_SETTINGS.includes(r.iconStyle as IconStyleSetting)) out.iconStyle = r.iconStyle as IconStyleSetting;
   if (CAPTION_FONT_MODES.includes(r.captionFont as CaptionFontMode)) out.captionFont = r.captionFont as CaptionFontMode;
+  if (r.updates && typeof r.updates === "object") {
+    const u = r.updates as Record<string, unknown>;
+    if (typeof u.check === "boolean") out.updates.check = u.check;
+    if (typeof u.lastCheck === "number" && Number.isFinite(u.lastCheck) && u.lastCheck >= 0) out.updates.lastCheck = u.lastCheck;
+    if (u.skipped === null || (typeof u.skipped === "string" && tagVersion(u.skipped))) out.updates.skipped = u.skipped === null ? null : tagVersion(u.skipped as string);
+  }
   const hand = normalizeHandFont(r.captionHandFont);
   if (hand) out.captionHandFont = hand;
   if (r.iconSketch && typeof r.iconSketch === "object") {

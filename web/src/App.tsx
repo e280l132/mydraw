@@ -42,6 +42,8 @@ import { relayout, tidyLayout } from "./tidyLayout";
 import { DEFAULT_GRID, type GridSettings } from "../../shared/grid";
 import { InventoryDialog } from "./InventoryDialog";
 import { HelpDialog } from "./HelpDialog";
+import { UpdateBanner } from "./UpdateBanner";
+import { SetupDialog } from "./SetupDialog";
 import { ImportDialog } from "./ImportDialog";
 import { QuickConnectSettingsDialog } from "./QuickConnectSettings";
 import { FontsDialog } from "./FontsDialog";
@@ -246,6 +248,7 @@ export function App() {
   const [findOpen, setFindOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [fontsOpen, setFontsOpen] = useState(false);
@@ -1203,6 +1206,12 @@ export function App() {
         case "help":
           setHelpOpen(true);
           return;
+        case "setup":
+          setSetupOpen(true);
+          return;
+        case "checkUpdates":
+          void bridge.updateAction("check").catch((e: Error) => showToast(e.message, true));
+          return;
         case "inventory":
           if (apis.current.get(activeRef.current)) setInventoryOpen(true);
           return;
@@ -1270,11 +1279,11 @@ export function App() {
     const unsaved = tabsRef.current.filter((t) => t.dirty);
     if (unsaved.length) {
       const choice = await bridge.askUnsaved(unsaved.map((t) => t.title));
-      if (choice === "cancel") return;
+      if (choice === "cancel") return bridge.closeCancelled();
       if (choice === "save") {
         for (const t of unsaved) {
           setActive(t.id);
-          if (!(await save(t.id))) return;
+          if (!(await save(t.id))) return bridge.closeCancelled();
         }
       }
     }
@@ -1337,6 +1346,15 @@ export function App() {
 
       await openFiles(await bridge.takePendingFiles());
       if (!tabsRef.current.length) newTab();
+
+      // Installed app: "Set up mydraw" on first launch, and whenever it runs from the wrong place
+      // (updates and the mydraw command need it in Applications).
+      try {
+        const setup = await bridge.setupStatus();
+        if (setup.packaged && (!settings.setupShown || setup.location.state === "move")) setSetupOpen(true);
+      } catch {
+        // not important enough to bother anyone
+      }
     })();
   }, [commitTabs, newTab, openFiles, setActive, showToast]);
 
@@ -1703,6 +1721,7 @@ export function App() {
         drawingStyle={settings?.drawingStyle ?? "clean"}
         onDrawingStyle={(drawingStyle) => onSettings({ drawingStyle })}
       />
+      <UpdateBanner toast={showToast} />
       <div className="md-main">
       {pagesOpen && <PagesPanel api={activeApi} onClose={togglePages} />}
       <div className="md-content" ref={contentRef}>
@@ -1836,6 +1855,15 @@ export function App() {
           quick={settings?.quickConnect ?? DEFAULT_QUICK_CONNECT}
           onSave={(quickConnect) => void bridge.updateSettings({ quickConnect })}
           onClose={() => setShortcutsOpen(false)}
+        />
+      )}
+      {setupOpen && (
+        <SetupDialog
+          onClose={() => {
+            setSetupOpen(false);
+            if (!settingsRef.current?.setupShown) onSettings({ setupShown: true });
+            document.querySelector<HTMLElement>(`[data-md-tab="${activeRef.current}"] .excalidraw`)?.focus();
+          }}
         />
       )}
       {helpOpen && (

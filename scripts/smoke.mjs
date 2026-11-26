@@ -38,6 +38,11 @@ const fontServer = http.createServer((req, res) => {
     res.writeHead(code, { "Content-Type": type });
     res.end(body);
   };
+  // Also a stand-in for GitHub's "latest release" (in-app updates, MYDRAW_UPDATE_API).
+  if (req.url === "/repos/e280l132/mydraw/releases/latest") {
+    const dmg = "mydraw-99.0.0-arm64.dmg";
+    return send(200, JSON.stringify({ tag_name: "v99.0.0", draft: false, prerelease: false, body: "## 99.0\n- smoke", html_url: "https://github.com/e280l132/mydraw/releases", assets: [{ name: dmg, browser_download_url: `https://github.com/e280l132/mydraw/releases/download/v99.0.0/${dmg}`, size: 1 }, { name: `${dmg}.sha256`, browser_download_url: `https://github.com/e280l132/mydraw/releases/download/v99.0.0/${dmg}.sha256`, size: 1 }] }));
+  }
   if (req.url === "/v1/fonts") return send(200, JSON.stringify([fakeFont, { ...fakeFont, id: "smoke-icons", family: "Smoke Icons", category: "icons" }]));
   if (req.url === "/v1/fonts/smoke-display") return send(200, JSON.stringify({ ...fakeFont, unicodeRange: fakeRanges }));
   const m = /^\/fontsource\/fonts\/smoke-display@latest\/(latin(?:-ext)?)-400-normal\.woff2$/.exec(req.url);
@@ -46,12 +51,13 @@ const fontServer = http.createServer((req, res) => {
 });
 await new Promise((r) => fontServer.listen(0, "127.0.0.1", r));
 const fontOrigin = `http://127.0.0.1:${fontServer.address().port}`;
+const pkgVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
 
 async function launch() {
   const app = await electron.launch({
     executablePath: electronBinary(),
     args: [root],
-    env: { ...process.env, MYDRAW_TEST: "1", MYDRAW_USER_DATA: userData, MYDRAW_LIBRARY: libraryDir, MYDRAW_FONT_API: fontOrigin, MYDRAW_FONT_CDN: fontOrigin },
+    env: { ...process.env, MYDRAW_TEST: "1", MYDRAW_USER_DATA: userData, MYDRAW_LIBRARY: libraryDir, MYDRAW_FONT_API: fontOrigin, MYDRAW_FONT_CDN: fontOrigin, MYDRAW_UPDATE_API: fontOrigin },
   });
   const page = await app.firstWindow();
   await page.setViewportSize({ width: 1400, height: 860 });
@@ -1756,11 +1762,41 @@ await page.waitForSelector(".HelpDialog", { timeout: 5000 });
 await page.waitForSelector(".HelpDialog .md-help-link", { timeout: 5000 });
 await page.click(".HelpDialog .md-help-link");
 await page.waitForSelector(".md-help h2", { timeout: 5000 });
+assert.equal(await page.getAttribute(".md-help .md-help-version", "data-md-version"), pkgVersion, "help shows the version");
 await waitFor(async () => (await page.locator(".HelpDialog").count()) === 0, "Excalidraw's help closes when ours opens");
 await page.click(".md-help .md-help-link");
 await page.waitForSelector(".HelpDialog", { timeout: 5000 });
 await waitFor(async () => (await page.locator(".md-help").count()) === 0, "our help closes when Excalidraw's opens");
 await page.keyboard.press("Escape");
+
+step("version shown in the menu; a newer release shows the update banner, Skip remembers it");
+{
+  const VISIBLE = '.md-drawing:not([style*="display: none"])';
+  // Excalidraw's help dialog from the step above may still be open.
+  await t((x) => x.api().updateScene({ appState: { openDialog: null } }));
+  await waitFor(async () => !(await page.$(".HelpDialog")), "Excalidraw's help closes", 5000);
+  await page.click(`${VISIBLE} [data-testid="main-menu-trigger"]`);
+  await page.waitForSelector(`${VISIBLE} ${MENU} .md-menu-version`);
+  assert.equal(await page.getAttribute(`${VISIBLE} ${MENU} .md-menu-version`, "data-md-version"), pkgVersion, "menu shows the version");
+  await page.keyboard.press("Escape");
+}
+await t((x) => x.command({ type: "checkUpdates" }));
+await page.waitForSelector('.md-update[data-update-state="available"]', { timeout: 10000 });
+assert.match(await page.textContent(".md-update"), /mydraw 99\.0/);
+await page.click(".md-update-skip");
+await waitFor(async () => (await page.locator(".md-update").count()) === 0, "banner hides after Skip");
+assert.equal((await getSettings()).updates.skipped, "99.0.0", "skipped version remembered");
+
+step("Set up mydraw window: opens from the menu command; a dev build explains it can't install");
+await t((x) => x.command({ type: "setup" }));
+await page.waitForSelector(".md-setup .md-setup-dev", { timeout: 5000 });
+for (const stepName of ["location", "command", "claude"]) assert.ok(await page.$(`.md-setup-row[data-step="${stepName}"]`), `setup row ${stepName}`);
+assert.equal(await page.getAttribute('.md-setup-row[data-step="location"]', "data-state"), "dev");
+assert.equal(await page.$(".md-setup-btn[data-action]"), null, "no install buttons in a dev build");
+await page.click(".md-setup-done");
+await waitFor(async () => !(await page.$(".md-setup")), "setup window closes");
+assert.equal((await getSettings()).setupShown, true, "closing it marks setup as shown");
+await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
 await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
 // ⌘K opens the palette with nothing selected, but not with a selection (Excalidraw edits the link then).
 await t((x) => x.selectType("rectangle"));

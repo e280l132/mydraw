@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { AGENT_EXPORT_EXTENSION, isPagedFormat } from "../../shared/agent";
 import { CLI_USAGE, CliUsageError, defaultOutput, inputKind, parseCliArgs, type CliExport } from "../../shared/cli";
+import { APP_VERSION_LABEL } from "../../shared/appVersion";
 import { batchFileStems } from "../../shared/names";
 import { APP_ORIGIN, registerSchemes, serveApp } from "./appProtocol";
 import { registerPdfIpc } from "./pdf";
@@ -55,6 +56,8 @@ async function loadRunner(): Promise<BrowserWindow> {
   registerPdfIpc();
   // The renderer's style store asks for user presets on load (none here: temp userData).
   ipcMain.handle("styles:get", () => getStyleLibrary());
+  // No font store in the CLI (drawings carry their own fonts): the registry asks once at startup.
+  ipcMain.handle("fonts:installed", () => []);
   const win = new BrowserWindow({
     show: false,
     width: 1200,
@@ -145,6 +148,10 @@ async function main(): Promise<void> {
   }
   if (cmd.command === "help") {
     process.stdout.write(`${CLI_USAGE}\n`);
+    return finish(0);
+  }
+  if (cmd.command === "version") {
+    process.stdout.write(`mydraw ${APP_VERSION_LABEL}\n`);
     return finish(0);
   }
   await app.whenReady();

@@ -1,0 +1,7 @@
+#!/bin/sh
+# `mydraw` command of the installed app (Contents/Resources/bin/mydraw; scripts/install-app.mjs
+# links ~/.local/bin/mydraw here). Runs bin/mydraw.mjs with the app's own binary in Node mode, so
+# no Node install is needed. See bin/mydraw.mjs.
+SELF=$(readlink -f "$0") || exit 1
+RES=$(cd "$(dirname "$SELF")/.." && pwd) || exit 1
+ELECTRON_RUN_AS_NODE=1 exec "$RES/../MacOS/mydraw" "$RES/bin/mydraw.mjs" "$@"

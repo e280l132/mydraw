@@ -4,6 +4,8 @@ import type { LibraryIndex } from "./library";
 import type { GridSettings } from "./grid";
 import type { QuickConnectSettings } from "./quickBindings";
 import type { CaptionFontMode, IconSketchLook, IconStyleSetting } from "./iconSketch";
+import type { UpdateAction, UpdateStatus } from "./update";
+import type { SetupAction, SetupStatus } from "./setup";
 
 // Types shared by the Electron main process, the preload bridge and the renderer.
 
@@ -36,6 +38,17 @@ export interface Settings {
   captionFont: CaptionFontMode;
   /** The hand font captions use ("Excalifont", "Caveat", ...). */
   captionHandFont: string;
+  /** In-app updates (app/src/updater.ts): automatic daily check, last check time, a version the user skipped. */
+  updates: UpdateSettings;
+  /** The "Set up mydraw" window was shown once (installed app, first launch). */
+  setupShown: boolean;
+}
+
+export interface UpdateSettings {
+  check: boolean;
+  /** ms since epoch; 0 = never. */
+  lastCheck: number;
+  skipped: string | null;
 }
 
 /** What an import built (see shared/importers.ts). */
@@ -153,11 +166,22 @@ export type MenuCommand =
   | { type: "tidyLayout" }
   | { type: "relayout" }
   | { type: "versionHistory" }
-  | { type: "present" };
+  | { type: "present" }
+  | { type: "checkUpdates" }
+  | { type: "setup" };
 
 export interface MydrawBridge {
   platform: string;
   isTest: boolean;
+  /** In-app updates (app/src/updater.ts): the current state, changes, and the banner's buttons. */
+  getUpdateStatus(): Promise<UpdateStatus>;
+  onUpdateStatus(cb: (s: UpdateStatus) => void): () => void;
+  updateAction(action: UpdateAction): Promise<UpdateStatus>;
+  /** The close flow stopped (unsaved changes kept): an update restart is called off. */
+  closeCancelled(): void;
+  /** "Set up mydraw" (app/src/setup.ts): where the app runs, the `mydraw` command, Claude Code. */
+  setupStatus(): Promise<SetupStatus>;
+  setupAction(action: SetupAction): Promise<SetupStatus>;
   getSettings(): Promise<Settings>;
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
   /** The user's saved style presets and themes (global, shared by every drawing). */

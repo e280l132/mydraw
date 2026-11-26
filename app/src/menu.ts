@@ -33,6 +33,8 @@ export function buildMenu(settings: Settings, h: MenuHandlers): void {
             label: app.name,
             submenu: [
               { role: "about" as const },
+              { label: "Check for Updates…", click: cmd({ type: "checkUpdates" }) },
+              { label: "Command Line & Claude Code…", click: cmd({ type: "setup" }) },
               { type: "separator" as const },
               { label: "Quick Connect Shortcuts…", click: cmd({ type: "quickConnectSettings" }) },
               { label: "Fonts…", click: cmd({ type: "fonts" }) },
@@ -184,7 +186,10 @@ export function buildMenu(settings: Settings, h: MenuHandlers): void {
     },
     {
       role: "help",
-      submenu: [{ label: "mydraw Features and Shortcuts…", click: cmd({ type: "help" }) }],
+      submenu: [
+        { label: "mydraw Features and Shortcuts…", click: cmd({ type: "help" }) },
+        { label: "Check for Updates…", click: cmd({ type: "checkUpdates" }) },
+      ],
     },
   ];
 

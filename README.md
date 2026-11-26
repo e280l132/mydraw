@@ -2,7 +2,28 @@
 
 A local desktop diagramming app built on [Excalidraw](https://github.com/excalidraw/excalidraw) (MIT). Adds network and cloud stencils, diagram generation from text, a data layer (properties, inventory, import), orthogonal arrows that route around shapes, and full control from Claude Code over MCP. Runs offline. The roadmap and phase status are in `plan.md`; agent notes are in `CLAUDE.md`.
 
-## Run
+## Install
+
+mydraw is one macOS app (Apple Silicon): the editor, the `mydraw` command and the Claude Code server are all inside `mydraw.app`.
+
+1. Download `mydraw-<version>-arm64.dmg` from [GitHub Releases](https://github.com/e280l132/mydraw/releases) and open it. Its window shows these same steps.
+2. Drag mydraw onto Applications.
+3. The first time only: right-click mydraw in Applications, choose **Open**, then **Open** again (the app is not signed by Apple, so a plain double-click is blocked once).
+4. mydraw opens a **Set up mydraw** window: **Install the command** (`mydraw` in Terminal, a link at `~/.local/bin/mydraw`) and **Connect Claude Code** (registers the built-in MCP server with Claude Code for all projects; asks before replacing another "mydraw" entry). Nothing happens until you click, every step has an undo button, and the window is in Preferences → Command line & Claude Code… later. If mydraw runs from the disk image or Downloads, the window first offers **Move to Applications** (needed for updates).
+
+From this checkout: `npm install`, `npm run package` (builds `release/mydraw-<version>-arm64.dmg` and `release/mac-arm64/mydraw.app`), then either open the DMG as above or `npm run install-app` (quit mydraw first; copies the app to `/Applications` and links the command). `npm run verify-package` checks a built package end to end. The DMG window's background is `packaging/dmg-background.html`; after editing it, `npm run dmg-background` re-renders the committed `dmg-background.tiff`.
+
+By hand, without the window: `ln -sf /Applications/mydraw.app/Contents/Resources/bin/mydraw ~/.local/bin/mydraw` and `claude mcp add --scope user mydraw -- /Applications/mydraw.app/Contents/Resources/bin/mydraw mcp`.
+
+The version is shown at the bottom of the main menu (☰), in Help → mydraw features and shortcuts, in About mydraw, and by `mydraw --version`. Settings, the stencil library and drawings live outside the app, so replacing it never touches them.
+
+## Updates
+
+Versions are major.minor (0.1, 0.2, …; a third number for bug-fix builds). The installed app checks GitHub once a day (Preferences → "Check for updates automatically"; Help → Check for Updates… any time). When a newer version is out, a banner offers **Update** (downloads the DMG, checks its SHA-256, prepares the new app next to the old one), **What's new** and **Skip this version**; **Restart now** swaps in the new version, or it is swapped when you next quit. The checksum proves the download is complete, not who made it: the app trusts the GitHub repository (there is no Apple signature).
+
+Publishing a release (maintainer): see [RELEASING.md](RELEASING.md). In short: add a `## <version>` section to `CHANGELOG.md`, commit, then `npm run release -- minor`.
+
+## Run from source
 
 ```bash
 npm install
@@ -125,7 +146,7 @@ On a quick-connect handle: click, Option-click, ⌘-click, Shift-click (see abov
 
 ## Command line
 
-`mydraw` exports and converts drawings without opening the app (it renders in a hidden window). Set it up once with `npm run build && npm link` (or `ln -s ~/Projects/mydraw/bin/mydraw.mjs /usr/local/bin/mydraw`).
+`mydraw` exports and converts drawings without opening the app (it renders in a hidden window). The installed app provides it (see Install); from a checkout use `npm run build && npm link` instead.
 
 ```bash
 mydraw export net.excalidraw --format jpg --scale 2 --frame "Prod"   # -> net.jpg
@@ -134,6 +155,7 @@ mydraw export net.excalidraw --scope frames -o shots/                # one PNG p
 mydraw export net.excalidraw -o slides.pptx --slides 4:3 --dark
 mydraw convert x.drawio --to excalidraw                              # best effort; skipped parts are listed
 mydraw convert net.excalidraw --to drawio
+mydraw --version
 mydraw help                                                          # all options
 ```
 
@@ -141,11 +163,13 @@ Formats: png, jpg, webp, svg, html, pdf, pptx, drawio, mermaid, csv, markdown, e
 
 ## Claude Code (MCP)
 
-The `mcp/` server talks to the running app (it starts the app if needed). Register it once:
+The MCP server talks to the running app (it starts the app if needed). The installed app ships it (`mydraw mcp`, see Install). To work on mydraw itself, register the checkout's server instead; it drives the checkout's own build, never the installed app (set `MYDRAW_APP=/Applications/mydraw.app` to change that):
 
 ```bash
 claude mcp add --scope user mydraw -- node ~/Projects/mydraw/mcp/dist/index.js
 ```
+
+Both share the app data folder, so only one mydraw runs at a time: quit the installed app before `npm start`, and the other way round.
 
 56 tools cover: drawings (`list_drawings`, `new_drawing`, `open_drawing`, `activate_drawing`, `save`, `export`, `screenshot`, `copy_to_clipboard`), reading (`get_scene`, `get_element`, `get_selection`, `get_inventory`, `get_color`), building (`build_diagram`, `import_diagram`, `mermaid_to_scene`, `list_templates` / `apply_template`, `add_elements`, `connect` with `avoid: true` for arrows around shapes, `place_stencil`, `create_zone`, `add_legend`), editing (`update_elements`, `move`, `recolor`, `set_properties`, `tidy`, `align`, `distribute`, `route_around`, `auto_layout`, `delete_elements`, `group` / `ungroup`, `select`, `zoom_to_fit`), stencils (`search_stencils`, `list_collections`, `save_as_stencil`, `add_stencil_file`, `delete_stencil`), styles (`list_palettes`, `list_themes`, `apply_theme`, `apply_style_preset`, save/delete presets and themes), `list_fonts`, checks (`lint_diagram`), `undo` / `redo`, and the raw `set_scene` / `raw_update`. Effects (shadows, gradients, fills, dash styles, text outlines, hand-drawn icons via `iconStyle`, fonts by name) work in `add_elements`, `update_elements` and `build_diagram`. Each tool call is one undo step.
 
@@ -158,7 +182,8 @@ app/src/      Electron main process + preload (bundled by esbuild to app/dist)
 web/src/      React renderer with Excalidraw (Vite)
 shared/       Types and pure helpers used by both (routing, lint, import, export formats)
 mcp/          the MCP server for Claude Code
-scripts/      dev, build and smoke-test scripts
+scripts/      dev, build, smoke-test, package, install and release scripts
+packaging/    the shell wrapper of the installed `mydraw` command
 bin/          the mydraw command (headless CLI, app/src/cli.ts)
 tests/        vitest unit tests
 ```
@@ -169,4 +194,4 @@ App data (settings, recovery, version history) lives in `~/Library/Application S
 
 ## App name and icon
 
-`assets/icon.svg` is the source icon; `npm run icon` regenerates `assets/icon.png` and `assets/icon.icns`. On macOS, dev, start and smoke run a copy of Electron renamed to `mydraw.app` (built in `.electron/` by `scripts/electron-app.mjs`), so the menu bar, Dock and ⌘-Tab show "mydraw".
+`assets/icon.svg` is the source icon; `npm run icon` regenerates `assets/icon.png` and `assets/icon.icns`. On macOS, dev, start and smoke run a copy of Electron renamed to `mydraw.app` (built in `.electron/` by `scripts/electron-app.mjs`), so the menu bar, Dock and ⌘-Tab show "mydraw". The packaged app gets name, icon and file types from `electron-builder.yml`.

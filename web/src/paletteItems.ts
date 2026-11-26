@@ -96,6 +96,8 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
   cmd("Edit", "Inventory table…", { type: "inventory" }, { hint: sc("inventory"), keywords: "nodes hosts ip hostname properties grid spreadsheet" });
   cmd("Edit", "Find and replace…", { type: "findReplace" }, { hint: sc("findReplace"), keywords: "search text rename" });
   cmd("Help", "mydraw features and shortcuts…", { type: "help" }, { keywords: "help guide manual shortcuts keys docs what can it do" });
+  cmd("Help", "Command line & Claude Code setup…", { type: "setup" }, { keywords: "install cli terminal mydraw command claude code mcp connect register applications move" });
+  cmd("Help", "Check for updates…", { type: "checkUpdates" }, { keywords: "update upgrade new version release download install about" });
   add("Help", "Excalidraw keyboard shortcuts (drawing tools and editing)…", () => c.api?.updateScene({ appState: { openDialog: { name: "help" } } as never, captureUpdate: CaptureUpdateAction.NEVER }), {
     hint: "?",
     keywords: "help keys tools hotkeys excalidraw",

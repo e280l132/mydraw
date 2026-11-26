@@ -105,6 +105,8 @@ describe("cli args", () => {
   it("rejects bad input", () => {
     const bad = (a: string[], re: RegExp) => expect(() => parseCliArgs(a)).toThrow(re);
     bad(["draw", "x"], /unknown command/);
+    expect(parseCliArgs(["--version"])).toEqual({ command: "version" });
+    expect(parseCliArgs(["version"])).toEqual({ command: "version" });
     bad(["export"], /no input file/);
     bad(["export", "a", "b"], /one input file/);
     bad(["convert", "x.drawio"], /--to/);

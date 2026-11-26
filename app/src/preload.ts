@@ -10,6 +10,12 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 const bridge: MydrawBridge = {
   platform: process.platform,
   isTest: process.env.MYDRAW_TEST === "1",
+  getUpdateStatus: () => ipcRenderer.invoke("update:get"),
+  onUpdateStatus: (cb) => subscribe("update:status", cb),
+  updateAction: (action) => ipcRenderer.invoke("update:action", action),
+  closeCancelled: () => ipcRenderer.send("app:close-cancelled"),
+  setupStatus: () => ipcRenderer.invoke("setup:status"),
+  setupAction: (action) => ipcRenderer.invoke("setup:action", action),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (patch) => ipcRenderer.invoke("settings:update", patch),
   getStyleLibrary: () => ipcRenderer.invoke("styles:get"),

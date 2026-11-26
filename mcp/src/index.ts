@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // mydraw MCP server (stdio). Bridges Claude Code to the running mydraw app's local control server.
 // Finds the app through <userData>/control.json (port + key) and launches the app if needed.
-//   claude mcp add mydraw -- node ~/Projects/mydraw/mcp/dist/index.js
+// Ships inside the app (Contents/Resources/mcp/index.js, started by `mydraw mcp`):
+//   claude mcp add --scope user mydraw -- /Applications/mydraw.app/Contents/Resources/bin/mydraw mcp
+// (the app's Set up window, "Connect Claude Code", runs exactly that)
+// From a checkout (development): claude mcp add mydraw -- node ~/Projects/mydraw/mcp/dist/index.js
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { spawn } from "node:child_process";
@@ -12,11 +15,14 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { AGENT_EXPORT_FORMATS, CONTROL_FILE, type ControlInfo, type RpcResponse } from "../../shared/agent";
+import { APP_VERSION } from "../../shared/appVersion";
 import { buildId } from "../../shared/buildId";
 
-const VERSION = "0.8.0";
+const VERSION = APP_VERSION;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..");
+/** The app bundle this server ships in (`/Applications/mydraw.app`), or null when run from a checkout. */
+const ownBundle = /^(.*?\.app)\/Contents\/Resources\/mcp\/[^/]+$/.exec(fileURLToPath(import.meta.url))?.[1] ?? null;
 const userData = process.env.MYDRAW_USER_DATA || path.join(os.homedir(), "Library", "Application Support", "mydraw");
 const controlFile = path.join(userData, CONTROL_FILE);
 const LAUNCH_TIMEOUT = 45_000;
@@ -91,7 +97,9 @@ async function launchApp(): Promise<void> {
   delete cleanEnv.MYDRAW_DEV_URL;
   delete cleanEnv.ELECTRON_RUN_AS_NODE;
 
-  const appBundle = process.env.MYDRAW_APP || (fs.existsSync("/Applications/mydraw.app") ? "/Applications/mydraw.app" : "");
+  // Shipped in an app: launch that app. From a checkout: $MYDRAW_APP, else the checkout's own build
+  // (never an installed copy: it would silently run older code than the one being developed).
+  const appBundle = ownBundle ?? process.env.MYDRAW_APP ?? "";
   if (appBundle) {
     spawn("open", ["-a", appBundle], { detached: true, stdio: "ignore", env: cleanEnv }).unref();
     return;
@@ -164,6 +172,16 @@ export function staleNotes(info: ControlInfo | null): string[] {
   const notes: string[] = [];
   if (ownStamp && stampOf(ownFile) !== ownStamp) {
     notes.push("This MCP server was rebuilt after it started: reconnect it (/mcp in Claude Code) to get the new tools and descriptions.");
+  }
+  if (ownBundle && info?.appPath && info.appPath !== path.join(ownBundle, "Contents", "Resources", "app.asar")) {
+    notes.push(
+      `Connected to a different mydraw (${info.appPath}, version ${info.version ?? "?"}) than the one this MCP server ships in (${ownBundle}). Quit it and make any tool call to start ${ownBundle}.`,
+    );
+  }
+  if (!ownBundle && info?.appPath && info.appPath !== repoRoot && /\.app\/Contents\/Resources\/app\.asar$/.test(info.appPath)) {
+    notes.push(
+      `Connected to the installed mydraw ${info.version ?? ""} (${info.appPath}), not to the development build in ${repoRoot}. Quit it to work on this checkout.`,
+    );
   }
   if (info?.build && info.appPath === repoRoot) {
     const onDisk = buildId(repoRoot);
