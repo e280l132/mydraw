@@ -173,6 +173,12 @@ describe("menu migration", () => {
     expect(normalizeQuickConnect({ editLabel: true }, true).editLabel).toBe(true);
     expect(normalizeQuickConnect({ editLabel: "yes" }, true).editLabel).toBe(false);
   });
+
+  it("shows the drag hint unless turned off", () => {
+    expect(normalizeQuickConnect({}, true).dragHint).toBe(true);
+    expect(normalizeQuickConnect({ dragHint: false }, true).dragHint).toBe(false);
+    expect(normalizeQuickConnect({ dragHint: false, bindings: { copy: { keys: ["Meta"] } } }, true).dragHint).toBe(false); // kept through a reset
+  });
 });
 
 describe("findConflicts", () => {

@@ -171,6 +171,19 @@ export function QuickConnectSettingsDialog({ quick, onSave, onClose }: Props) {
           />
           Open the new shape’s label for typing (copies of plain shapes)
         </label>
+        <label className="md-qcs-check">
+          <input
+            type="checkbox"
+            data-setting="dragHint"
+            checked={draft.dragHint}
+            onChange={(e) => {
+              const next = cloneQuickConnect(draft);
+              next.dragHint = e.target.checked;
+              setDraft(next);
+            }}
+          />
+          While dragging from a “+”, show the link style and how to change it
+        </label>
 
         {conflicts.length > 0 && (
           <div className="md-qcs-error">

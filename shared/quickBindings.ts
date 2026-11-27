@@ -65,6 +65,8 @@ export interface QuickConnectSettings {
   linkKeys: LinkKeys;
   /** Open the new shape's label for typing right after quick connect adds it. */
   editLabel: boolean;
+  /** While dragging from a handle, show the link style in use and how to change it (on by default). */
+  dragHint: boolean;
 }
 
 /** Mac or not, wherever this runs (renderer, main, tests). */
@@ -87,6 +89,7 @@ export function defaultQuickConnect(mac = IS_MAC_PLATFORM): QuickConnectSettings
     },
     linkKeys: { routing: "r", heads: "a", dashed: "d" },
     editLabel: false,
+    dragHint: true,
   };
 }
 
@@ -97,7 +100,7 @@ export function cloneQuickConnect(q: QuickConnectSettings): QuickConnectSettings
   for (const a of QUICK_ACTIONS) {
     bindings[a] = { keys: [...q.bindings[a].keys], ...(q.bindings[a].rightClick ? { rightClick: true } : {}) };
   }
-  return { bindings, linkKeys: { ...q.linkKeys }, editLabel: q.editLabel };
+  return { bindings, linkKeys: { ...q.linkKeys }, editLabel: q.editLabel, dragHint: q.dragHint };
 }
 
 /**
@@ -170,6 +173,7 @@ export function normalizeQuickConnect(raw: unknown, mac = IS_MAC_PLATFORM): Quic
   for (const a of QUICK_ACTIONS) out.bindings[a] = readBinding(b[a], out.bindings[a], mac);
   for (const n of LINK_KEY_NAMES) if (validLinkKey(k[n])) out.linkKeys[n] = (k[n] as string).toLowerCase();
   out.editLabel = r.editLabel === true;
+  out.dragHint = r.dragHint !== false;
   if (!b.menu) {
     // Saved before the menu existed: right-click now opens the menu, and the menu takes the first
     // key combo nothing else uses (so old custom keys never clash with it and reset everything).
@@ -179,7 +183,7 @@ export function normalizeQuickConnect(raw: unknown, mac = IS_MAC_PLATFORM): Quic
     if (free) out.bindings.menu = { keys: free, rightClick: true };
   }
   if (!findConflicts(out).length) return out;
-  return { ...defaultQuickConnect(mac), editLabel: out.editLabel };
+  return { ...defaultQuickConnect(mac), editLabel: out.editLabel, dragHint: out.dragHint };
 }
 
 /**

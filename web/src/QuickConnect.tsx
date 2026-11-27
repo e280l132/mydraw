@@ -36,7 +36,7 @@ import {
   unitById,
   type QuickShape,
 } from "./quickConnectOps";
-import { loadLinkStyle, saveLinkStyle } from "./linkOps";
+import { loadLinkStyle, saveLinkStyle, type LinkStyle } from "./linkOps";
 import { LinkMode } from "./LinkMode";
 import { QuickMenu, type MenuAdd } from "./QuickMenu";
 
@@ -220,6 +220,16 @@ function toScreen(st: AppState, p: Point): Point {
   return { x: (p.x + st.scrollX) * z + st.offsetLeft, y: (p.y + st.scrollY) * z + st.offsetTop };
 }
 
+/** "Elbow arrow, dashed", "Curved line", "Arrow around shapes, both ends". */
+export function describeLinkStyle(s: LinkStyle): string {
+  const line = s.heads === "none";
+  const name =
+    s.routing === "around"
+      ? line ? "Line around shapes" : "Arrow around shapes"
+      : `${s.routing === "elbow" ? "Elbow" : s.routing === "straight" ? "Straight" : "Curved"} ${line ? "line" : "arrow"}`;
+  return [name, s.dashed ? "dashed" : "", s.heads === "both" ? "both ends" : ""].filter(Boolean).join(", ");
+}
+
 /**
  * Open the label of a new plain shape for typing, as a double-click on it would (Excalidraw has no
  * API to start text editing). Grouped units (icons, stencils, groups) are left alone.
@@ -259,6 +269,8 @@ export function QuickConnect({ tabId, getApi, library, blocked, quick, insertSke
   const [overSide, setOverSide] = useState<QuickSide | null>(null);
   const [ghost, setGhost] = useState<Ghost | null>(null);
   const [dragging, setDragging] = useState(false);
+  /** While dragging from a handle: where the pointer is (screen), the link style, and what a release does. */
+  const [dragHint, setDragHint] = useState<{ x: number; y: number; style: LinkStyle; onTarget: boolean } | null>(null);
   const hoverRef = useRef<string | null>(null);
   const candidateRef = useRef<{ id: string; timer: number; at: { x: number; y: number } } | null>(null);
   const pointRef = useRef<{ x: number; y: number } | null>(null);
@@ -469,15 +481,21 @@ export function QuickConnect({ tabId, getApi, library, blocked, quick, insertSke
     let started = false;
     let raf = 0;
     let last: PointerEvent | null = null;
+    const style = loadLinkStyle();
     const isSource = (u: { id: string; members: { id: string }[] }) => ids.includes(u.id) || u.members.some((m) => ids.includes(m.id));
     const update = () => {
       raf = 0;
       const api = getApi();
       const e = last;
       if (!api || !e) return;
-      if (!(e.target instanceof HTMLCanvasElement)) return setGhost(null);
+      const hint = (onTarget: boolean) => setDragHint({ x: e.clientX, y: e.clientY, style, onTarget });
+      if (!(e.target instanceof HTMLCanvasElement)) {
+        hint(false);
+        return setGhost(null);
+      }
       const p = viewportCoordsToSceneCoords({ clientX: e.clientX, clientY: e.clientY }, api.getAppState());
       const u = quickSourceAt(api, p.x, p.y);
+      hint(!!u && !isSource(u));
       if (u && !isSource(u)) return setGhost({ boxes: [], routes: [], target: u.box });
       if (u) return setGhost(null);
       const prev = previewCopies(api, ids, side, true, p);
@@ -490,6 +508,7 @@ export function QuickConnect({ tabId, getApi, library, blocked, quick, insertSke
       if (raf) cancelAnimationFrame(raf);
       document.body.classList.remove("md-qc-dragging");
       setDragging(false);
+      setDragHint(null);
       setGhost(null);
     };
     const onMove = (e: PointerEvent) => {
@@ -795,6 +814,20 @@ export function QuickConnect({ tabId, getApi, library, blocked, quick, insertSke
             </button>
           );
         })}
+      {dragging && dragHint && quick.dragHint && (
+        <div
+          className="md-qc-link-hint md-qc-drag-hint"
+          // Near the right edge the hint goes to the left of the pointer, so it stays readable.
+          style={dragHint.x > window.innerWidth - 380 ? { right: window.innerWidth - dragHint.x + 16, top: dragHint.y + 18 } : { left: dragHint.x + 16, top: dragHint.y + 18 }}
+        >
+          <div>{dragHint.onTarget ? "Release to connect to this shape" : "Release to drop a connected copy"}</div>
+          <div className="md-qc-link-keys">
+            <b data-drag-style>{describeLinkStyle(dragHint.style)}</b>
+          </div>
+          <div className="md-qc-link-keys">Right-click a “+” to change the style · Esc cancels</div>
+          <div className="md-qc-link-keys">Turn this tip off in Preferences → Quick connect shortcuts…</div>
+        </div>
+      )}
       {link && (
         <LinkMode
           key={`${link.sourceIds.join(",")}:${link.side}`}

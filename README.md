@@ -106,14 +106,14 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 **Quick connect** (hover or select a shape, icon or group, or select several; four "+" handles appear)
 - **Click**: add a copy beside it (no arrow). Hovering a handle shows where it will go (with Option held, the arrow too).
 - **Option-click**: add a connected copy. The arrow uses the last link style (below), so copies can be joined by plain lines too.
-- **Drag a handle**: drop a connected copy where you let go, or onto another shape to connect to it. Esc cancels.
+- **Drag a handle**: drop a connected copy where you let go, or onto another shape to connect to it. Esc cancels. A tip beside the pointer shows the link style in use and that right-clicking a "+" changes it (turn it off in Preferences → Quick connect shortcuts…).
 - **⌘-click or ⌘-drag**: draw an arrow to another shape. The arrow routes around shapes in between, keeps a clear distance from them, and previews live as you move. Point at a side of the target to choose it. Click empty canvas to add a bend point (Backspace removes it). Double-click or Enter ends the arrow on empty canvas. Shift-click keeps linking from the same shape. While linking: the bar at the bottom (or R, A, D) picks the style (around shapes, elbow, straight, curved), the arrowheads (one end, both, none = a line) and dashed. Esc or right-click cancels.
 - **Right-click** (Control-click on a Mac): the quick connect menu. Connect with an arrow around shapes, an elbow, straight or curved arrow, or a plain straight or curved line (Dashed and Both ends toggles), or add a connected copy, a copy, a shape or an icon.
 - **Shift-click**: pick a basic shape (rectangle, rounded, ellipse, diamond, database, cloud, document, hexagon) or a stencil for a new connected node. A new plain shape opens its label for typing.
 - **Labels count up**: a copy of "web-1" is "web-2", of "Server" is "Server 2" (skipping names the drawing already has).
 - **Several selected**: the handles act on all of them: each gets its own copy, or each is connected to the shape you pick. One undo step.
 - **Keyboard**: ⌥⌘+arrow adds a connected copy on that side and selects it (press again to build a chain); ⇧⌥⌘+arrow adds a plain copy. Tab / ⇧Tab moves to the next / previous connected shape.
-- Preferences → Quick connect shortcuts… rebinds the clicks, and can open the label for typing after every add.
+- Preferences → Quick connect shortcuts… rebinds the clicks, can open the label for typing after every add, and turns the drag tip on or off.
 
 **Checks and layout**
 - **Diagram lint** (⌥⌘L): overlaps, unconnected arrows, unlabeled nodes, missing IPs, off-palette colors, arrows on top of each other or through nodes, labels in the way, crowded nodes, very long arrows. Safe one-click fixes; "Fix all" is one undo step.

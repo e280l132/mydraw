@@ -96,7 +96,7 @@ export function helpSections(): Section[] {
       rows: [
         { text: "Click a “+” handle: add a copy beside it (no arrow); hovering a handle shows where it goes" },
         { text: `${option}-click: add a connected copy, joined in the last link style (arrow or line)` },
-        { text: "Drag a handle: drop a connected copy there, or onto a shape to connect to it" },
+        { text: "Drag a handle: drop a connected copy there, or onto a shape to connect to it; a tip shows the link style (right-click a “+” to change it)" },
         { keys: `${cmd}-click or ${cmd}-drag`, text: "Draw an arrow to another shape; it routes around shapes in between" },
         { text: "While linking: the bar at the bottom (or R, A, D) picks route, arrowheads (none = a line) and dashed; Backspace removes a bend point" },
         { text: "Right-click: menu to connect with an arrow or a straight / curved line, or add a copy, shape or icon" },

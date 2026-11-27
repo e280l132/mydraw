@@ -2766,6 +2766,10 @@ body.md-panel-dragging * {
   white-space: nowrap;
 }
 
+.md-qc-drag-hint {
+  z-index: 7;
+}
+
 .md-qc-link-keys {
   opacity: 0.75;
   font-size: 11px;

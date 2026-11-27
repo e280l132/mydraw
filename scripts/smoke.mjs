@@ -2925,7 +2925,11 @@ await call("add_elements", {
   await page.mouse.down();
   await page.mouse.move(drop.x, drop.y, { steps: 10 });
   await page.waitForSelector(".md-qc-ghost .md-qc-ghost-box");
+  await page.waitForSelector(".md-qc-drag-hint");
+  assert.equal(await page.textContent(".md-qc-drag-hint [data-drag-style]"), "Arrow around shapes", "the drag tip shows the link style");
+  assert.match(await page.textContent(".md-qc-drag-hint"), /Right-click a “\+” to change the style/, "and how to change it");
   await page.mouse.up();
+  await waitFor(async () => !(await page.$(".md-qc-drag-hint")), "the tip goes with the drag");
   await waitFor(async () => (await count()) === n0 + 3, "dropped a connected copy");
   scene = await call("get_scene");
   const dArrow = scene.elements.find((e) => e.type === "arrow" && e.from === "mA");
@@ -2997,8 +3001,25 @@ await call("add_elements", {
   await waitFor(async () => !!(await t((x) => x.api().getAppState().editingTextElement)), "label open after Option-click");
   await page.keyboard.press("Escape");
   await call("undo");
+  // The drag tip can be turned off.
+  await page.evaluate(() => window.mydraw.updateSettings({ quickConnect: { dragHint: false } }));
+  await waitFor(async () => (await getSettings()).quickConnect.dragHint === false, "dragHint off saved");
+  await selectOnly("mA");
+  {
+    const hh = await handleAt("right");
+    const far = await t((x) => x.toScreen(1000, 430));
+    await page.mouse.move(hh.x, hh.y);
+    await page.mouse.down();
+    await page.mouse.move(far.x, far.y, { steps: 10 });
+    await page.waitForSelector(".md-qc-ghost .md-qc-ghost-box");
+    assert.equal(await page.$(".md-qc-drag-hint"), null, "no drag tip when turned off");
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+    assert.equal(await count(), n0, "Esc cancelled the drag");
+  }
   await page.evaluate(() => window.mydraw.updateSettings({ quickConnect: {} }));
   await waitFor(async () => (await getSettings()).quickConnect.editLabel === false, "back to the defaults");
+  assert.equal((await getSettings()).quickConnect.dragHint, true, "the drag tip is on by default");
   await call("select", { ids: [] });
 }
 
