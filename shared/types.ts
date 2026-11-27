@@ -5,7 +5,7 @@ import type { GridSettings } from "./grid";
 import type { QuickConnectSettings } from "./quickBindings";
 import type { CaptionFontMode, IconSketchLook, IconStyleSetting } from "./iconSketch";
 import type { UpdateAction, UpdateStatus } from "./update";
-import type { SetupAction, SetupStatus } from "./setup";
+import type { InstallTarget, SetupAction, SetupStatus } from "./setup";
 import type { AskEvent, AskRequest, AskSettings } from "./askClaude";
 
 // Types shared by the Electron main process, the preload bridge and the renderer.
@@ -189,7 +189,7 @@ export interface MydrawBridge {
   closeCancelled(): void;
   /** "Set up mydraw" (app/src/setup.ts): where the app runs, the `mydraw` command, Claude Code. */
   setupStatus(): Promise<SetupStatus>;
-  setupAction(action: SetupAction): Promise<SetupStatus>;
+  setupAction(action: SetupAction, target?: InstallTarget): Promise<SetupStatus>;
   /** Ask Claude box (app/src/askClaude.ts): start a `claude -p` run (returns its id), cancel it, follow it. */
   askStart(req: AskRequest): Promise<number>;
   askCancel(): Promise<void>;

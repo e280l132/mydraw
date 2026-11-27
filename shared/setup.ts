@@ -2,8 +2,9 @@
 // app/src/setup.ts, the window web/src/SetupDialog.tsx.
 //
 // Three steps, each with a state and a button:
-//   location  the app should live in /Applications (from a DMG or Downloads macOS runs a hidden
-//             temporary copy: updates fail there and links into it break)
+//   location  the app should live in /Applications, or ~/Applications for a user without admin
+//             rights (from a DMG or Downloads macOS runs a hidden temporary copy: updates fail
+//             there and links into it break)
 //   command   ~/.local/bin/mydraw -> <app>/Contents/Resources/bin/mydraw
 //   claude    Claude Code's user-scope MCP server "mydraw" -> <app>/Contents/Resources/bin/mydraw mcp
 
@@ -13,15 +14,46 @@ export type LocationState = "ok" | "move" | "dev";
 export type CommandState = "installed" | "missing" | "other" | "unavailable";
 export type ClaudeState = "connected" | "missing" | "other" | "noClaude" | "unavailable";
 
+/** Where "move" copies the app: /Applications (all users, needs admin rights) or ~/Applications. */
+export type InstallTarget = "system" | "user";
+export const INSTALL_TARGETS: readonly InstallTarget[] = ["system", "user"];
+
+export interface LocationStatus {
+  state: LocationState;
+  bundle: string | null;
+  reason?: string;
+  /** The two folders "move" can copy to; `writable` = this user may write there. */
+  targets: Record<InstallTarget, { dir: string; writable: boolean }>;
+  /** The target to offer first. */
+  suggested: InstallTarget;
+  /** Which target the app is in (state ok), if either. */
+  installedIn?: InstallTarget;
+  /** Another copy of mydraw in the other target folder (may be opened instead of this one). */
+  otherCopy?: string;
+}
+
 export interface SetupStatus {
   packaged: boolean;
-  location: { state: LocationState; bundle: string | null; reason?: string };
+  location: LocationStatus;
   command: { state: CommandState; link: string; target?: string; onPath: boolean };
   claude: { state: ClaudeState; claudePath?: string; existing?: string };
 }
 
 export type SetupAction = "move" | "installCommand" | "removeCommand" | "connectClaude" | "disconnectClaude";
 export const SETUP_ACTIONS: readonly SetupAction[] = ["move", "installCommand", "removeCommand", "connectClaude", "disconnectClaude"];
+
+/**
+ * The target to offer: /Applications when this user may write there (admins can), else
+ * ~/Applications, which needs no password (a standard user can't drag into /Applications).
+ */
+export const pickTarget = (systemWritable: boolean): InstallTarget => (systemWritable ? "system" : "user");
+
+/** Which target folder holds the bundle, if any. */
+export function targetOf(bundle: string | null, targets: Record<InstallTarget, { dir: string }>): InstallTarget | undefined {
+  if (!bundle) return undefined;
+  const parent = bundle.slice(0, bundle.lastIndexOf("/"));
+  return INSTALL_TARGETS.find((t) => targets[t].dir === parent);
+}
 
 /** The command inside an app bundle. */
 export const bundleCommand = (bundle: string) => `${bundle}/Contents/Resources/bin/mydraw`;

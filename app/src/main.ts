@@ -30,7 +30,7 @@ import { getStyleLibrary, saveStyleLibrary } from "./styles-store";
 import { quitCancelled, setupUpdater, updateAction, updateStatus } from "./updater";
 import { setupAction, setupSetup, setupStatus } from "./setup";
 import { askCancel, askShutdown, askStart } from "./askClaude";
-import { SETUP_ACTIONS, type SetupAction } from "../../shared/setup";
+import { INSTALL_TARGETS, SETUP_ACTIONS, type InstallTarget, type SetupAction } from "../../shared/setup";
 import { UPDATE_ACTIONS, type UpdateAction } from "../../shared/update";
 import { APP_VERSION_LABEL } from "../../shared/appVersion";
 
@@ -388,9 +388,10 @@ function registerIpc(): void {
     if (e.sender !== win?.webContents) throw new Error("invalid request");
     return setupStatus();
   });
-  ipcMain.handle("setup:action", (e, action: unknown) => {
+  ipcMain.handle("setup:action", (e, action: unknown, target: unknown) => {
     if (e.sender !== win?.webContents || !SETUP_ACTIONS.includes(action as SetupAction)) throw new Error("invalid request");
-    return setupAction(action as SetupAction);
+    if (target !== undefined && !INSTALL_TARGETS.includes(target as InstallTarget)) throw new Error("invalid request");
+    return setupAction(action as SetupAction, target as InstallTarget | undefined);
   });
 
   ipcMain.handle("ask:start", (e, req: unknown) => {
@@ -474,7 +475,8 @@ async function startAgentControl(store: ReturnType<typeof setupLibrary>): Promis
     if (method === "setup_status") return setupStatus();
     if (method === "setup_action") {
       if (!SETUP_ACTIONS.includes(params.action as SetupAction)) throw new Error("unknown setup action");
-      return setupAction(params.action as SetupAction);
+      if (params.target !== undefined && !INSTALL_TARGETS.includes(params.target as InstallTarget)) throw new Error("unknown install target");
+      return setupAction(params.action as SetupAction, params.target as InstallTarget | undefined);
     }
     if (method === "update_action") {
       if (!UPDATE_ACTIONS.includes(params.action as UpdateAction)) throw new Error("unknown update action");

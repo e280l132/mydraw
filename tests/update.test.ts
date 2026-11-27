@@ -62,6 +62,7 @@ describe("update", () => {
     expect(bundleOfExe("/Applications/mydraw.app/Contents/MacOS/mydraw")).toBe("/Applications/mydraw.app");
     expect(bundleOfExe("/usr/bin/node")).toBeNull();
     expect(cannotUpdateHere("/Applications/mydraw.app")).toBeNull();
+    expect(cannotUpdateHere("/Users/u/Applications/mydraw.app")).toBeNull();
     expect(cannotUpdateHere("/private/var/folders/x/AppTranslocation/y/d/mydraw.app")).toMatch(/Applications/);
     expect(cannotUpdateHere("/Volumes/mydraw 0.1.0/mydraw.app")).toMatch(/disk image/);
     expect(cannotUpdateHere(null)).not.toBeNull();

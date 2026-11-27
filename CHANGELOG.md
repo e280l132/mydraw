@@ -4,6 +4,11 @@ Versions are major.minor (0.1, 0.2, …); a third number marks a bug-fix build (
 section below becomes the release notes of that version (`npm run release`), which the app shows
 under "What's new" when it offers the update.
 
+## 0.2.2
+
+- Install without admin rights: when you can't add apps to /Applications, the Set up window offers "Just for me" and moves mydraw to your own Applications folder (~/Applications), no password needed. Updates work from there too
+- The Set up window lets you choose All users (/Applications) or Just for me, and warns when another copy of mydraw is in the other folder
+
 ## 0.2.1
 
 Quick connect (the "+" handles around a shape):

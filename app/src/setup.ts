@@ -3,8 +3,9 @@
 // click in web/src/SetupDialog.tsx.
 //
 // Test overrides (scripts/verify-package.mjs): MYDRAW_SETUP_HOME (home folder for ~/.local/bin and
-// ~/.claude.json), MYDRAW_CLAUDE (the claude program), MYDRAW_APPLICATIONS_DIR (an extra folder
-// that counts as Applications, and the one "move" copies to).
+// ~/.claude.json, and ~/Applications), MYDRAW_CLAUDE (the claude program), MYDRAW_APPLICATIONS_DIR
+// (stands in for /Applications: counts as Applications and is the "system" target),
+// MYDRAW_APPLICATIONS_READONLY=1 (treat the system target as not writable, like a standard user).
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -23,6 +24,10 @@ import {
   mcpEntryOf,
   mcpRemoveArgs,
   onPath,
+  pickTarget,
+  targetOf,
+  type InstallTarget,
+  type LocationStatus,
   type SetupAction,
   type SetupStatus,
 } from "../../shared/setup";
@@ -34,7 +39,34 @@ const BUNDLE_ID = "dev.mydraw.app";
 const home = () => process.env.MYDRAW_SETUP_HOME || os.homedir();
 const binDir = () => path.join(home(), ".local", "bin");
 const linkPath = () => path.join(binDir(), "mydraw");
-const applicationsDirs = () => [...(process.env.MYDRAW_APPLICATIONS_DIR ? [process.env.MYDRAW_APPLICATIONS_DIR] : []), "/Applications", path.join(os.homedir(), "Applications")];
+const systemApps = () => process.env.MYDRAW_APPLICATIONS_DIR || "/Applications";
+const userApps = () => path.join(home(), "Applications");
+const applicationsDirs = () => [...new Set([systemApps(), "/Applications", userApps(), path.join(os.homedir(), "Applications")])];
+
+function writable(dir: string): boolean {
+  if (dir === systemApps() && process.env.MYDRAW_APPLICATIONS_READONLY === "1") return false;
+  try {
+    fs.accessSync(dir, fs.constants.W_OK);
+    return true;
+  } catch {
+    // ~/Applications may not exist yet: it is created in the home folder, which is writable.
+    return !fs.existsSync(dir) && dir === userApps();
+  }
+}
+
+function locationStatus(bundle: string | null): LocationStatus {
+  const targets = {
+    system: { dir: systemApps(), writable: writable(systemApps()) },
+    user: { dir: userApps(), writable: writable(userApps()) },
+  };
+  const loc: LocationStatus = { bundle, ...locationOf(bundle, applicationsDirs()), targets, suggested: pickTarget(targets.system.writable) };
+  const here = targetOf(bundle, targets);
+  if (here && loc.state === "ok") loc.installedIn = here;
+  // A copy in the other folder (an older install): macOS may open drawings with that one.
+  const other = (["system", "user"] as const).find((t) => t !== here && fs.existsSync(path.join(targets[t].dir, "mydraw.app")) && path.join(targets[t].dir, "mydraw.app") !== bundle);
+  if (other) loc.otherCopy = path.join(targets[other].dir, "mydraw.app");
+  return loc;
+}
 const shell = () => process.env.SHELL || "/bin/zsh";
 
 export interface SetupDeps {
@@ -121,7 +153,7 @@ function claudeEntry() {
 
 export async function setupStatus(): Promise<SetupStatus> {
   const bundle = ownBundle();
-  const location = { bundle, ...locationOf(bundle, applicationsDirs()) };
+  const location = locationStatus(bundle);
   const link = linkPath();
   const ready = location.state === "ok" && !!bundle;
   const expected = bundle ? bundleCommand(bundle) : "";
@@ -141,11 +173,11 @@ export async function setupStatus(): Promise<SetupStatus> {
   return status;
 }
 
-export async function setupAction(action: SetupAction): Promise<SetupStatus> {
+export async function setupAction(action: SetupAction, target?: InstallTarget): Promise<SetupStatus> {
   const bundle = ownBundle();
   switch (action) {
     case "move":
-      await moveToApplications(bundle);
+      await moveToApplications(bundle, target ?? locationStatus(bundle).suggested);
       break;
     case "installCommand": {
       const s = await setupStatus();
@@ -180,17 +212,23 @@ export async function setupAction(action: SetupAction): Promise<SetupStatus> {
   return setupStatus();
 }
 
-/** Copies the app into Applications and restarts from there (after the normal quit flow). */
-async function moveToApplications(bundle: string | null): Promise<void> {
+/**
+ * Copies the app into /Applications ("system") or ~/Applications ("user", no admin rights needed)
+ * and restarts from there (after the normal quit flow).
+ */
+async function moveToApplications(bundle: string | null, target: InstallTarget): Promise<void> {
   if (!bundle) throw new Error("This is a development build.");
-  const destDir = applicationsDirs()[0];
+  const destDir = target === "user" ? userApps() : systemApps();
   const dest = path.join(destDir, "mydraw.app");
   if (dest === bundle) return;
-  try {
-    fs.accessSync(destDir, fs.constants.W_OK);
-  } catch {
-    throw new Error(`mydraw can't write to ${destDir}. Drag it there in Finder instead.`);
+  if (!writable(destDir)) {
+    throw new Error(
+      target === "system"
+        ? `You don't have permission to add apps to ${destDir} (it needs an administrator). Choose "Just for me" to install in your own Applications folder.`
+        : `mydraw can't write to ${destDir}.`,
+    );
   }
+  fs.mkdirSync(destDir, { recursive: true });
   if (fs.existsSync(dest)) {
     // Replace only another copy of mydraw (e.g. an older version), never some other app.
     const id = await run("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIdentifier", path.join(dest, "Contents", "Info.plist")])

@@ -2,7 +2,7 @@
 // the work; shared/setup.ts has the model). Opens on the installed app's first launch and when it
 // runs from the wrong place; also Preferences → "Command line & Claude Code…".
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { isBundleCommand, type SetupAction, type SetupStatus } from "../../shared/setup";
+import { isBundleCommand, type InstallTarget, type SetupAction, type SetupStatus } from "../../shared/setup";
 
 const bridge = window.mydraw;
 const CLAUDE_CODE_URL = "https://claude.com/claude-code";
@@ -12,6 +12,7 @@ export function SetupDialog({ onClose }: { onClose(): void }) {
   const [busy, setBusy] = useState<SetupAction | null>(null);
   const [error, setError] = useState<{ step: string; text: string } | null>(null);
   const [confirmReplace, setConfirmReplace] = useState(false);
+  const [target, setTarget] = useState<InstallTarget | null>(null);
   const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -23,7 +24,7 @@ export function SetupDialog({ onClose }: { onClose(): void }) {
     setBusy(action);
     setError(null);
     try {
-      setStatus(await bridge.setupAction(action));
+      setStatus(await bridge.setupAction(action, action === "move" ? (target ?? status?.location.suggested) : undefined));
       setConfirmReplace(false);
     } catch (e) {
       setError({ step, text: (e as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "") });
@@ -61,12 +62,37 @@ export function SetupDialog({ onClose }: { onClose(): void }) {
         {s && (
           <>
             <Row step="location" state={s.location.state} title="Applications folder" error={error?.step === "location" ? error.text : null}>
-              {s.location.state === "ok" && <Done>mydraw is in {s.location.bundle?.replace(/\/mydraw\.app$/, "")}.</Done>}
+              {s.location.state === "ok" &&
+                (s.location.installedIn === "user" ? (
+                  <Done>Installed just for you, in {home(s.location.targets.user.dir)}.</Done>
+                ) : (
+                  <Done>mydraw is in {s.location.bundle?.replace(/\/mydraw\.app$/, "")}.</Done>
+                ))}
               {s.location.state === "move" && (
                 <>
                   <p>{s.location.reason}. Move it to Applications so updates and the steps below work. mydraw restarts from there.</p>
-                  {btn("location", "move", "Move to Applications", true)}
+                  <div className="md-setup-targets" role="radiogroup" aria-label="Install for">
+                    {(["system", "user"] as const).map((t) => {
+                      const info = s.location.targets[t];
+                      const chosen = (target ?? s.location.suggested) === t;
+                      return (
+                        <label key={t} className={`md-setup-target${chosen ? " on" : ""}${info.writable ? "" : " off"}`} data-target={t}>
+                          <input type="radio" name="md-setup-target" checked={chosen} disabled={!info.writable || !!busy} onChange={() => setTarget(t)} />
+                          <span>
+                            <b>{t === "system" ? "All users" : "Just for me"}</b> <code>{home(info.dir)}</code>
+                            <small>{t === "system" ? (info.writable ? "For everyone on this Mac." : "Needs an administrator: you can't add apps here.") : "No administrator password needed."}</small>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {btn("location", "move", "Move", true)}
                 </>
+              )}
+              {s.location.otherCopy && (
+                <p className="md-setup-warn" data-other-copy>
+                  Another copy of mydraw is in {home(s.location.otherCopy.replace(/\/mydraw\.app$/, ""))}. macOS may open drawings with that one: delete it in Finder if you don't need it.
+                </p>
               )}
               {s.location.state === "dev" && <p>Development build.</p>}
             </Row>
@@ -162,5 +188,8 @@ function Row({ step, state, title, error, children }: { step: string; state: str
     </section>
   );
 }
+
+/** /Users/me/x -> ~/x */
+const home = (p: string) => p.replace(/^\/Users\/[^/]+/, "~");
 
 const Done = ({ children }: { children: ReactNode }) => <p className="md-setup-ok">✓ {children}</p>;

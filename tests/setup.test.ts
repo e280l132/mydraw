@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bundleCommand, canReplaceCommand, claudeCandidates, claudeStateOf, commandStateOf, describeMcp, isBundleCommand, locationOf, mcpAddArgs, mcpEntryOf, onPath } from "../shared/setup";
+import { bundleCommand, canReplaceCommand, claudeCandidates, claudeStateOf, commandStateOf, describeMcp, isBundleCommand, locationOf, mcpAddArgs, mcpEntryOf, onPath, pickTarget, targetOf } from "../shared/setup";
 
 const APPS = ["/Applications", "/Users/u/Applications"];
 
@@ -11,6 +11,19 @@ describe("setup", () => {
     expect(locationOf("/private/var/folders/x/AppTranslocation/y/d/mydraw.app", APPS).reason).toMatch(/temporary/);
     expect(locationOf("/Volumes/mydraw/mydraw.app", APPS).reason).toMatch(/disk image/);
     expect(locationOf(null, APPS).state).toBe("dev");
+  });
+
+  it("offers ~/Applications when /Applications is not writable (no admin rights)", () => {
+    expect(pickTarget(true)).toBe("system");
+    expect(pickTarget(false)).toBe("user");
+  });
+
+  it("knows which target folder holds the app", () => {
+    const targets = { system: { dir: "/Applications" }, user: { dir: "/Users/u/Applications" } };
+    expect(targetOf("/Applications/mydraw.app", targets)).toBe("system");
+    expect(targetOf("/Users/u/Applications/mydraw.app", targets)).toBe("user");
+    expect(targetOf("/Users/u/Downloads/mydraw.app", targets)).toBeUndefined();
+    expect(targetOf(null, targets)).toBeUndefined();
   });
 
   it("reads the command link", () => {

@@ -281,7 +281,7 @@ esac
   assert.equal(r.status, 2, "usage errors exit 2");
 
   // ---------------------------------------------------------------------------------------------
-  step("Set up mydraw: Move to Applications copies the app and restarts it from there");
+  step("Set up mydraw: without admin rights, Move copies the app to ~/Applications and restarts it from there");
   {
     const downloads = path.join(work, "Downloads");
     const apps2 = path.join(work, "Applications2");
@@ -290,7 +290,10 @@ esac
     const loose = path.join(downloads, "mydraw.app");
     execFileSync("ditto", [built, loose]);
     const ud2 = path.join(work, "userData2");
-    const env2 = { ...env, MYDRAW_USER_DATA: ud2, MYDRAW_APPLICATIONS_DIR: apps2 };
+    const home2 = path.join(work, "home2");
+    fs.mkdirSync(home2);
+    // A standard user: the system Applications folder is not writable.
+    const env2 = { ...env, MYDRAW_USER_DATA: ud2, MYDRAW_APPLICATIONS_DIR: apps2, MYDRAW_SETUP_HOME: home2, MYDRAW_APPLICATIONS_READONLY: "1" };
     const p2 = spawn(path.join(loose, "Contents", "MacOS", "mydraw"), [], { env: env2, stdio: "ignore" });
     const cf2 = path.join(ud2, "control.json");
     const readCf2 = () => (fs.existsSync(cf2) ? JSON.parse(fs.readFileSync(cf2, "utf8")) : null);
@@ -306,17 +309,23 @@ esac
     const st = await rpc2("setup_status");
     assert.equal(st.location.state, "move", "a copy in Downloads should be moved");
     assert.equal(st.command.state, "unavailable");
-    await rpc2("setup_action", { action: "move" }).catch(() => undefined);
+    assert.equal(st.location.targets.system.writable, false, "system Applications reported read-only");
+    assert.equal(st.location.suggested, "user", "~/Applications offered first");
+    await assert.rejects(rpc2("setup_action", { action: "move", target: "system" }), /administrator/);
+    await rpc2("setup_action", { action: "move", target: "user" }).catch(() => undefined);
     await new Promise((r) => (p2.exitCode !== null ? r() : p2.once("exit", r)));
-    const moved = path.join(apps2, "mydraw.app");
-    assert.ok(fs.existsSync(moved), "copied to Applications");
+    const moved = path.join(home2, "Applications", "mydraw.app");
+    assert.ok(fs.existsSync(moved), "copied to ~/Applications");
+    assert.ok(!fs.existsSync(path.join(apps2, "mydraw.app")), "nothing written to the system folder");
     // The relaunched app writes a new control.json that names its new location.
     const relaunched = await waitFor("relaunch from Applications", () => {
       const i = readCf2();
       return i && i.appPath === path.join(moved, "Contents", "Resources", "app.asar") ? i : null;
     });
     await waitFor("renderer ready", async () => (await rpc2("ping")).ready);
-    assert.equal((await rpc2("setup_status")).location.state, "ok");
+    const st2 = await rpc2("setup_status");
+    assert.equal(st2.location.state, "ok");
+    assert.equal(st2.location.installedIn, "user");
     await rpc2("app_quit");
     await waitFor("relaunched app quits", () => {
       try {
