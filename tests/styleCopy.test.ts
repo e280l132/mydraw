@@ -58,6 +58,17 @@ describe("lookUpdates", () => {
     const ch = lookUpdates(dots, { el: gradRect }, ["fill"]);
     expect(ch?.updates[0]).toMatchObject({ backgroundColor: "#fde68a", fillStyle: "dots", gradient: null });
   });
+  it("copies the hatch as the source draws it", () => {
+    // Source: stroke 2, hatch follows it (1 / 8). Target: thick stroke 8 would hatch at 4 / 32.
+    const src = captureLook({ el: rect("h", { backgroundColor: "#fde68a", fillStyle: "hachure" }) });
+    expect(src.fill?.pattern).toEqual({ weight: 1, gap: 8 });
+    const ch = lookUpdates(src, { el: rect("t", { strokeWidth: 8 }) }, ["fill"]);
+    expect(ch?.updates[0]).toMatchObject({ fillStyle: "hachure", fillPattern: { weight: 1, gap: 8 } });
+    const own = captureLook({ el: rect("o", { fillStyle: "cross-hatch", customData: { mydrawFillPattern: { weight: 3, gap: 20 } } }) });
+    expect(own.fill?.pattern).toEqual({ weight: 3, gap: 20 });
+    // Solid fills carry no pattern (the target keeps its own).
+    expect(captureLook({ el: rect("s", { backgroundColor: "#fde68a" }) }).fill?.pattern).toBeUndefined();
+  });
   it("does nothing for a target that can't take the parts", () => {
     expect(lookUpdates(look, { el: { id: "ar", type: "arrow" } }, ["fill"])).toBeNull();
     expect(lookUpdates(look, { el: rect("z", { customData: { mydrawZone: true } }) }, ["fill"])).toBeNull();

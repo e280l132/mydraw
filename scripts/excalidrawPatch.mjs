@@ -114,6 +114,26 @@ export function patchDash(code) {
   return `${code.slice(0, at)}globalThis.__mydrawDash?.(${el})?globalThis.__mydrawDash(${el}):${code.slice(at)}`;
 }
 
+// ---------- fill pattern ----------
+// Excalidraw derives the hatch line width and spacing from the stroke width (`fillWeight:
+// strokeWidth / 2, hachureGap: strokeWidth * 4`). A stored pattern (customData.mydrawFillPattern,
+// shared/fillPattern.ts) comes from `globalThis.__mydrawFillPattern(element)` first; it returns
+// undefined for everything else, so Excalidraw's own values are kept. Same options object as the dash
+// patch, so canvas, SVG and every export follow. See EXCALIDRAW-UPGRADE.md ("Fill pattern").
+// dev:  fillWeight: element.strokeWidth / 2,\n    hachureGap: element.strokeWidth * 4,
+// prod: fillWeight:e.strokeWidth/2,hachureGap:e.strokeWidth*4,
+const FILL_PATTERN = /fillWeight:\s*(\w+)\.strokeWidth\s*\/\s*2,\s*hachureGap:\s*\1\.strokeWidth\s*\*\s*4/g;
+
+/** Returns the patched source, or null unless the options are found exactly once. */
+export function patchFillPattern(code) {
+  const m = [...code.matchAll(FILL_PATTERN)];
+  if (m.length !== 1) return null;
+  const el = m[0][1];
+  const hook = `globalThis.__mydrawFillPattern?.(${el})`;
+  const text = `fillWeight:${hook}?.fillWeight??${el}.strokeWidth/2,hachureGap:${hook}?.hachureGap??${el}.strokeWidth*4`;
+  return code.slice(0, m[0].index) + text + code.slice(m[0].index + m[0][0].length);
+}
+
 /** Vite plugin: patches the chunk Excalidraw's index imports (build, dev and the dev pre-bundle). */
 export function excalidrawPanelPin(chunkPaths) {
   const isChunk = (id) => chunkPaths.includes(id.split("?")[0]);
@@ -130,9 +150,13 @@ export function excalidrawPanelPin(chunkPaths) {
     if (shadowed === null) {
       throw new Error(`mydraw: Excalidraw's renderElement / renderElementToSvg not found (exactly once) in ${id}. Update scripts/excalidrawPatch.mjs (EXCALIDRAW-UPGRADE.md, "Shadows").`);
     }
-    const out = patchDash(shadowed);
-    if (out === null) {
+    const dashed = patchDash(shadowed);
+    if (dashed === null) {
       throw new Error(`mydraw: Excalidraw's strokeLineDash option not found (exactly once) in ${id}. Update scripts/excalidrawPatch.mjs (EXCALIDRAW-UPGRADE.md, "Dash patterns").`);
+    }
+    const out = patchFillPattern(dashed);
+    if (out === null) {
+      throw new Error(`mydraw: Excalidraw's fillWeight / hachureGap options not found (exactly once) in ${id}. Update scripts/excalidrawPatch.mjs (EXCALIDRAW-UPGRADE.md, "Fill pattern").`);
     }
     return out;
   };

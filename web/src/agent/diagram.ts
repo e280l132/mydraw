@@ -5,6 +5,7 @@ import { resolveShadowInput, withShadow } from "../../../shared/shadow";
 import { inferRole, isNodeRole, ROLE_STYLES, type RoleStyle } from "../../../shared/nodeRoles";
 import { DASH_KEY, dashPatch, isDashId, type StrokeStyleName } from "../../../shared/dash";
 import { canGradient, gradientPatch } from "../../../shared/gradient";
+import { patternOf, takesPattern, withPattern } from "../../../shared/fillPattern";
 import { convertToExcalidrawElements, newElementWith } from "@excalidraw/excalidraw";
 import type { ExcalidrawImageElement, FileId } from "@excalidraw/excalidraw/element/types";
 import type { AppState, BinaryFileData, BinaryFiles, DataURL } from "@excalidraw/excalidraw/types";
@@ -741,13 +742,14 @@ export async function buildDiagram(
   // (External systems in the polished look get a dashed border unless the node says otherwise.)
   for (const n of spec.nodes) {
     const strokeStyle = n.strokeStyle ?? (n.color === undefined ? roleOf(n)?.strokeStyle : undefined);
-    if (n.gradient === undefined && n.fillStyle === undefined && strokeStyle === undefined) continue;
+    if (n.gradient === undefined && n.fillStyle === undefined && n.fillPattern === undefined && strokeStyle === undefined) continue;
     const i = nodeEls.findIndex((e) => e.id === n.id);
     if (i < 0 || nodeEls[i].customData?.mydrawNode) continue;
     let el = nodeEls[i] as El & Loose;
     if (n.fillStyle) el = { ...el, fillStyle: n.fillStyle as never };
     if (strokeStyle) el = { ...el, ...dashPatch(el.customData as Loose | undefined, isDashId(strokeStyle) ? strokeStyle : null, isDashId(strokeStyle) ? "dashed" : (strokeStyle as "solid" | "dashed" | "dotted")) };
     if (n.gradient !== undefined && canGradient(el.type)) el = { ...el, ...gradientPatch(el.customData as Loose | undefined, n.gradient) };
+    if (n.fillPattern && takesPattern(el.type)) el = { ...el, customData: withPattern(el.customData as Loose | undefined, { ...patternOf(el as never), ...n.fillPattern }) };
     nodeEls[i] = el as El;
     byId.set(n.id, nodeEls[i]);
   }

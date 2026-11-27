@@ -2,7 +2,7 @@
 // overlay (web/src/StyleBrush.tsx), "Paste look" and the agent's `copy_look` all go through here.
 //
 // A look is split into four parts the user switches on and off (fill is on by default):
-//   fill    backgroundColor, fillStyle, gradient (customData.mydrawGradient)
+//   fill    backgroundColor, fillStyle, gradient (customData.mydrawGradient), hatch pattern (mydrawFillPattern)
 //   stroke  strokeColor, strokeWidth, strokeStyle incl. extra dashes (customData.mydrawDash), roughness
 //   effects shadow (customData.mydrawShadow), opacity
 //   text    font, size, colour and outline (customData.mydrawTextOutline) of a text or a shape's label
@@ -12,6 +12,7 @@
 import { dashOf } from "./dash";
 import { canGradient, cssGradient, gradientOf, type Gradient } from "./gradient";
 import { canShadow, shadowOf, type Shadow } from "./shadow";
+import { patternOf, type FillPattern } from "./fillPattern";
 import { outlineOf, type TextOutline } from "./textOutline";
 
 export type LookPart = "fill" | "stroke" | "effects" | "text";
@@ -46,7 +47,8 @@ export interface LookEl {
 }
 
 export interface Look {
-  fill?: { backgroundColor: string; fillStyle: string; gradient: Gradient | null };
+  /** `pattern`: hatch line width + spacing as drawn (shared/fillPattern.ts), only for pattern fills. */
+  fill?: { backgroundColor: string; fillStyle: string; gradient: Gradient | null; pattern?: FillPattern };
   stroke?: { strokeColor: string; strokeWidth: number; strokeStyle: string; roughness: number };
   effects?: { shadow: Shadow | null; opacity?: number };
   text?: { fontFamily: number; fontSize: number; strokeColor: string; textOutline: TextOutline | null };
@@ -94,7 +96,9 @@ export function captureLook(t: LookTarget): Look {
   }
   if (FILLABLE(el)) {
     const g = gradientOf(el);
-    look.fill = { backgroundColor: el.backgroundColor ?? "transparent", fillStyle: el.fillStyle ?? "solid", gradient: g };
+    const fillStyle = el.fillStyle ?? "solid";
+    look.fill = { backgroundColor: el.backgroundColor ?? "transparent", fillStyle, gradient: g };
+    if (fillStyle !== "solid" && !g) look.fill.pattern = patternOf({ type: el.type, strokeWidth: el.strokeWidth ?? 2, customData: el.customData });
   }
   if (STROKABLE.has(el.type)) {
     look.stroke = {
@@ -166,6 +170,8 @@ export function lookUpdates(look: Look, t: LookTarget, parts: readonly LookPart[
       own.fillStyle = f.fillStyle;
       // null takes a gradient off; a gradient sets fillStyle solid + backgroundColor = from itself.
       own.gradient = f.gradient ? { ...f.gradient } : null;
+      // The hatch as the source draws it (its own stroke width may differ from the target's).
+      if (f.pattern) own.fillPattern = { ...f.pattern };
     }
   }
   if (use.includes("stroke")) {

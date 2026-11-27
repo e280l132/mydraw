@@ -5,6 +5,7 @@ import { iconSketchPreset, storedIconSketch, type IconSketch } from "../../../sh
 import { requireFillStyle } from "../../../shared/fills";
 import { dashPatch, isDashId, requireStrokeStyle, strokeStyleName } from "../../../shared/dash";
 import { canGradient, gradientOf, gradientPatch, gradientPresetOf, resolveGradientInput } from "../../../shared/gradient";
+import { defaultPattern, patternOf, pinPatternPatch, resolvePatternInput, storedPattern, takesPattern, withPattern } from "../../../shared/fillPattern";
 import { fontIdByName } from "../fontRegistry";
 import { convertToExcalidrawElements, getCommonBounds, newElementWith } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
@@ -162,6 +163,9 @@ export function describe(el: El, map: ElMap): Loose {
   // An icon node's shadow sits on its image.
   const gradient = gradientOf(el as never);
   if (gradient) o.gradient = gradientPresetOf(gradient) ?? gradient;
+  // Only where it shows: a pinned pattern on a solid fill is kept for a later pattern pick.
+  const pattern = el.fillStyle !== "solid" ? storedPattern(el as never) : null;
+  if (pattern) o.fillPattern = pattern;
   const shadow = describeShadow(shadowOf(isIconNode(el) ? (iconImageOf(el, map) ?? el) : el));
   if (shadow) o.shadow = shadow;
   const labelShadow = label ? describeShadow(shadowOf(label)) : undefined;
@@ -349,6 +353,12 @@ function withDefaults(sk: Loose, st: AppState): Loose {
     if (!canGradient(String(sk.type))) throw new Error(`gradient applies to rectangles, diamonds and ellipses, not ${String(sk.type)}`);
     delete out.gradient;
     Object.assign(out, gradientPatch(out.customData as Loose | undefined, parseGradient(sk.gradient) ?? null));
+  }
+  if (sk.fillPattern !== undefined) {
+    if (!takesPattern(String(sk.type))) throw new Error(`fillPattern applies to rectangles, diamonds, ellipses and closed lines, not ${String(sk.type)}`);
+    delete out.fillPattern;
+    const sw = typeof out.strokeWidth === "number" ? out.strokeWidth : 2;
+    out.customData = withPattern(out.customData as Loose | undefined, resolvePatternInput(sk.fillPattern, defaultPattern(sw)));
   }
   if (sk.strokeStyle !== undefined) {
     // Extra dash styles (shared/dash.ts): strokeStyle keeps the dashed/dotted fallback, the pattern goes in customData.
@@ -928,7 +938,7 @@ export function applyUpdates(updates: unknown[], scene: readonly El[], st: AppSt
     ids.push(id);
     const patch: Loose = {};
     for (const [k, v] of Object.entries(u)) {
-      if (k === "id" || k === "label" || k === "dx" || k === "dy" || k === "data" || k === "routing" || k === "textOutline" || k === "shadow" || k === "shadowLabel" || k === "strokeStyle" || k === "gradient") continue;
+      if (k === "id" || k === "label" || k === "dx" || k === "dy" || k === "data" || k === "routing" || k === "textOutline" || k === "shadow" || k === "shadowLabel" || k === "strokeStyle" || k === "gradient" || k === "fillPattern") continue;
       if (!UPDATABLE.has(k)) throw new Error(`"${k}" can't be updated here (use raw_update for other fields)`);
       patch[k] =
         (k === "strokeColor" || k === "backgroundColor") && typeof v === "string"
@@ -952,6 +962,15 @@ export function applyUpdates(updates: unknown[], scene: readonly El[], st: AppSt
     if (u.gradient !== undefined) {
       if (!canGradient(el.type)) throw new Error(`"${id}" is a ${el.type}; gradients apply to rectangles, diamonds and ellipses`);
       Object.assign(patch, gradientPatch((patch.customData as Loose | undefined) ?? (el.customData as Loose | undefined), parseGradient(u.gradient) ?? null));
+    }
+    if (u.fillPattern !== undefined) {
+      if (!takesPattern(el.type)) throw new Error(`"${id}" is a ${el.type}; fillPattern applies to rectangles, diamonds, ellipses and closed lines`);
+      const data = (patch.customData as Loose | undefined) ?? (el.customData as Loose | undefined);
+      patch.customData = withPattern(data, resolvePatternInput(u.fillPattern, patternOf(el as never)));
+    } else if (typeof patch.strokeWidth === "number") {
+      // A new stroke width changes only the outline: keep the hatch it had (shared/fillPattern.ts).
+      const pin = pinPatternPatch({ ...(el as never as object), customData: (patch.customData as Loose | undefined) ?? el.customData } as never, patch.strokeWidth);
+      if (pin.customData) patch.customData = pin.customData;
     }
     if (u.strokeStyle !== undefined) {
       const name = requireStrokeStyle(u.strokeStyle);

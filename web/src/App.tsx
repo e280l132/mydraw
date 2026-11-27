@@ -71,6 +71,7 @@ import { isOverZoneTitle, relockZones, zoneTitleClick } from "./zoneEdit";
 import { ShadowSection } from "./ShadowSection";
 import { IconStyleSection } from "./IconStyleSection";
 import { newTracker, stampNewShadows, type NewShadowTracker } from "./shadowOps";
+import { newPatternTracker, pinPatterns, type PatternTracker } from "./fillPatternOps";
 import { colorOfElement, elementAt } from "./library/pickColor";
 import { IconRecolorSession, NO_ICONS, iconSelection, recolorSelectedIcons, type IconSelection } from "./library/iconColor";
 import { STENCIL_DRAG_TYPE, StencilPanel } from "./library/StencilPanel";
@@ -334,6 +335,7 @@ export function App() {
   const zonePositions = useRef(new Map<string, Positions>());
   // Default shadow for shapes the user draws (Shadow section with nothing selected).
   const shadowTrackers = useRef(new Map<string, NewShadowTracker>());
+  const patternTrackers = useRef(new Map<string, PatternTracker>());
   const [selTick, setSelTick] = useState(0);
   // Selection + any change to a selected element (version): fine-tune sliders, Properties section.
   const tuneKey = useRef("");
@@ -517,6 +519,9 @@ export function App() {
         let tr = shadowTrackers.current.get(id);
         if (!tr) shadowTrackers.current.set(id, (tr = newTracker()));
         stampNewShadows(zoneApi, tr, elements, appState);
+        let pt = patternTrackers.current.get(id);
+        if (!pt) patternTrackers.current.set(id, (pt = newPatternTracker()));
+        pinPatterns(zoneApi, pt, elements);
       }
       if (id === activeRef.current) {
         const sel = appState.viewModeEnabled ? NO_ICONS : iconSelection(elements, appState, files);

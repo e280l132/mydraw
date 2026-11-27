@@ -5,6 +5,7 @@ import { normalizeIconSketch, type IconSketch } from "./iconSketch";
 import { resolveShadowInput, type Shadow } from "./shadow";
 import { STROKE_STYLE_NAMES, type StrokeStyleName } from "./dash";
 import { resolveGradientInput, type Gradient } from "./gradient";
+import { defaultPattern, resolvePatternInput, type FillPattern } from "./fillPattern";
 import { requireFillStyle, type FillStyleId } from "./fills";
 import { hexToRgb, rgbToHex } from "./colorMath";
 import { linkProblem } from "./links";
@@ -66,6 +67,8 @@ export interface DiagramNode {
   gradient?: Gradient | null;
   /** Shape nodes: fill pattern (solid default; hachure, cross-hatch, dots, dashed, zigzag, zigzag-line). */
   fillStyle?: FillStyleId;
+  /** Shape nodes: hatch line width / spacing in px (shared/fillPattern.ts), apart from the border width. */
+  fillPattern?: Partial<FillPattern>;
   /** Shape nodes: border style (solid default, dashed, dotted, or an extra dash style). */
   strokeStyle?: LineStyle;
   /** What the node is (entry, edge, compute, service, data, queue, storage, security, monitoring, external): the polished look colours it by role. Default: guessed from shape, kind, icon and label. */
@@ -231,6 +234,18 @@ function gradientIn(v: unknown, what: string): Gradient | null | undefined {
   }
 }
 
+/** Hatch pattern input {weight?, gap?} (px); kept partial, the builder fills in the shape's own. */
+function patternIn(v: unknown, what: string): Partial<FillPattern> | undefined {
+  if (v === undefined || v === null) return undefined;
+  try {
+    const p = resolvePatternInput(v, defaultPattern(2))!;
+    const o = v as Record<string, unknown>;
+    return { ...(o.weight !== undefined ? { weight: p.weight } : {}), ...(o.gap !== undefined ? { gap: p.gap } : {}) };
+  } catch (e) {
+    throw new Error(`${what}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 function fillIn(v: unknown, what: string): FillStyleId {
   try {
     return requireFillStyle(v);
@@ -309,6 +324,7 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
       shadow: shadowIn(n.shadow, `node ${id} shadow`),
       gradient: gradientIn(n.gradient, `node ${id} gradient`),
       fillStyle: n.fillStyle === undefined || n.fillStyle === null ? undefined : fillIn(n.fillStyle, `node ${id} fillStyle`),
+      fillPattern: patternIn(n.fillPattern, `node ${id} fillPattern`),
       strokeStyle: oneOf(n.strokeStyle, STYLES, `node ${id} strokeStyle`),
       role: oneOf(n.role, NODE_ROLES, `node ${id} role`),
     };

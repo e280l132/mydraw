@@ -3805,7 +3805,8 @@ body.md-panel-dragging * {
   border-color: var(--button-border, var(--default-border-color));
 }
 /* Gradient editor in the Fill popover (StyleMore.tsx). */
-.md-grad {
+.md-grad,
+.md-pattern {
   margin-top: 0.6rem;
   padding-top: 0.55rem;
   border-top: 1px solid var(--default-border-color, rgba(0, 0, 0, 0.1));

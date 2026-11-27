@@ -645,6 +645,15 @@ const moreFill = page.locator(`${COL} .md-more-btn[data-more-kind="fill"]`);
 await moreFill.scrollIntoViewIfNeeded();
 await moreFill.click();
 await page.waitForSelector('.md-more-pop[data-more-pop="fill"]');
+// The fine-tune stroke width change above (to 12) pinned the hatch pattern of the old width.
+const pinned = (await rectProps()).customData?.mydrawFillPattern;
+assert.ok(pinned && pinned.weight * 8 === pinned.gap && pinned.weight < 6, `stroke width left the hatch pattern alone (${JSON.stringify(pinned)})`);
+assert.equal(await page.getAttribute(".md-more-pop .md-pattern", "data-pattern"), "own", "pattern editor shows the stored pattern");
+await page.fill('.md-more-pop .md-pattern-num[data-field="gap"]', "20");
+await page.press('.md-more-pop .md-pattern-num[data-field="gap"]', "Enter");
+await waitFor(async () => (await rectProps()).customData?.mydrawFillPattern?.gap === 20, "pattern spacing from the number box");
+await page.click(".md-more-pop .md-pattern-reset");
+await waitFor(async () => !(await rectProps()).customData?.mydrawFillPattern, "Match stroke drops the stored pattern");
 assert.equal(await page.locator(".md-more-pop .md-more-tile[data-fill]").count(), 4, "four extra fills");
 await page.click('.md-more-pop .md-more-tile[data-fill="dots"]');
 await waitFor(async () => (await rectProps()).fillStyle === "dots", "dots fill applied");
@@ -1191,6 +1200,25 @@ brScene = (await call("get_scene")).elements;
 assert.equal(brScene.find((e) => e.id === "br3").strokeColor, "#c2255c", "copy_look copies the stroke");
 assert.equal(brScene.find((e) => e.id === "br3").gradient, undefined, "copy_look stroke only: no fill");
 await call("delete_elements", { ids: ["br1", "br2", "br3", "br4"] });
+// Agent: hatch line width / spacing apart from the stroke (fillPattern), kept on a stroke change, copied by copy_look.
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "hp1", x: 2600, y: 2230, width: 90, height: 60, backgroundColor: "#c92a2a", fillStyle: "cross-hatch", fillPattern: { weight: 1, gap: 10 } },
+    { type: "rectangle", id: "hp2", x: 2750, y: 2230, width: 90, height: 60, backgroundColor: "#c92a2a", fillStyle: "hachure", strokeWidth: 2 },
+    { type: "rectangle", id: "hp3", x: 2900, y: 2230, width: 90, height: 60, strokeWidth: 8 },
+  ],
+});
+const hpOf = async (id) => (await call("get_scene")).elements.find((e) => e.id === id).fillPattern;
+assert.deepEqual(await hpOf("hp1"), { weight: 1, gap: 10 }, "add_elements fillPattern");
+await call("update_elements", { updates: [{ id: "hp2", strokeWidth: 6 }] });
+assert.deepEqual(await hpOf("hp2"), { weight: 1, gap: 8 }, "update_elements strokeWidth keeps the hatch");
+await call("update_elements", { updates: [{ id: "hp2", fillPattern: { gap: 16 } }] });
+assert.deepEqual(await hpOf("hp2"), { weight: 1, gap: 16 }, "update_elements fillPattern (partial)");
+await call("copy_look", { from: "hp1", to: ["hp3"] });
+assert.deepEqual(await hpOf("hp3"), { weight: 1, gap: 10 }, "copy_look copies the hatch onto a thick-stroked shape");
+await call("update_elements", { updates: [{ id: "hp2", fillPattern: null }] });
+assert.equal(await hpOf("hp2"), undefined, "fillPattern: null follows the stroke width again");
+await call("delete_elements", { ids: ["hp1", "hp2", "hp3"] });
 // The agent can use every new style: build_diagram nodes / edges / zones, update_elements, style presets.
 await call("build_diagram", {
   x: 3200,

@@ -5,6 +5,8 @@ import "./textOutline";
 import "./shadowRender";
 // Installs the dash-pattern hook (extra stroke styles) Excalidraw's patched generator options call.
 import "./dashRender";
+// Installs the fill-pattern hook (hatch line width / spacing apart from the stroke width).
+import "./fillPatternRender";
 import { createRoot } from "react-dom/client";
 import "@excalidraw/excalidraw/index.css";
 import "./styles.css";

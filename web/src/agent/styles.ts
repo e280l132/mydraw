@@ -3,6 +3,7 @@
 import type { AppState } from "@excalidraw/excalidraw/types";
 import { inkColors, stylePatch, themeStyle, type StyleSpec, type Theme } from "../../../shared/styles";
 import { canGradient } from "../../../shared/gradient";
+import { takesPattern } from "../../../shared/fillPattern";
 import { applyUpdates, boundTextOf, isIconNode, typedText, type El, type ElMap } from "./sceneOps";
 
 type Loose = Record<string, unknown>;
@@ -59,6 +60,7 @@ export function styleElements(
     const patch: Loose = node ? (style.shadow !== undefined ? { shadow: style.shadow } : {}) : stylePatch(style, kind);
     // Gradients exist only on rectangles, diamonds and ellipses (applyUpdates refuses the rest).
     if ("gradient" in patch && !canGradient(el.type)) delete patch.gradient;
+    if ("fillPattern" in patch && !takesPattern(el.type)) delete patch.fillPattern;
     if (opts.inkTo && !node) {
       if (el.strokeColor && isInk(el.strokeColor)) patch.strokeColor = opts.inkTo;
       else if (opts.onlyInk) delete patch.strokeColor;

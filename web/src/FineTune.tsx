@@ -28,6 +28,7 @@ import {
   type TunableElement,
 } from "../../shared/fineTune";
 import type { El } from "./agent/sceneOps";
+import { pinPatternPatch } from "../../shared/fillPattern";
 import { fontSizeChanges, fontSizeTargets } from "./fontSizeOps";
 import { commitElements } from "./uiActions";
 import { FloatHead, useFloating } from "./MorePopover";
@@ -86,6 +87,12 @@ function defaultValue(api: ExcalidrawImperativeAPI, kind: FineTuneKind): number 
   return kind === "roughness" ? s.currentItemRoughness : kind === "fontSize" ? s.currentItemFontSize : s.currentItemStrokeWidth;
 }
 
+/** `patchFor` plus, for stroke width, the pinned hatch pattern (the stroke changes only the outline). */
+function patchOf(kind: FineTuneKind, value: number, el: El): Record<string, unknown> {
+  const patch = patchFor(kind, value) as Record<string, unknown>;
+  return kind === "strokeWidth" ? { ...patch, ...pinPatternPatch(el as never, value) } : patch;
+}
+
 /** Preview / commit / cancel of one slider drag. */
 class TuneSession {
   private base: Map<string, El> | null = null;
@@ -129,9 +136,8 @@ class TuneSession {
     if (kind === "fontSize") return this.previewFont(value);
     if (!this.base) this.base = new Map(targets(this.api, kind).map((e) => [e.id, e]));
     const base = this.base;
-    const patch = patchFor(kind, value);
     this.api.updateScene({
-      elements: this.api.getSceneElementsIncludingDeleted().map((e) => (base.has(e.id) ? newElementWith(base.get(e.id)!, patch as never) : e)),
+      elements: this.api.getSceneElementsIncludingDeleted().map((e) => (base.has(e.id) ? newElementWith(base.get(e.id)!, patchOf(kind, value, base.get(e.id)!) as never) : e)),
       captureUpdate: CaptureUpdateAction.NEVER,
     });
   }
@@ -146,8 +152,7 @@ class TuneSession {
       return;
     }
     const live = new Map(this.api.getSceneElements().map((e) => [e.id, e]));
-    const patch = patchFor(kind, value);
-    const changed = ids.flatMap((id) => (live.has(id) ? [newElementWith(live.get(id)!, patch as never)] : []));
+    const changed = ids.flatMap((id) => (live.has(id) ? [newElementWith(live.get(id)!, patchOf(kind, value, live.get(id)! as unknown as El) as never)] : []));
     commitElements(this.api, changed, [], appStateFor(kind, value));
   }
 

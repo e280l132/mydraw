@@ -28,6 +28,8 @@ import {
   type Gradient,
 } from "../../shared/gradient";
 import { applyGradient, clearGradientAfterNative, currentGradient, GradientSession, gradientTargets, type GradientChange } from "./gradientOps";
+import { PATTERN_GAP, PATTERN_WEIGHT, type FillPattern } from "../../shared/fillPattern";
+import { applyPattern, currentPattern, PatternSession, patternTargets } from "./fillPatternOps";
 import { ColorPicker } from "./library/IconColorSection";
 import { AngleDial } from "./AngleDial";
 import { MorePopover } from "./MorePopover";
@@ -337,10 +339,109 @@ export function StyleMore({ api, tick, hosts }: Props) {
             ))}
           </div>
           <p className="md-ft-note">Patterns use the fill color; a transparent fill shows nothing.</p>
+          <PatternEditor api={api} tick={tick + localTick} onChange={() => setTickLocal((n) => n + 1)} />
           <GradientEditor api={api} tick={tick + localTick} onChange={() => setTickLocal((n) => n + 1)} />
         </MorePopover>
       )}
     </>
+  );
+}
+
+// ---------- pattern editor (inside the Fill popover) ----------
+
+const PATTERN_FIELDS = [
+  { f: "weight", label: "Line width", unit: "px", ...PATTERN_WEIGHT },
+  { f: "gap", label: "Spacing", unit: "px", ...PATTERN_GAP },
+] as const;
+
+/** Hatch line width and spacing, apart from the outline's stroke width (shared/fillPattern.ts). */
+function PatternEditor({ api, tick, onChange }: { api: ExcalidrawImperativeAPI; tick: number; onChange(): void }) {
+  const session = useRef<PatternSession | null>(null);
+  const [drag, setDrag] = useState<FillPattern | null>(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const els = useMemo(() => patternTargets(api), [api, tick]);
+  useEffect(() => () => session.current?.restore(), []);
+  const cur = currentPattern(els);
+  if (!cur) return null;
+  const shown = drag ?? cur.pattern;
+
+  const slide = (patch: Partial<FillPattern>) => {
+    session.current ??= new PatternSession(api, els);
+    session.current.preview(patch);
+    setDrag({ ...shown, ...patch });
+  };
+  const finish = () => {
+    const s = session.current;
+    session.current = null;
+    if (s && drag) s.commit(drag);
+    setDrag(null);
+    onChange();
+  };
+  const run = (change: Partial<FillPattern> | null) => {
+    session.current = null;
+    applyPattern(api, els, change);
+    onChange();
+  };
+
+  return (
+    <div className="md-pattern" data-pattern={cur.stored ? "own" : "stroke"}>
+      <div className="md-ft-head md-grad-head">
+        <span>Pattern{cur.mixed ? " (mixed)" : ""}</span>
+        {cur.stored && (
+          <button
+            type="button"
+            className="md-chip md-pattern-reset"
+            title="Hatch lines follow the stroke width again (Excalidraw's default)"
+            onClick={() => run(null)}
+          >
+            Match stroke
+          </button>
+        )}
+      </div>
+      {PATTERN_FIELDS.map(({ f, label, unit, min, max, step }) => (
+        <div className="md-shadow-slider md-pattern-slider" key={f}>
+          <div className="md-shadow-slider-row">
+            <span className="md-shadow-slider-label">{label}</span>
+            <input
+              key={`${f}-${shown[f]}`}
+              className="md-ft-num md-shadow-num md-pattern-num"
+              data-field={f}
+              type="number"
+              min={min}
+              max={max}
+              step={step}
+              defaultValue={Number(shown[f].toFixed(2))}
+              aria-label={`Pattern ${label.toLowerCase()} (${unit})`}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              }}
+              onBlur={(e) => {
+                const v = Number(e.target.value);
+                if (!e.target.value.trim() || !Number.isFinite(v) || v === shown[f]) return;
+                run({ [f]: Math.min(max, Math.max(min, v)) });
+              }}
+            />
+            <span className="md-shadow-unit">{unit}</span>
+          </div>
+          <input
+            type="range"
+            className="md-ft-range md-shadow-range md-pattern-range"
+            data-field={f}
+            min={min}
+            max={max}
+            step={step}
+            value={Math.min(max, Math.max(min, shown[f]))}
+            aria-label={`Pattern ${label.toLowerCase()}`}
+            onChange={(e) => slide({ [f]: Number(e.target.value) })}
+            onPointerUp={finish}
+            onKeyUp={finish}
+            onBlur={() => session.current && finish()}
+          />
+        </div>
+      ))}
+      <p className="md-ft-note">Stroke width changes only the outline; these set the pattern lines.</p>
+    </div>
   );
 }
 

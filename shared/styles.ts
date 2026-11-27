@@ -3,6 +3,7 @@ import { resolveShadowInput, SHADOW_PRESETS, type Shadow } from "./shadow";
 import { fontIdFor } from "./fonts";
 import { requireColor, resolveColor } from "./palettes";
 import { GRADIENT_PRESETS, resolveGradientInput, type Gradient } from "./gradient";
+import { defaultPattern, resolvePatternInput, type FillPattern } from "./fillPattern";
 import { requireFillStyle, type FillStyleId } from "./fills";
 import { requireStrokeStyle, type StrokeStyleName } from "./dash";
 
@@ -62,6 +63,8 @@ export interface StyleSpec {
   shadow?: Shadow | null;
   /** Gradient fill for rectangles, diamonds and ellipses (shared/gradient.ts); null = flat fill. */
   gradient?: Gradient | null;
+  /** Hatch line width / spacing in px (shared/fillPattern.ts; missing ones keep the element's); null = follow the stroke width. */
+  fillPattern?: Partial<FillPattern> | null;
 }
 
 export interface StylePreset {
@@ -269,6 +272,12 @@ export function normalizeStyle(raw: unknown): StyleSpec {
     }
     out.gradient = resolveGradientInput(g) ?? null;
   }
+  if (r.fillPattern !== undefined) {
+    // Validates (throws on bad input); stores only the fields given, so a style can set just the spacing.
+    resolvePatternInput(r.fillPattern, defaultPattern(2));
+    const fp = r.fillPattern as Record<string, number> | null;
+    out.fillPattern = fp === null ? null : { ...(fp.weight !== undefined ? { weight: fp.weight } : {}), ...(fp.gap !== undefined ? { gap: fp.gap } : {}) };
+  }
   return out;
 }
 
@@ -294,6 +303,7 @@ export function stylePatch(style: StyleSpec, kind: "shape" | "text" | "line"): E
     }
     if (style.fillStyle !== undefined) p.fillStyle = style.fillStyle;
     if (style.gradient !== undefined) p.gradient = style.gradient;
+    if (style.fillPattern !== undefined) p.fillPattern = style.fillPattern;
     if (style.roundness !== undefined) p.roundness = style.roundness === "round" ? { type: 3 } : null;
   }
   if (kind === "text") {
