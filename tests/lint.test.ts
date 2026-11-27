@@ -160,6 +160,8 @@ describe("lint: ordering and summary", () => {
       "edge-through-node": 0,
       "crowded-node": 0,
       "long-edge": 0,
+      "zone-colors": 0,
+      "legend-too-big": 0,
     });
   });
   it("skips deleted elements", () => {
@@ -217,3 +219,21 @@ describe("lint: how clean the arrows are", () => {
   });
 });
 
+
+describe("lint: zone colours and legend size", () => {
+  const zone = (id: string, color: string, kind?: string) => ({ id, type: "rectangle", x: 0, y: 0, width: 100, height: 100, strokeColor: color, backgroundColor: "transparent", customData: { mydrawZone: true, ...(kind ? { mydrawZoneKind: kind } : {}) } });
+  it("flags zones coloured in turn, not zones with kinds", () => {
+    const rainbow = ["#1971c2", "#2f9e44", "#e8590c", "#9c36b5", "#0c8599"].map((c, i) => zone(`z${i}`, c));
+    expect(lintScene(rainbow as never, { rules: ["zone-colors"] }).issues).toHaveLength(1);
+    const kinds = ["#1971c2", "#2f9e44", "#e8590c", "#9c36b5", "#0c8599"].map((c, i) => zone(`z${i}`, c, "vpc"));
+    expect(lintScene(kinds as never, { rules: ["zone-colors"] }).issues).toHaveLength(0);
+  });
+  it("flags a legend with too many rows", () => {
+    const legend = (rows: number) => [
+      { id: "box", type: "rectangle", x: 0, y: 0, width: 100, height: 100, strokeColor: "#868e96", backgroundColor: "#ffffff", customData: { mydrawLegend: true } },
+      ...Array.from({ length: rows + 1 }, (_, i) => ({ id: `t${i}`, type: "text", x: 0, y: i * 40, width: 50, height: 20, strokeColor: "#1e1e1e", backgroundColor: "transparent", text: `row ${i}`, customData: { mydrawLegend: true } })),
+    ];
+    expect(lintScene(legend(17) as never, { rules: ["legend-too-big"] }).issues.map((i) => i.id)).toEqual(["box"]);
+    expect(lintScene(legend(6) as never, { rules: ["legend-too-big"] }).issues).toHaveLength(0);
+  });
+});

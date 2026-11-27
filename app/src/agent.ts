@@ -94,7 +94,7 @@ export function setupAgent(deps: AgentDeps): (method: string, params: Record<str
     const items: Record<string, LibraryItem | null> = {};
     const all = deps.store.getIndex().items;
     for (const n of spec.nodes) if (n.icon && !(n.icon in items)) items[n.icon] = lookupStencil(all, n.icon, true);
-    return renderer("build_diagram", { drawing: params.drawing, zoom: params.zoom, spec, items, renameOnClash });
+    return renderer("build_diagram", { drawing: params.drawing, zoom: params.zoom, replace: params.replace, spec, items, renameOnClash });
   }
 
   return async (method, params) => {

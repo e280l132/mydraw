@@ -8,21 +8,23 @@ import { canGradient, gradientPatch } from "../../../shared/gradient";
 import { convertToExcalidrawElements, newElementWith } from "@excalidraw/excalidraw";
 import type { ExcalidrawImageElement, FileId } from "@excalidraw/excalidraw/element/types";
 import type { AppState, BinaryFileData, BinaryFiles, DataURL } from "@excalidraw/excalidraw/types";
-import { zoneColors, zoneDepths, type DiagramNode, type DiagramSpec } from "../../../shared/diagram";
+import { zoneColors, zoneDepths, type DiagramEdge, type DiagramNode, type DiagramSpec } from "../../../shared/diagram";
 import type { Box, Point } from "../../../shared/geometry";
-import { translateLayout, type LayoutAlgorithm, type LayoutDirection, type LayoutResult } from "../../../shared/layout";
+import { translateLayout, type LayoutAlgorithm, type LayoutDirection, type LayoutInput, type LayoutResult } from "../../../shared/layout";
+import { cellKey, gridZoneIds, layoutGrid, routeEdges } from "../../../shared/gridLayout";
+import { BADGE_OFFSET, pointAlong } from "../../../shared/stepBadges";
 import { layoutBest, qualitySummary, translateRoutes, VARIANTS } from "../../../shared/layoutBest";
 import { measureQuality } from "../../../shared/diagramQuality";
 import { qualityInputOf } from "../../../shared/lintQuality";
 import { byReadingOrder, inferDirection, nodeOverlaps, OVERLAP_WEIGHT, overlapArea, tidyLayout } from "../../../shared/tidy";
-import { labelOffsetLimit } from "../../../shared/edgeTidy";
+import { labelOffsetLimit, separateParallel } from "../../../shared/edgeTidy";
 import { distToPolyline } from "../../../shared/labelGuard";
 import type { LibraryItem } from "../../../shared/library";
 import { resolveColor } from "../../../shared/palettes";
 import type { Routing } from "../../../shared/routing";
 import { isRecolorableIcon, recoloredIcon, restyledIcon } from "../library/iconColor";
 import { DEFAULT_ICON_SKETCH } from "../../../shared/iconSketch";
-import { loadStencil } from "../library/stencilContent";
+import { cloneForInsert, loadStencil } from "../library/stencilContent";
 import type { IconSketch } from "../../../shared/iconSketch";
 import { TRUE_COLOR_SVG_MIME, trueColorFile } from "../library/trueColor";
 import { svgToDataURL } from "../../../shared/recolor";
@@ -309,11 +311,65 @@ interface NodePlan {
  * Lay out a diagram with ELK and turn it into elements: zones (behind), arrows, then nodes.
  * `items` maps each node's `icon` reference to a library item (null: not found -> plain shape).
  */
+/** Space between a labelled grid's outer zone and the grid. */
+const GRID_OUTER_PAD = 20;
+
+/**
+ * Lay out the spec's grid (shared/gridLayout.ts) and describe how it joins the ELK layout: a
+ * placeholder node of the grid's size, the node and zone ids it holds, and `expand` to put its
+ * nodes and zones back at the placeholder's final position.
+ */
+function planGrid(spec: DiagramSpec, plans: Map<string, { width: number; height: number }>, titleSize: (label: string | undefined) => { titleHeight: number; minWidth: number }) {
+  const g = spec.grid!;
+  const zid = gridZoneIds(g);
+  const members = new Set(spec.nodes.filter((n) => n.cell).map((n) => n.id));
+  const zones = new Set((spec.zones ?? []).filter((z) => z.grid === g.id).map((z) => z.id));
+  const lay = layoutGrid(
+    g,
+    spec.nodes
+      .filter((n) => n.cell)
+      .map((n) => {
+        const [row, col] = n.cell!.split("/");
+        const p = plans.get(n.id)!;
+        return { id: n.id, width: p.width, height: p.height, row: row === "*" ? null : row, col: col === "*" ? null : col };
+      }),
+    { titleHeight: (l) => (l ? titleSize(l).titleHeight : 4), titleWidth: (l) => (l ? titleSize(l).minWidth : 0) },
+  );
+  const outerTitle = zid.outer ? titleSize(g.label).titleHeight : 0;
+  const pad = zid.outer ? GRID_OUTER_PAD : 0;
+  const box = { width: Math.max(lay.width + pad * 2, zid.outer ? titleSize(g.label).minWidth : 0), height: lay.height + pad * 2 + outerTitle };
+  const placeholder = `${g.id}::grid`;
+  return {
+    placeholder,
+    box,
+    parent: g.parent,
+    members,
+    zones,
+    inside: (id: string) => members.has(id) || zones.has(id),
+    expand(layout: LayoutResult): LayoutResult {
+      const at = layout.nodes.get(placeholder);
+      if (!at) return layout;
+      const ox = at.x + (at.width - lay.width) / 2;
+      const oy = at.y + outerTitle + pad;
+      const mv = (b: Box): Box => ({ x: b.x + ox, y: b.y + oy, width: b.width, height: b.height });
+      const nodes = new Map(layout.nodes);
+      const zonesOut = new Map(layout.zones);
+      nodes.delete(placeholder);
+      for (const [id, b] of lay.nodes) nodes.set(id, mv(b));
+      if (zid.outer) zonesOut.set(zid.outer, at);
+      for (const c of g.columns) zonesOut.set(zid.column(c.id), mv(lay.columns.get(c.id)!));
+      for (const r of g.rows) for (const c of g.columns) zonesOut.set(zid.cell(r.id, c.id), mv(lay.cells.get(cellKey(r.id, c.id))!));
+      return { ...layout, nodes, zones: zonesOut };
+    },
+  };
+}
+
 export async function buildDiagram(
   scene: readonly El[],
   st: AppState,
   spec: DiagramSpec,
   items: Record<string, LibraryItem | null>,
+  opts: { diagramId?: string } = {},
 ): Promise<DiagramBuild> {
   // The look (polished by default, professional or sketch) sets fonts, sizes, strokes, roughness
   // and, when polished, colours by node role and soft shadows.
@@ -447,13 +503,28 @@ export async function buildDiagram(
     return false;
   });
   const zoneSizes = new Map((spec.zones ?? []).map((z) => [z.id, zoneTitleSize(z.label, fonts.zone, look.zoneTitle.size)]));
+
+  // A grid (tiers x availability zones) is laid out on its own and enters ELK as one fixed node;
+  // its nodes and zones are put back after the layout, and arrows touching it are routed afterwards.
+  const grid = spec.grid ? planGrid(spec, plans, (l) => zoneTitleSize(l, fonts.zone, look.zoneTitle.size)) : null;
+  const elkNodes = spec.nodes.filter((n) => !grid?.members.has(n.id)).map((n) => ({ id: n.id, width: plans.get(n.id)!.width, height: plans.get(n.id)!.height, zone: n.zone }));
+  if (grid) elkNodes.push({ id: grid.placeholder, width: grid.box.width, height: grid.box.height, zone: grid.parent });
+  const elkEdges: LayoutInput["edges"] = [];
+  const seenPairs = new Set<string>();
+  for (const e of edges) {
+    const from = grid?.inside(e.from) ? grid.placeholder : e.from;
+    const to = grid?.inside(e.to) ? grid.placeholder : e.to;
+    if (from === to) continue;
+    const proxied = from !== e.from || to !== e.to;
+    if (proxied && seenPairs.has(`${from}>${to}`)) continue;
+    seenPairs.add(`${from}>${to}`);
+    const m = e.label && !proxied ? measureText(e.label, look.edgeLabel.size, fonts.edge) : null;
+    elkEdges.push({ id: e.id!, from, to, label: m ? { width: m.width + 8, height: m.height + 4 } : undefined });
+  }
   const best = await layoutBest({
-    nodes: spec.nodes.map((n) => ({ id: n.id, width: plans.get(n.id)!.width, height: plans.get(n.id)!.height, zone: n.zone })),
-    zones: (spec.zones ?? []).map((z) => ({ id: z.id, parent: z.parent, ...zoneSizes.get(z.id)! })),
-    edges: edges.map((e) => {
-      const m = e.label ? measureText(e.label, look.edgeLabel.size, fonts.edge) : null;
-      return { id: e.id!, from: e.from, to: e.to, label: m ? { width: m.width + 8, height: m.height + 4 } : undefined };
-    }),
+    nodes: elkNodes,
+    zones: (spec.zones ?? []).filter((z) => !grid?.zones.has(z.id)).map((z) => ({ id: z.id, parent: z.parent, ...zoneSizes.get(z.id)! })),
+    edges: elkEdges,
     direction: spec.direction,
     algorithm: spec.algorithm,
     spacing: spec.spacing,
@@ -490,6 +561,39 @@ export async function buildDiagram(
   layout = translateLayout(layout, origin);
   // The tidied routes (arrows moved apart, labels on free stretches) move with the layout.
   const tidied = new Map(translateRoutes(best.routes, layout.bounds.x - best.layout.bounds.x, layout.bounds.y - best.layout.bounds.y).map((r) => [r.id, r]));
+  if (grid) {
+    layout = grid.expand(layout);
+    // Arrows to or inside the grid: routed around every node and zone title now that all are
+    // placed; arrows leaving one side of a node take different ports. Zone ends route to the zone box.
+    const touching = edges.filter((e) => grid.inside(e.from) || grid.inside(e.to)).map((e) => ({ id: e.id!, from: e.from, to: e.to }));
+    const ends = new Map(layout.nodes);
+    for (const e of touching) for (const id of [e.from, e.to]) if (!ends.has(id) && layout.zones.has(id)) ends.set(id, layout.zones.get(id)!);
+    const walls = (spec.zones ?? []).flatMap((z) => {
+      const b = layout.zones.get(z.id);
+      const t = zoneSizes.get(z.id);
+      return b && t && z.label ? [{ x: b.x, y: b.y, width: Math.min(b.width, t.minWidth), height: t.titleHeight }] : [];
+    });
+    for (const [id, points] of routeEdges(touching, ends, walls)) {
+      const e = touching.find((x) => x.id === id)!;
+      tidied.set(id, { id, from: e.from, to: e.to, points });
+    }
+    // Runs that share a track (two arrows out of the ALB, an SQL arrow along a Traffic one) are
+    // slid apart like the ELK routes are; only the grid's arrows are taken from the result.
+    const nodeZone = new Map(spec.nodes.map((n) => [n.id, n.zone]));
+    const zoneParent = new Map((spec.zones ?? []).map((z) => [z.id, z.parent]));
+    const separated = separateParallel({
+      nodes: new Map([...layout.nodes].map(([id, b]) => [id, { ...b, zone: nodeZone.get(id) }])),
+      zones: new Map(
+        [...layout.zones].map(([id, b]) => {
+          const t = zoneSizes.get(id);
+          return [id, { ...b, parent: zoneParent.get(id), titleWidth: t ? t.minWidth : 0, titleHeight: t ? t.titleHeight : 0 }];
+        }),
+      ),
+      routes: [...tidied.values()],
+    });
+    const gridIds = new Set(touching.map((e) => e.id));
+    for (const r of separated) if (gridIds.has(r.id)) tidied.set(r.id, r);
+  }
 
   const byId: ElMap = new Map();
   // Zones, outermost first so inner ones draw on top.
@@ -503,13 +607,14 @@ export async function buildDiagram(
       box: layout.zones.get(z.id)!,
       stroke: c.stroke,
       fill: c.fill,
-      style: z.style,
+      style: c.style,
       strokeWidth: depths.get(z.id) === 0 ? look.zoneStroke.outer : look.zoneStroke.inner,
       roughness,
       fontFamily: fonts.zone,
       fontSize: look.zoneTitle.size,
       locked: z.locked,
       parent: z.parent,
+      ...(c.kind || z.grid ? { customData: { ...(c.kind ? { mydrawZoneKind: c.kind } : {}), ...(z.grid ? { mydrawGrid: z.grid } : {}) } } : {}),
     });
     added.push(...els);
     byId.set(z.id, els[0]);
@@ -693,6 +798,17 @@ export async function buildDiagram(
   for (let i = 0; i < added.length; i++) added[i] = withArrows(added[i]);
   added.push(...arrowEls, ...nodeEls.map(withArrows));
 
+  // Numbered flow: a badge on each stepped arrow, near its start (it covers the line, so it reads
+  // as part of the arrow), in the arrow's colour.
+  const contentBottom = boundsOf(added);
+  for (const e of edges) {
+    if (!e.step) continue;
+    const arrow = arrowEls.find((a) => a.id === e.id) as (El & { points: readonly (readonly [number, number])[] }) | undefined;
+    if (!arrow) continue;
+    const pts = arrow.points.map(([px, py]) => ({ x: arrow.x + px, y: arrow.y + py }));
+    added.push(...stepBadge(e.step, pointAlong(pts, BADGE_OFFSET), arrow.strokeColor, fonts.edge, { mydrawStepOf: e.id! }));
+  }
+
   let legend: El[] = [];
   if (spec.legend) {
     try {
@@ -701,12 +817,44 @@ export async function buildDiagram(
         fontFamily: font,
         roughness,
         ink,
+        icons: spec.legendIcons,
       });
       added.push(...legend);
     } catch (e) {
       // An empty legend must not throw away the whole diagram.
       warnings.push(`no legend drawn: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+
+  // What the steps do: badge + text rows under the diagram, left-aligned (the legend is on the right).
+  if (spec.steps?.length) {
+    const colors = new Map(edges.filter((e) => e.step).map((e) => [e.step!, (arrowEls.find((a) => a.id === e.id) as El | undefined)?.strokeColor ?? ink]));
+    const g = randomId();
+    let y = contentBottom.y + contentBottom.height + 40;
+    const x = contentBottom.x;
+    const rows: El[] = [];
+    spec.steps.forEach((text, i) => {
+      if (!text) return;
+      const [t] = convertToExcalidrawElements([{ type: "text", x: x + 36, y, text, fontSize: look.caption.size + 1, fontFamily: fonts.caption as never, strokeColor: ink }]);
+      rows.push(...stepBadge(i + 1, { x: x + 12, y: y + t.height / 2 }, colors.get(i + 1) ?? ink, fonts.edge), t);
+      y += Math.max(t.height, 24) + 10;
+    });
+    added.push(...rows.map((el) => ({ ...el, groupIds: [...el.groupIds, g], customData: { ...(el.customData ?? {}), mydrawSteps: true } }) as El));
+  }
+
+  // The diagram remembers its spec (on its first element) and every element its diagram id, so
+  // get_diagram_spec can return it and build_diagram {replace} can rebuild it cleanly.
+  const diagramId = opts.diagramId ?? `dgm-${randomId()}`;
+  const stored = storableSpec(spec);
+  for (let i = 0; i < added.length; i++) {
+    added[i] = { ...added[i], customData: { ...(added[i].customData ?? {}), mydrawDiagram: diagramId, ...(i === 0 ? { mydrawDiagramSpec: stored } : {}) } } as El;
+  }
+
+  const pages = spec.views?.length ? framedViews(added, spec, edges) : null;
+  if (pages) {
+    added.length = 0;
+    // The page frames belong to the diagram too (a rebuild removes them).
+    added.push(...pages.elements.map((e) => (e.type === "frame" ? ({ ...e, customData: { ...(e.customData ?? {}), mydrawDiagram: diagramId } } as El) : e)));
   }
 
   return {
@@ -718,11 +866,129 @@ export async function buildDiagram(
       edges: edges.map((e) => e.id),
       title: titleId,
       legend: legend[0]?.id ?? null,
+      diagram: diagramId,
+      ...(pages ? { pages: pages.names } : {}),
       bounds: boundsOf(added),
       quality: qualitySummary(best),
       warnings: warnings.length ? warnings : undefined,
     },
   };
+}
+
+// ---------- stored spec ----------
+
+/**
+ * The spec as it is kept in the drawing (and returned by get_diagram_spec): what the caller wrote,
+ * without the zones a grid adds (made again from the grid), the zone of grid nodes (their `cell`
+ * says it) and the position (a rebuild keeps the diagram where it is).
+ */
+export function storableSpec(spec: DiagramSpec): DiagramSpec {
+  const { x: _x, y: _y, ...rest } = spec;
+  void _x;
+  void _y;
+  return JSON.parse(
+    JSON.stringify({
+      ...rest,
+      zones: spec.zones?.filter((z) => !z.grid),
+      nodes: spec.nodes.map((n) => (n.cell ? { ...n, zone: undefined } : n)),
+    }),
+  ) as DiagramSpec;
+}
+
+/** Diagrams built by build_diagram in a scene: id -> {spec, elements}. */
+export function diagramsIn(scene: readonly El[]): Map<string, { spec: DiagramSpec | null; elements: El[] }> {
+  const out = new Map<string, { spec: DiagramSpec | null; elements: El[] }>();
+  for (const el of scene) {
+    const id = el.customData?.mydrawDiagram;
+    if (el.isDeleted || typeof id !== "string") continue;
+    const d = out.get(id) ?? { spec: null, elements: [] };
+    d.elements.push(el);
+    if (!d.spec && el.customData?.mydrawDiagramSpec) d.spec = el.customData.mydrawDiagramSpec as DiagramSpec;
+    out.set(id, d);
+  }
+  return out;
+}
+
+// ---------- views (pages) ----------
+
+const VIEW_FRAME_PAD = 40;
+const VIEW_GAP = 120;
+
+/**
+ * The built diagram as page frames: the whole diagram first, then one copy per view below it, in
+ * which arrows outside the view (and nodes no kept arrow touches) are faded. Copies get new ids;
+ * customData references (zone membership, subtitles, step badges) follow them.
+ */
+function framedViews(built: readonly El[], spec: DiagramSpec, edges: readonly DiagramEdge[]): { elements: El[]; names: string[] } {
+  const base = boundsOf(built);
+  const pageStep = base.height + VIEW_FRAME_PAD * 2 + VIEW_GAP;
+  const frame = (name: string, dy: number, els: readonly El[]): El[] => {
+    const frameId = randomId();
+    const [f] = convertToExcalidrawElements(
+      [{ type: "frame", id: frameId, x: base.x - VIEW_FRAME_PAD, y: base.y + dy - VIEW_FRAME_PAD, width: base.width + VIEW_FRAME_PAD * 2, height: base.height + VIEW_FRAME_PAD * 2, name, children: [] } as never],
+      { regenerateIds: false },
+    );
+    return [...els.map((e) => ({ ...e, frameId }) as El), f as El];
+  };
+
+  // Which node or edge each element belongs to.
+  const nodeIds = new Set(spec.nodes.map((n) => n.id));
+  const edgeIds = new Set(edges.map((e) => e.id!));
+  const nodeOfGroup = new Map<string, string>();
+  for (const el of built) if (nodeIds.has(el.id) && el.groupIds[0]) nodeOfGroup.set(el.groupIds[0], el.id);
+  const ownerOf = (el: El): string | undefined => {
+    if (nodeIds.has(el.id) || edgeIds.has(el.id)) return el.id;
+    const container = (el as El & { containerId?: string | null }).containerId;
+    if (container && (nodeIds.has(container) || edgeIds.has(container))) return container;
+    const stepOf = el.customData?.mydrawStepOf;
+    if (typeof stepOf === "string") return stepOf;
+    if (el.customData?.mydrawSteps || el.customData?.mydrawLegend) return undefined;
+    for (const g of el.groupIds) if (nodeOfGroup.has(g)) return nodeOfGroup.get(g);
+    return undefined;
+  };
+
+  const elements = frame(spec.title ?? "Overview", 0, built);
+  const names = [spec.title ?? "Overview"];
+  spec.views!.forEach((v, i) => {
+    const filtered = !!(v.kinds?.length || v.weights?.length || v.steps);
+    const keptEdges = new Set(
+      edges
+        .filter((e) => !filtered || (e.kind && v.kinds?.includes(e.kind)) || v.weights?.includes(e.weight ?? "normal") || (v.steps && e.step))
+        .map((e) => e.id!),
+    );
+    const keptNodes = new Set(v.nodes ?? []);
+    for (const e of edges) if (keptEdges.has(e.id!)) keptNodes.add(e.from).add(e.to);
+    const dy = pageStep * (i + 1);
+    const copy = cloneForInsert(built as never) as unknown as El[];
+    const idMap = new Map(built.map((el, k) => [el.id, copy[k].id]));
+    const moved = copy.map((el, k) => {
+      const orig = built[k];
+      const owner = ownerOf(orig);
+      const faded = owner !== undefined && !(edgeIds.has(owner) ? keptEdges.has(owner) : keptNodes.has(owner));
+      const data = el.customData ? Object.fromEntries(Object.entries(el.customData).map(([key, val]) => [key, typeof val === "string" && idMap.has(val) ? idMap.get(val) : val])) : el.customData;
+      return { ...el, y: el.y + dy, customData: data, ...(faded ? { opacity: Math.min(el.opacity, 18) } : {}) } as El;
+    });
+    elements.push(...frame(v.name, dy, moved));
+    names.push(v.name);
+  });
+  return { elements, names };
+}
+
+// ---------- numbered steps ----------
+
+/** A round badge with a step number, centred at `c`, grouped (customData.mydrawStep = n). */
+export function stepBadge(n: number, c: Point, color: string, fontFamily: number, data: Loose = {}): El[] {
+  const d = 22;
+  const [circle, text] = convertToExcalidrawElements([
+    { type: "ellipse", x: c.x - d / 2, y: c.y - d / 2, width: d, height: d, strokeColor: color, backgroundColor: color, fillStyle: "solid", strokeWidth: 1, roughness: 0 } as never,
+    { type: "text", x: c.x, y: c.y, text: String(n), fontSize: 13, fontFamily: fontFamily as never, strokeColor: "#ffffff", textAlign: "center" } as never,
+  ]);
+  const g = randomId();
+  const custom = { ...data, mydrawStep: n };
+  return [
+    { ...circle, groupIds: [g], customData: custom } as El,
+    { ...text, x: c.x - text.width / 2, y: c.y - text.height / 2, groupIds: [g], customData: custom } as El,
+  ];
 }
 
 // ---------- legend ----------
@@ -732,25 +998,41 @@ interface LegendEntry {
   sample: (x: number, y: number) => El[];
 }
 
+/** Which icons get a legend row: auto = only icons with a kind or without a caption (a captioned icon explains itself). */
+export type LegendIcons = "auto" | "all" | "none";
+export const LEGEND_ICONS: readonly LegendIcons[] = ["auto", "all", "none"];
+/** More rows than this go in two columns. */
+export const LEGEND_ROWS_PER_COLUMN = 8;
+
 /**
- * A legend for `elements`: one row per icon (by kind or stencil name), per shape kind and per arrow
- * kind. Placed under the elements, right-aligned, as one group (customData.mydrawLegend).
+ * A legend for `elements`: one row per arrow kind, shape kind and node role, and per icon (by kind
+ * or stencil name) as `icons` says. Placed under the elements, right-aligned, as one group
+ * (customData.mydrawLegend). Long legends use two columns.
  */
 export function buildLegend(
   elements: readonly El[],
-  o: { title: string; fontFamily: number; roughness: number; ink: string; x?: number; y?: number },
+  o: { title: string; fontFamily: number; roughness: number; ink: string; x?: number; y?: number; icons?: LegendIcons },
 ): El[] {
   const live = elements.filter((e) => !e.isDeleted && !e.customData?.mydrawLegend);
   const map: ElMap = new Map(live.map((e) => [e.id, e]));
   const entries = new Map<string, LegendEntry>();
+  /** Icon rows left out by `icons: auto`, used when nothing else would be in the legend. */
+  const skippedIcons = new Map<string, LegendEntry>();
+  const iconMode = o.icons ?? "auto";
   const ROW = 40;
   for (const el of live) {
     const kind = el.customData?.mydrawKind as string | undefined;
     if (isIconNode(el)) {
+      if (iconMode === "none") continue;
       const img = iconImageOf(el, map);
       const name = kind ?? (el.customData?.mydrawStencil as { name?: string } | undefined)?.name;
       if (!img || !name || entries.has(`i:${name}`)) continue;
-      entries.set(`i:${name}`, {
+      // Drawn shapes (cylinder, cloud, ...) are not icons: their role colours go in the role rows.
+      if (el.customData?.mydrawShape && !kind) continue;
+      const captioned = !!(boundTextOf(el, map) as (El & { text?: string }) | undefined)?.text?.trim();
+      const target = iconMode === "auto" && captioned && !kind ? skippedIcons : entries;
+      if (target.has(`i:${name}`)) continue;
+      target.set(`i:${name}`, {
         label: name,
         sample: (x, y) => {
           const k = 30 / Math.max(img.width, img.height);
@@ -759,7 +1041,9 @@ export function buildLegend(
           return [{ ...img, id: randomId(), x: x + (48 - w) / 2, y: y + (ROW - h) / 2, width: w, height: h, groupIds: [], locked: false } as El];
         },
       });
-    } else if (kind && isLinear(el)) {
+      continue;
+    }
+    if (kind && isLinear(el)) {
       if (entries.has(`a:${kind}`)) continue;
       const a = el as El & Loose;
       entries.set(`a:${kind}`, {
@@ -810,7 +1094,9 @@ export function buildLegend(
   const roles = new Map<string, El>();
   for (const el of live) {
     const role = el.customData?.mydrawRole;
-    if (isNodeRole(role) && !el.customData?.mydrawKind && (el.type === "rectangle" || el.type === "ellipse" || el.type === "diamond") && !isZone(el) && !roles.has(role)) roles.set(role, el);
+    // Icons keep their own colours, so a role swatch would match nothing on them.
+    const plainIcon = el.customData?.mydrawNode === "icon" && !el.customData?.mydrawShape;
+    if (isNodeRole(role) && !plainIcon && !el.customData?.mydrawKind && (el.type === "rectangle" || el.type === "ellipse" || el.type === "diamond") && !isZone(el) && !roles.has(role)) roles.set(role, el);
   }
   if (roles.size >= 2) {
     for (const [role, el] of roles) {
@@ -828,15 +1114,23 @@ export function buildLegend(
   // then the legend lists only the kinds (arrows and shapes).
   const iconKeys = [...entries.keys()].filter((k) => k.startsWith("i:"));
   if (iconKeys.length > MAX_LEGEND_ICONS && entries.size > iconKeys.length) for (const k of iconKeys) entries.delete(k);
+  // Only captioned icons: list them after all rather than refusing.
+  if (!entries.size) for (const [k, v] of [...skippedIcons].slice(0, MAX_LEGEND_ICONS)) entries.set(k, v);
   if (!entries.size) {
     throw new Error("nothing for a legend: no icons, and no shapes or arrows with a kind (set kind on nodes/edges, or data.mydrawKind)");
   }
 
   const pad = 16;
+  const SAMPLE = 48 + 12;
+  const COL_GAP = 24;
   const title = measureText(o.title, ZONE_FONT_SIZE, o.fontFamily);
-  const labels = [...entries.values()].map((e) => measureText(e.label, CAPTION_FONT_SIZE, o.fontFamily));
-  const width = Math.max(title.width, ...labels.map((l) => 48 + 12 + l.width)) + pad * 2;
-  const height = pad + title.height + 8 + entries.size * ROW + pad / 2;
+  const list = [...entries.values()];
+  const labels = list.map((e) => measureText(e.label, CAPTION_FONT_SIZE, o.fontFamily));
+  const columns = list.length > LEGEND_ROWS_PER_COLUMN ? 2 : 1;
+  const perColumn = Math.ceil(list.length / columns);
+  const colWidths = Array.from({ length: columns }, (_, c) => Math.max(0, ...labels.slice(c * perColumn, (c + 1) * perColumn).map((l) => SAMPLE + l.width)));
+  const width = Math.max(title.width, colWidths.reduce((s, w) => s + w, 0) + COL_GAP * (columns - 1)) + pad * 2;
+  const height = pad + title.height + 8 + perColumn * ROW + pad / 2;
   let x = o.x;
   let y = o.y;
   if (x === undefined || y === undefined) {
@@ -863,14 +1157,17 @@ export function buildLegend(
       { type: "text", x: x + pad, y: y + pad, text: o.title, fontSize: ZONE_FONT_SIZE, fontFamily: o.fontFamily as never, strokeColor: o.ink },
     ]),
   );
-  let rowY = y + pad + title.height + 8;
-  [...entries.values()].forEach((e, i) => {
-    out.push(...e.sample(x! + pad, rowY));
+  const top = y + pad + title.height + 8;
+  list.forEach((e, i) => {
+    const col = Math.floor(i / perColumn);
+    const colX = x! + pad + colWidths.slice(0, col).reduce((s, w) => s + w + COL_GAP, 0);
+    const rowY = top + (i % perColumn) * ROW;
+    out.push(...e.sample(colX, rowY));
     out.push(
       ...convertToExcalidrawElements([
         {
           type: "text",
-          x: x! + pad + 48 + 12,
+          x: colX + SAMPLE,
           y: rowY + (ROW - labels[i].height) / 2,
           text: e.label,
           fontSize: CAPTION_FONT_SIZE,
@@ -879,7 +1176,6 @@ export function buildLegend(
         },
       ]),
     );
-    rowY += ROW;
   });
   const g = randomId();
   return out.map((el) => ({ ...el, groupIds: [g], customData: { ...(el.customData ?? {}), mydrawLegend: true } }) as El);

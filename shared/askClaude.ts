@@ -2,6 +2,7 @@
 // `claude -p` arguments, the MCP config that points Claude at THIS app, and the parser for
 // `--output-format stream-json` lines. The process itself runs in app/src/askClaude.ts, the panel is
 // web/src/AskClaude.tsx. Tested in tests/askClaude.test.ts.
+import { conventionsFor } from "./conventions";
 import { DESIGN_GUIDE, POLISH_RECIPE, TIDY_RECIPE } from "./recipes";
 
 /** Model aliases `claude --model` accepts. Default Sonnet: fast and cheap for drawing edits. */
@@ -35,7 +36,14 @@ export interface AskRequest {
   /** Tidy only: keep the current arrangement (no whole-drawing auto_layout). */
   keep: boolean;
   model: AskModel;
+  /** Session id of the previous run in this box: the request continues that conversation (`claude --resume`). */
+  resume?: string;
+  /** Ask only: reply with an outline first and change nothing (the user answers "build it" in a follow-up). */
+  plan?: boolean;
 }
+
+/** Session ids as claude prints them (uuids); anything else is ignored. */
+const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9-]{7,79}$/;
 
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
 
@@ -51,7 +59,17 @@ export function normalizeAskRequest(raw: unknown): AskRequest {
   const id = str(d.id, 200);
   if (!id) throw new Error("No drawing is open.");
   const selection = Array.isArray(r.selection) ? r.selection.filter((s): s is string => typeof s === "string" && s.length > 0 && s.length <= 200).slice(0, MAX_SELECTION) : [];
-  return { mode, prompt, drawing: { id, title: str(d.title, 200) }, selection, keep: r.keep === true, model: normalizeAskSettings({ model: r.model }).model };
+  const resume = typeof r.resume === "string" && SESSION_ID.test(r.resume) ? r.resume : undefined;
+  return {
+    mode,
+    prompt,
+    drawing: { id, title: str(d.title, 200) },
+    selection,
+    keep: r.keep === true,
+    model: normalizeAskSettings({ model: r.model }).model,
+    ...(resume ? { resume } : {}),
+    ...(mode === "ask" && r.plan === true ? { plan: true } : {}),
+  };
 }
 
 const quote = (s: string) => JSON.stringify(s);
@@ -70,9 +88,23 @@ export function askSystemPrompt(req: AskRequest): string {
     "Look before you change: get_scene (and screenshot when the layout matters). Each tool call is one undo step for the user, so prefer a few well-aimed calls over many tiny ones.",
     "Do not save, export, copy to the clipboard, open or create drawings, or change the stencil library, themes or presets unless the user asked for exactly that.",
     "If the request is unclear, make the smallest reasonable change and say what you assumed. Finish with 1-3 short plain sentences for the user (no headings, no lists): what you changed, or why you changed nothing.",
-    "When you build or add to a diagram, make it look good: build_diagram's default look (polished) colours nodes by role, give nodes a `role` when the guess from label/icon would be wrong, set arrow `kind`s and `weight` primary on the main path, and follow this guide:",
+    "When you build or add to a diagram, make it look good: build_diagram's default look (polished) colours nodes by role, give nodes a `role` when the guess from label/icon would be wrong, set arrow `kind`s and `weight` primary on the main path, give zones a `kind`, and follow this guide:",
     DESIGN_GUIDE,
+    ...domainLines(req),
+    ...(req.resume ? ["This continues the conversation in the Ask box: the user's new message refers to what you did or proposed before. Look at the drawing again (get_scene) before changing it: the user may have edited it meanwhile."] : []),
+    ...(req.plan
+      ? [
+          "PLAN FIRST: do not change the drawing in this turn (reading it is fine). Reply with a short outline the user can check: the zones and how they nest, the nodes per zone, the main flow(s) and arrow kinds, and the look, in at most about 12 short lines (plain lines, no headings). End by asking whether to build it or what to change. The user's next message in this box continues from your outline.",
+        ]
+      : []),
   ].join("\n");
+}
+
+/** Conventions of the domains the request (or the drawing's title) is about: AWS, Kubernetes, networks, ... */
+function domainLines(req: AskRequest): string[] {
+  if (req.mode !== "ask") return [];
+  const text = conventionsFor(`${req.prompt}\n${req.drawing.title}`);
+  return text ? ["", text, "(More domains: the get_conventions tool.)"] : ["", "Domain conventions (AWS, Azure, GCP, Kubernetes, networks, flows) are available from the get_conventions tool when the drawing is about one of them."];
 }
 
 /** The user message for `claude -p`. */
@@ -88,6 +120,8 @@ export function askPrompt(req: AskRequest): string {
 
 /** MCP tools Claude may not call from the box: they change app-wide data, not the drawing. */
 export const ASK_DISALLOWED_TOOLS = ["delete_stencil", "delete_style_preset", "delete_theme", "add_stencil_file"].map((t) => `mcp__mydraw__${t}`);
+/** Tidy and Polish also may not edit raw elements or replace the scene: those leave arrows unbound and badges behind. */
+export const ASK_RECIPE_DISALLOWED_TOOLS = ["raw_update", "set_scene"].map((t) => `mcp__mydraw__${t}`);
 
 export interface McpLaunch {
   /** The Electron binary (run in Node mode). */
@@ -122,9 +156,11 @@ export function claudeArgs(req: AskRequest, mcpConfig: string): string[] {
     // No built-in tools (files, shell, web): the box only edits the drawing.
     "--tools=",
     "--allowedTools=mcp__mydraw",
-    `--disallowedTools=${ASK_DISALLOWED_TOOLS.join(",")}`,
+    `--disallowedTools=${[...ASK_DISALLOWED_TOOLS, ...(req.mode === "ask" ? [] : ASK_RECIPE_DISALLOWED_TOOLS)].join(",")}`,
     `--append-system-prompt=${askSystemPrompt(req)}`,
-    "--no-session-persistence",
+    // Sessions are kept (in Claude Code's own store, under the box's working folder) so a follow-up
+    // in the box can continue the conversation.
+    ...(req.resume ? [`--resume=${req.resume}`] : []),
   ];
 }
 
@@ -133,11 +169,11 @@ export function claudeArgs(req: AskRequest, mcpConfig: string): string[] {
 /** What the panel shows while Claude works. */
 export type AskEvent =
   | { type: "started"; runId: number; mode: AskRequest["mode"]; model: AskModel }
-  | { type: "init"; runId: number; model: string; mcp: "connected" | "failed" | "missing" }
+  | { type: "init"; runId: number; model: string; mcp: "connected" | "failed" | "missing"; sessionId?: string }
   | { type: "tool"; runId: number; id: string; name: string; label: string }
   | { type: "toolError"; runId: number; id: string; message: string }
   | { type: "text"; runId: number; text: string }
-  | { type: "done"; runId: number; ok: boolean; text: string; tools: number; costUsd?: number; seconds?: number }
+  | { type: "done"; runId: number; ok: boolean; text: string; tools: number; costUsd?: number; seconds?: number; sessionId?: string }
   | { type: "error"; runId: number; message: string; noClaude?: boolean }
   | { type: "cancelled"; runId: number };
 
@@ -202,7 +238,13 @@ export function parseStreamLine(line: string, runId: number): AskEvent[] {
   if (msg.type === "system" && msg.subtype === "init") {
     const servers = Array.isArray(msg.mcp_servers) ? msg.mcp_servers.filter(isObj) : [];
     const mine = servers.find((s) => s.name === "mydraw");
-    out.push({ type: "init", runId, model: typeof msg.model === "string" ? msg.model : "", mcp: !mine ? "missing" : mine.status === "connected" ? "connected" : "failed" });
+    out.push({
+      type: "init",
+      runId,
+      model: typeof msg.model === "string" ? msg.model : "",
+      mcp: !mine ? "missing" : mine.status === "connected" ? "connected" : "failed",
+      ...(typeof msg.session_id === "string" && SESSION_ID.test(msg.session_id) ? { sessionId: msg.session_id } : {}),
+    });
   } else if (msg.type === "assistant" && isObj(msg.message) && Array.isArray(msg.message.content)) {
     for (const c of msg.message.content) {
       if (!isObj(c)) continue;
@@ -224,6 +266,7 @@ export function parseStreamLine(line: string, runId: number): AskEvent[] {
       tools: 0,
       ...(typeof msg.total_cost_usd === "number" ? { costUsd: msg.total_cost_usd } : {}),
       ...(typeof msg.duration_ms === "number" ? { seconds: Math.round(msg.duration_ms / 1000) } : {}),
+      ...(typeof msg.session_id === "string" && SESSION_ID.test(msg.session_id) ? { sessionId: msg.session_id } : {}),
     });
   }
   return out;

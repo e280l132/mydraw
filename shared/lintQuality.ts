@@ -52,7 +52,8 @@ const SHAPES = new Set(["rectangle", "ellipse", "diamond"]);
 export function qualityInputOf(elements: readonly QEl[]): QualityInput & { arrows: Map<string, QEl> } {
   const live = elements.filter((e) => !e.isDeleted);
   const byId = new Map(live.map((e) => [e.id, e]));
-  const isLegend = (e: QEl) => !!e.customData?.mydrawLegend;
+  // Legend rows and step badges (which sit on their own arrow, shared/stepBadges.ts) are not nodes.
+  const isLegend = (e: QEl) => !!e.customData?.mydrawLegend || !!e.customData?.mydrawStep || !!e.customData?.mydrawSteps;
   const isZone = (e: QEl) => !!e.customData?.mydrawZone;
   const box = (e: QEl) => ({ x: e.x ?? 0, y: e.y ?? 0, width: Math.abs(e.width ?? 0), height: Math.abs(e.height ?? 0) });
 

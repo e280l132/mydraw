@@ -14,6 +14,8 @@ import type { LayoutAlgorithm, LayoutDirection } from "./layout";
 import type { Routing } from "./routing";
 import { SVG_SHAPES, type SvgShape } from "./shapeSvgs";
 import { NODE_ROLES, type NodeRole } from "./nodeRoles";
+import { inferZoneKind, neutralZoneStyle, ZONE_KIND_STYLES, ZONE_KINDS, type ZoneKind } from "./zoneKinds";
+import { gridZoneIds, parseCell, type DiagramGrid, type GridBand } from "./gridLayout";
 
 /** Excalidraw's own shapes, plus the drawn ones of shared/shapeSvgs.ts (cylinder for a database, ...). */
 /** A node's iconStyle (agent input), validated; undefined = the look decides. */
@@ -41,6 +43,8 @@ export interface DiagramNode {
   /** Hand-drawn icon / drawn shape (null = original). Default: hand-drawn with look "sketch". */
   iconStyle?: IconSketch | null;
   zone?: string;
+  /** Place in the diagram's grid: "row/column", or "row/*" across the whole row. Sets `zone` to that cell. */
+  cell?: string;
   /** Stroke (and label) color, hex. */
   color?: string;
   /** Fill color, hex. */
@@ -79,6 +83,10 @@ export interface DiagramZone {
   style?: LineStyle;
   /** Lock the zone so it isn't dragged by accident (default true). */
   locked?: boolean;
+  /** What the zone is (vpc, az, subnet-public, ...): sets its colours and dash. Guessed from the label when absent. */
+  kind?: ZoneKind;
+  /** Set on the zones a grid adds (its outer zone, columns and cells): the grid's id. */
+  grid?: string;
 }
 
 export interface DiagramEdge {
@@ -94,6 +102,8 @@ export interface DiagramEdge {
   routing?: Routing;
   /** Category shown in the legend, e.g. "Replication"; edges of one kind share its style (DiagramSpec.kinds). */
   kind?: string;
+  /** Step number of a flow (1, 2, ...): a numbered badge on the arrow; describe it in DiagramSpec.steps. */
+  step?: number;
   /** "primary" (thick), "normal" (default) or "secondary" (thin, faded). */
   weight?: EdgeWeight;
   /** Arrowhead at the end / start (Excalidraw's: triangle, dot, diamond, crowfoot_many, ..., or none). */
@@ -101,10 +111,24 @@ export interface DiagramEdge {
   tail?: Arrowhead;
 }
 
+export interface DiagramView {
+  name: string;
+  /** Arrow kinds to keep (e.g. ["Traffic"]). */
+  kinds?: string[];
+  /** Arrow weights to keep (e.g. ["primary"] for the main path). */
+  weights?: EdgeWeight[];
+  /** Keep the numbered steps' arrows. */
+  steps?: boolean;
+  /** Node ids to keep besides the ends of kept arrows. */
+  nodes?: string[];
+}
+
 export interface DiagramSpec {
   nodes: DiagramNode[];
   edges?: DiagramEdge[];
   zones?: DiagramZone[];
+  /** Rows x columns of zones (tiers x availability zones), laid out as a grid; nodes join a cell with `cell`. */
+  grid?: DiagramGrid;
   direction?: LayoutDirection;
   algorithm?: LayoutAlgorithm;
   /** Space between nodes, default 60. */
@@ -118,10 +142,18 @@ export interface DiagramSpec {
   y?: number;
   /** Add a legend (true, or a title). */
   legend?: boolean | string;
+  /** Icon rows in the legend: auto (default: only icons with a kind or no caption), all, none. */
+  legendIcons?: "auto" | "all" | "none";
   /** Title text above the diagram. */
   title?: string;
   /** A line under the title. */
   subtitle?: string;
+  /** What each numbered step does (steps[0] = step 1), listed with its badge under the diagram. */
+  steps?: string[];
+  /** Node `data` keys shown as the node's subtitle (when it has none), e.g. ["instanceType", "ip"]. */
+  showData?: string[];
+  /** Extra pages: the same diagram again in a frame per view, with only the view's arrows (and their nodes) at full strength. */
+  views?: DiagramView[];
   /** "polished" (default: colour by role, soft shadows), "professional" (plain, white nodes) or "sketch" (hand-drawn). */
   look?: LookName;
   /** Default shadow for every node (a node's own `shadow` wins). */
@@ -237,7 +269,8 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
     ids.add(id);
   };
 
-  const zones: DiagramZone[] = arr(r.zones, "zones").map((z, i) => {
+  // Zones a grid added in an earlier pass are made again from the grid (normalizing twice is fine).
+  const zones: DiagramZone[] = arr(r.zones, "zones").filter((z) => !(r.grid && typeof z.grid === "string")).map((z, i) => {
     const id = str(z.id, `zones[${i}].id`, true)!;
     claim(id, "zones");
     return {
@@ -248,6 +281,7 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
       fill: color(z.fill, `zone ${id} fill`),
       style: oneOf(z.style, STYLES, `zone ${id} style`),
       locked: z.locked === undefined ? undefined : z.locked !== false,
+      kind: oneOf(z.kind, ZONE_KINDS, `zone ${id} kind`),
     };
   });
   const nodes: DiagramNode[] = arr(r.nodes, "nodes").map((n, i) => {
@@ -262,6 +296,7 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
       iconColor: color(n.iconColor, `node ${id} iconColor`),
       iconStyle: iconStyleOf(n.iconStyle, id),
       zone: str(n.zone, `node ${id} zone`),
+      cell: str(n.cell, `node ${id} cell`),
       color: color(n.color, `node ${id} color`),
       fill: color(n.fill, `node ${id} fill`),
       width: num(n.width, `node ${id} width`),
@@ -305,11 +340,38 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
       arrow: oneOf(e.arrow, ["end", "both", "none"] as const, `edge ${id} arrow`),
       routing: oneOf(e.routing, ROUTINGS, `edge ${id} routing`),
       kind: str(e.kind, `edge ${id} kind`),
+      step: stepOf(e.step, `edge ${id} step`),
       weight: oneOf(e.weight, EDGE_WEIGHTS, `edge ${id} weight`),
       head: oneOf(e.head, ARROWHEADS, `edge ${id} head`),
       tail: oneOf(e.tail, ARROWHEADS, `edge ${id} tail`),
     };
   });
+  const grid = gridOf(r.grid, zones, claim);
+  if (grid) {
+    zones.push(...gridZones(grid));
+    const zid = gridZoneIds(grid);
+    for (const n of nodes) {
+      if (!n.cell) continue;
+      const { row, col } = parseCell(n.cell, grid);
+      // A cell; across a column: that column's band; across a row: between the columns (grid or parent).
+      const zone = row && col ? zid.cell(row, col) : col ? zid.column(col) : (zid.outer ?? grid.parent);
+      if (n.zone && n.zone !== zone) throw new Error(`node "${n.id}": give either zone or cell, not both`);
+      n.cell = `${row ?? "*"}/${col ?? "*"}`;
+      n.zone = zone;
+    }
+  } else {
+    const stray = nodes.find((n) => n.cell);
+    if (stray) throw new Error(`node "${stray.id}" has a cell but the diagram has no grid`);
+  }
+  const showData = r.showData === undefined ? undefined : Array.isArray(r.showData) && r.showData.every((k) => typeof k === "string") ? (r.showData as string[]) : (() => { throw new Error("showData must be an array of data keys"); })();
+  if (showData?.length) {
+    for (const n of nodes) {
+      if (n.subtitle || !n.data) continue;
+      const parts = showData.map((k) => n.data![k]).filter((v) => v !== undefined && v !== null && v !== "").map(String);
+      if (parts.length) n.subtitle = parts.join(" · ");
+    }
+  }
+  const views = viewsOf(r.views, new Set(nodes.map((n) => n.id)));
   const zoneIds = new Set(zones.map((z) => z.id));
   for (const n of nodes) if (n.zone && !zoneIds.has(n.zone)) throw new Error(`node "${n.id}": no zone "${n.zone}"`);
   for (const z of zones) if (z.parent && !zoneIds.has(z.parent)) throw new Error(`zone "${z.id}": no parent zone "${z.parent}"`);
@@ -318,6 +380,8 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
     nodes,
     edges,
     zones,
+    ...(grid ? { grid } : {}),
+    ...(views ? { views } : {}),
     direction: oneOf(r.direction, DIRECTIONS, "direction"),
     algorithm: oneOf(r.algorithm, ALGORITHMS, "algorithm"),
     spacing: num(r.spacing, "spacing"),
@@ -326,12 +390,91 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
     x: num(r.x, "x"),
     y: num(r.y, "y"),
     legend: typeof r.legend === "string" ? r.legend : r.legend === true ? true : undefined,
+    legendIcons: oneOf(r.legendIcons, ["auto", "all", "none"] as const, "legendIcons"),
     title: str(r.title, "title"),
     subtitle: str(r.subtitle, "subtitle"),
+    steps: stepsOf(r.steps),
     look: oneOf(r.look, LOOKS_LIST, "look"),
     shadow: shadowIn(r.shadow, "shadow"),
     kinds: kindsOf(r.kinds),
   };
+}
+
+function viewsOf(v: unknown, nodeIds: ReadonlySet<string>): DiagramView[] | undefined {
+  if (v === undefined || v === null) return undefined;
+  return arr(v, "views").map((x, i) => {
+    const strs = (a: unknown, what: string) => (a === undefined ? undefined : Array.isArray(a) && a.every((s) => typeof s === "string") ? (a as string[]) : (() => { throw new Error(`views[${i}].${what} must be an array of strings`); })());
+    const nodes = strs(x.nodes, "nodes");
+    for (const n of nodes ?? []) if (!nodeIds.has(n)) throw new Error(`views[${i}]: no node "${n}"`);
+    const weights = strs(x.weights, "weights");
+    for (const w of weights ?? []) if (!(EDGE_WEIGHTS as readonly string[]).includes(w)) throw new Error(`views[${i}].weights: ${w} is not one of ${EDGE_WEIGHTS.join(", ")}`);
+    return { name: str(x.name, `views[${i}].name`, true)!, kinds: strs(x.kinds, "kinds"), weights: weights as EdgeWeight[] | undefined, steps: x.steps === true ? true : undefined, nodes };
+  });
+}
+
+function stepsOf(v: unknown): string[] | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (!Array.isArray(v) || !v.every((t) => typeof t === "string")) throw new Error("steps must be an array of strings (steps[0] describes step 1)");
+  return v.map((t) => t.trim());
+}
+
+function stepOf(v: unknown, what: string): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > 99) throw new Error(`${what} must be a whole number from 1 to 99`);
+  return v;
+}
+
+/** Untrusted `grid` -> a validated grid; its ids (and the zone ids it adds) are claimed. */
+function gridOf(v: unknown, zones: readonly DiagramZone[], claim: (id: string, what: string) => void): DiagramGrid | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "object" || Array.isArray(v)) throw new Error("grid must be an object {id, rows, columns}");
+  const g = v as Loose;
+  const id = str(g.id ?? "grid", "grid id", true)!;
+  const bands = (list: unknown, what: string): GridBand[] => {
+    if (!Array.isArray(list) || !list.length) throw new Error(`grid ${what} must be a non-empty array of {id, label, kind}`);
+    const seen = new Set<string>();
+    return list.map((b, i) => {
+      const o = (typeof b === "string" ? { id: b, label: b } : b) as Loose;
+      const bid = str(o.id, `grid ${what}[${i}].id`, true)!;
+      if (bid.includes("/") || bid === "*") throw new Error(`grid ${what} id "${bid}" may not contain "/" or be "*"`);
+      if (seen.has(bid)) throw new Error(`grid ${what} id "${bid}" is used twice`);
+      seen.add(bid);
+      return { id: bid, label: str(o.label ?? o.name, `grid ${what} ${bid} label`), kind: oneOf(o.kind, ZONE_KINDS, `grid ${what} ${bid} kind`) };
+    });
+  };
+  const grid: DiagramGrid = {
+    id,
+    label: str(g.label, "grid label"),
+    parent: str(g.parent, "grid parent"),
+    rows: bands(g.rows, "rows"),
+    columns: bands(g.columns, "columns"),
+  };
+  if (grid.parent && !zones.some((z) => z.id === grid.parent)) throw new Error(`grid: no parent zone "${grid.parent}"`);
+  if (g.cells && typeof g.cells === "object" && !Array.isArray(g.cells)) {
+    grid.cells = {};
+    for (const [k, label] of Object.entries(g.cells as Loose)) {
+      const { row, col } = parseCell(k, grid);
+      if (!col || !row) throw new Error(`grid cells: "${k}" must name one row and one column`);
+      grid.cells[`${row}/${col}`] = str(label, `grid cell ${k}`) ?? "";
+    }
+  }
+  for (const z of gridZones(grid)) claim(z.id, "zones");
+  return grid;
+}
+
+/** The zones a grid adds: an outer zone when it has a label, a band per column, a box per cell. */
+export function gridZones(g: DiagramGrid): DiagramZone[] {
+  const zid = gridZoneIds(g);
+  const out: DiagramZone[] = [];
+  if (zid.outer) out.push({ id: zid.outer, label: g.label, parent: g.parent, grid: g.id });
+  for (const c of g.columns) out.push({ id: zid.column(c.id), label: c.label, parent: zid.outer ?? g.parent, kind: c.kind ?? "az", grid: g.id });
+  for (const c of g.columns) {
+    for (const r of g.rows) {
+      const label = g.cells?.[`${r.id}/${c.id}`] || r.label;
+      out.push({ id: zid.cell(r.id, c.id), label, parent: zid.column(c.id), kind: r.kind ?? inferZoneKind(r.label) ?? "tier", grid: g.id });
+    }
+  }
+  return out;
 }
 
 /** Untrusted `kinds` -> validated kind styles. */
@@ -368,15 +511,33 @@ export function zoneDepths(zones: readonly DiagramZone[]): Map<string, number> {
   return depth;
 }
 
-/** Border and fill colors for each zone: given ones, else the palette in turn. */
-export function zoneColors(zones: readonly DiagramZone[]): Map<string, { stroke: string; fill: string }> {
-  const out = new Map<string, { stroke: string; fill: string }>();
-  let i = 0;
+export interface ZoneLook {
+  stroke: string;
+  fill: string;
+  style: LineStyle;
+  /** The kind that decided the look (given or guessed from the label), if any. */
+  kind?: ZoneKind;
+}
+
+/**
+ * Border, fill and dash for each zone. A colour given on the zone wins (fill = its tint); else
+ * the zone's kind, given or guessed from its label (VPC, AZ, public subnet, ...: shared/zoneKinds.ts);
+ * else a neutral slate by depth. Zones no longer take palette colours in turn: a rainbow of zones
+ * says nothing about them.
+ */
+export function zoneColors(zones: readonly DiagramZone[]): Map<string, ZoneLook> {
+  const out = new Map<string, ZoneLook>();
+  const depths = zoneDepths(zones);
   for (const z of zones) {
-    const [ps, pf] = ZONE_PALETTE[i++ % ZONE_PALETTE.length];
-    const stroke = z.color && z.color !== "transparent" ? z.color : ps;
-    const fill = z.fill ?? (z.color && z.color !== "transparent" ? tint(z.color) : pf);
-    out.set(z.id, { stroke, fill });
+    const kind = z.kind ?? inferZoneKind(z.label);
+    const base = kind ? ZONE_KIND_STYLES[kind] : neutralZoneStyle(depths.get(z.id) ?? 0);
+    const given = z.color && z.color !== "transparent" ? z.color : undefined;
+    out.set(z.id, {
+      stroke: given ?? base.stroke,
+      fill: z.fill ?? (given ? tint(given) : base.fill),
+      style: z.style ?? base.style,
+      ...(kind ? { kind } : {}),
+    });
   }
   return out;
 }

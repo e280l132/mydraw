@@ -3,7 +3,10 @@
 // is one undo step and never overwrites edits the user made in the meantime (elements are merged
 // by id).
 import { detachedLabels, type GuardEl } from "../../../shared/labelGuard";
-import { customFonts, fontIdByName, fontStatus } from "../fontRegistry";
+import { customFonts, ensureFontNamesLoaded, ensureFontsLoaded, fontIdByName, fontStatus } from "../fontRegistry";
+import { lookFontNames } from "../../../shared/diagramLook";
+import { badgeFixes } from "../../../shared/stepBadges";
+import { inferZoneKind, isZoneKind, ZONE_KIND_STYLES, ZONE_KINDS } from "../../../shared/zoneKinds";
 import { CaptureUpdateAction, convertToExcalidrawElements, newElementWith, restoreElements } from "@excalidraw/excalidraw";
 import { normalizeSpec, tint, uniquifySpec, type DiagramSpec } from "../../../shared/diagram";
 import { isFlowchart, parseMermaidFlowchart } from "../../../shared/mermaid";
@@ -40,7 +43,7 @@ import { type IconSketch, normalizeIconSketch } from "../../../shared/iconSketch
 import { colorOfElement } from "../library/pickColor";
 import { cloneForInsert, loadStencil } from "../library/stencilContent";
 import { ALIGN_EDGES, alignMoves, distributeMoves, isAlignEdge, type UnitMove } from "../../../shared/arrange";
-import { autoLayout, tidyDrawing, buildDiagram, buildLegend, loadIconImage, makeIconNode, makeZone, zoneTitleSize } from "./diagram";
+import { autoLayout, tidyDrawing, buildDiagram, buildLegend, diagramsIn, loadIconImage, makeIconNode, makeZone, zoneTitleSize } from "./diagram";
 import { trueColorFile } from "../library/trueColor";
 import { prepareSerialize, serializeScene } from "../scene";
 import {
@@ -124,7 +127,36 @@ function commit(api: ExcalidrawImperativeAPI, changed: readonly El[], added: rea
   // Excalidraw orders by fractional index; dropping the index of moved/new elements makes it
   // re-derive them from the array order.
   const placed = at >= 0 ? [...current.slice(0, at), ...added.map((e) => ({ ...e, index: null }) as El), ...current.slice(at)] : [...current, ...added];
-  api.updateScene({ elements: keepLabelsOnArrows(placed, [...changed, ...added]), captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+  api.updateScene({ elements: keepBadgesOnArrows(keepLabelsOnArrows(placed, [...changed, ...added]), [...changed, ...added]), captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+}
+
+/** Numbered step badges follow the arrows this change touched (shared/stepBadges.ts). */
+function keepBadgesOnArrows(elements: El[], touched: readonly El[]): El[] {
+  const arrowIds = new Set(touched.filter((e) => e.type === "arrow").map((e) => e.id));
+  if (!arrowIds.size) return elements;
+  const fixes = badgeFixes(elements as never, arrowIds);
+  if (!fixes.size) return elements;
+  return elements.map((e) => (fixes.has(e.id) ? newElementWith(e, fixes.get(e.id)! as never) : e));
+}
+
+/**
+ * Swap a diagram for its rebuild in one undo step, at the old diagram's place in the stacking order:
+ * elements whose id the rebuild uses again are replaced (version bumped), the rest are deleted.
+ */
+function commitReplace(api: ExcalidrawImperativeAPI, old: readonly El[], built: readonly El[]): void {
+  const oldById = new Map(old.map((e) => [e.id, e]));
+  const builtIds = new Set(built.map((e) => e.id));
+  const current = api.getSceneElementsIncludingDeleted();
+  const at = current.findIndex((e) => oldById.has(e.id));
+  const before = current.slice(0, Math.max(0, at)).filter((e) => !oldById.has(e.id) && !builtIds.has(e.id));
+  const after = current.slice(Math.max(0, at)).filter((e) => !oldById.has(e.id) && !builtIds.has(e.id));
+  const removed = old.filter((e) => !builtIds.has(e.id)).map((e) => newElementWith(e, { isDeleted: true }));
+  const fresh = built.map((e) => {
+    const was = oldById.get(e.id) ?? current.find((c) => c.id === e.id);
+    return { ...e, index: null, ...(was ? { version: was.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) } : {}) } as El;
+  });
+  const elements = [...before, ...removed.map((e) => ({ ...e, index: null }) as El), ...fresh, ...after];
+  api.updateScene({ elements: keepBadgesOnArrows(keepLabelsOnArrows(elements, fresh), fresh), captureUpdate: CaptureUpdateAction.IMMEDIATELY });
 }
 
 /**
@@ -388,7 +420,31 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
 
   // ---------- dispatch ----------
 
+  /**
+   * Font names and ids a command may measure text in: every look's fonts, any `fontFamily` in the
+   * parameters, and the active drawing's current font. Text is measured when it is built, and a font
+   * that has not loaded yet is measured with a fallback (the text box ends up too narrow).
+   */
+  function commandFonts(p: unknown): { names: string[]; ids: number[] } {
+    const names = lookFontNames();
+    const ids: number[] = [];
+    const walk = (v: unknown, depth: number): void => {
+      if (depth > 6 || !v || typeof v !== "object") return;
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        if (k === "fontFamily" && typeof x === "string") names.push(x);
+        else if (k === "fontFamily" && typeof x === "number") ids.push(x);
+        else walk(x, depth + 1);
+      }
+    };
+    walk(p, 0);
+    const current = host.api(host.activeId())?.getAppState().currentItemFontFamily;
+    if (typeof current === "number") ids.push(current);
+    return { names, ids };
+  }
+
   async function exec(method: string, p: Params): Promise<unknown> {
+    const fonts = commandFonts(p);
+    await Promise.all([ensureFontNamesLoaded(fonts.names), ensureFontsLoaded(fonts.ids)]);
     switch (method) {
       case "list_drawings":
         return host.tabs().map((t) => tabSummary(t.id));
@@ -1015,8 +1071,33 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
         // Main has already validated the spec and resolved icons; normalize again so the renderer
         // never trusts its input blindly.
         let spec = normalizeSpec(p.spec);
+        // replace: rebuild an earlier diagram (its id, or true = the only one) in its place, as one undo step.
+        let old: { id: string; elements: El[] } | null = null;
+        if (p.replace !== undefined && p.replace !== false) {
+          const all = diagramsIn(api.getSceneElements());
+          const id = typeof p.replace === "string" ? p.replace : all.size === 1 ? [...all.keys()][0] : null;
+          if (!id) throw new Error(all.size ? `replace: give the diagram id (${[...all.keys()].join(", ")})` : "replace: this drawing has no diagram built by build_diagram");
+          const d = all.get(id);
+          if (!d) throw new Error(`replace: no diagram "${id}" (diagrams: ${[...all.keys()].join(", ") || "none"})`);
+          old = { id, elements: d.elements };
+          if (spec.x === undefined && spec.y === undefined) {
+            const b = boundsOf(d.elements.filter((e) => e.type !== "frame"));
+            spec = { ...spec, x: b.x, y: b.y };
+          }
+        }
         if (p.renameOnClash) spec = uniquifySpec(spec, new Set(api.getSceneElementsIncludingDeleted().map((e) => e.id)));
-        return buildAndCommit(api, spec, (p.items ?? {}) as Record<string, LibraryItem | null>, p.zoom !== false);
+        return buildAndCommit(api, spec, (p.items ?? {}) as Record<string, LibraryItem | null>, p.zoom !== false, old);
+      }
+
+      case "get_diagram_spec": {
+        const { api } = await target(p);
+        const all = diagramsIn(api.getSceneElements());
+        const id = typeof p.diagram === "string" ? p.diagram : all.size === 1 ? [...all.keys()][0] : null;
+        if (!id) return { diagrams: [...all].map(([k, d]) => ({ diagram: k, title: d.spec?.title ?? null, elements: d.elements.length })) };
+        const d = all.get(id);
+        if (!d) throw new Error(`no diagram "${id}" (diagrams: ${[...all.keys()].join(", ") || "none"})`);
+        if (!d.spec) throw new Error(`diagram "${id}" lost its spec (the element that held it was deleted)`);
+        return { diagram: id, spec: d.spec, note: "Edit the spec and call build_diagram with it and replace: the diagram id. Hand edits made since the last build are not in the spec." };
       }
 
       case "mermaid_to_scene": {
@@ -1075,6 +1156,7 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
           ink: st.currentItemStrokeColor,
           x: typeof p.x === "number" ? p.x : undefined,
           y: typeof p.y === "number" ? p.y : undefined,
+          icons: p.icons === "all" || p.icons === "none" ? p.icons : "auto",
         });
         commit(api, p.replace === false ? [] : old.map((e) => newElementWith(e, { isDeleted: true })), legend);
         return { legend: legend[0].id, ids: legend.map((e) => e.id), replaced: p.replace === false ? 0 : old.length, bounds: boundsOf(legend) };
@@ -1082,6 +1164,11 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
 
       case "auto_layout": {
         const { api } = await target(p);
+        // A grid (subnets x AZs) is laid out by build_diagram; ELK would flatten it.
+        const gridZones = api.getSceneElements().filter((e) => typeof e.customData?.mydrawGrid === "string");
+        if (gridZones.length && p.force !== true && (!Array.isArray(p.ids) || gridZones.some((z) => (p.ids as unknown[]).includes(z.id)))) {
+          throw new Error("this drawing has a grid diagram (subnets x availability zones); auto_layout would flatten the grid. To re-arrange it, get_diagram_spec, edit the spec and build_diagram {replace}; for small fixes use tidy / align / route_around. (force: true runs it anyway.)");
+        }
         const r = await autoLayout(api.getSceneElements(), api.getAppState(), {
           ids: Array.isArray(p.ids) ? strArray(p.ids, "ids") : undefined,
           direction: p.direction as never,
@@ -1107,9 +1194,13 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
     }
   }
 
-  async function buildAndCommit(api: ExcalidrawImperativeAPI, spec: DiagramSpec, items: Record<string, LibraryItem | null>, zoom: boolean) {
-    const b = await buildDiagram(api.getSceneElementsIncludingDeleted(), api.getAppState(), spec, items);
-    commit(api, [], b.added);
+  async function buildAndCommit(api: ExcalidrawImperativeAPI, spec: DiagramSpec, items: Record<string, LibraryItem | null>, zoom: boolean, replace: { id: string; elements: El[] } | null = null) {
+    const gone = new Set(replace?.elements.map((e) => e.id) ?? []);
+    // The replaced diagram's ids are free again (deleted elements keep their ids, so they are left out entirely).
+    const scene = api.getSceneElementsIncludingDeleted().filter((e) => !gone.has(e.id));
+    const b = await buildDiagram(scene, api.getAppState(), spec, items, replace ? { diagramId: replace.id } : {});
+    if (replace) commitReplace(api, replace.elements, b.added);
+    else commit(api, [], b.added);
     // Files after the scene update, so Excalidraw starts loading them (see CLAUDE.md).
     if (b.files.length) api.addFiles(b.files);
     if (zoom) api.scrollToContent(b.added as ExcalidrawElement[], { fitToContent: true, animate: false });
@@ -1145,15 +1236,20 @@ export function createAgentExecutor(host: AgentHost, reply: (r: { id: number; ok
       const zs = new Set(members.map((m) => zoneOf(m)));
       if (zs.size === 1) parent = [...zs][0];
     }
-    const stroke = typeof p.color === "string" ? requireColor(p.color, "color") : "#1971c2";
-    const fillColor = typeof p.fill === "string" ? requireColor(p.fill, "fill") : tint(stroke);
+    if (p.kind !== undefined && !isZoneKind(p.kind)) throw new Error(`kind must be one of ${ZONE_KINDS.join(", ")}`);
+    // Colour given, else the kind's look (given or read from the label), else the old blue.
+    const kind = isZoneKind(p.kind) ? p.kind : inferZoneKind(label ?? undefined);
+    const kindLook = kind && typeof p.color !== "string" ? ZONE_KIND_STYLES[kind] : undefined;
+    const stroke = typeof p.color === "string" ? requireColor(p.color, "color") : (kindLook?.stroke ?? "#1971c2");
+    const fillColor = typeof p.fill === "string" ? requireColor(p.fill, "fill") : (kindLook?.fill ?? tint(stroke));
     const zone = makeZone({
       id,
       label,
       box,
       stroke,
       fill: fillColor,
-      style: p.style === "dashed" || p.style === "dotted" ? p.style : "solid",
+      ...(kind ? { customData: { mydrawZoneKind: kind } } : {}),
+      style: p.style === "dashed" || p.style === "dotted" ? p.style : (kindLook?.style ?? "solid"),
       strokeWidth: parent ? 1 : 2,
       roughness: st.currentItemRoughness,
       fontFamily: font,

@@ -18,6 +18,7 @@ import { AGENT_EXPORT_FORMATS, CONTROL_FILE, type ControlInfo, type RpcResponse 
 import { APP_VERSION } from "../../shared/appVersion";
 import { buildId } from "../../shared/buildId";
 import { POLISH_RECIPE, TIDY_RECIPE } from "../../shared/recipes";
+import { CONVENTION_DOMAINS, conventionText, matchConventions } from "../../shared/conventions";
 
 const VERSION = APP_VERSION;
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -208,7 +209,7 @@ const server = new McpServer(
       "Coordinates are scene pixels (y grows downward). Each tool call is one undo step for the user.",
       "For a whole diagram use build_diagram (nodes, edges, zones -> automatic ELK layout, icons, elbow arrows, legend) or mermaid_to_scene / apply_template; then refine with the element tools.",
       "Icons (AWS, Azure, GCP, Kubernetes, network, logos) come from the stencil library: search_stencils then place_stencil (or `icon` on a build_diagram node); connect arrows to the returned node id. Icons can be hand-drawn: iconStyle hand-drawn on place_stencil / update_elements / build_diagram nodes (build_diagram look sketch does it for every icon).",
-      "Zones (VPC, subnet, VLAN, ...) are locked tinted boxes; moving a zone moves what is inside it.",
+      "Zones (VPC, subnet, VLAN, ...) are locked tinted boxes; moving a zone moves what is inside it. Give zones a `kind` (vpc, az, subnet-public, subnet-private, cluster, network, ...) for conventional colours; subnets per availability zone go in a build_diagram `grid` (rows = tiers, columns = AZs). get_conventions has the drawing conventions for AWS, Azure, GCP, Kubernetes, networks and software flows.",
       "Tidying: `tidy` keeps the arrangement (lines up rows/columns, evens gaps, fixes overlaps); auto_layout re-lays out (onlyIfBetter: true keeps a drawing that is already good); align (edge left|center|right|top|middle|bottom, optional `to`) and distribute (axis, optional gap) for peers. Each id moves with its group, label or zone contents. Judge by meaning too (entry points first, data stores last, peers in a row): the tidy_diagram prompt has the full recipe.",
       "Draw clean diagrams: about 40 arrows at most, one arrow to a zone instead of many to its nodes, labels only on short arrows, one colour per kind of relationship. After build_diagram read `quality` (and `advice`), run lint_diagram (it finds arrows on top of each other or through nodes, labels in the way; fix:true repairs labels and re-routes) and look at a screenshot before telling the user it is done. Save the drawing to a file when it is finished: an unsaved drawing is lost if the app quits.",
       "Styling beyond Excalidraw's own: fillStyle patterns (hachure, cross-hatch, solid, zigzag, zigzag-line, dots, dashed), gradient fills on rectangles/diamonds/ellipses (`gradient`: a preset like \"sky\" or {from, to, kind: linear|radial, angle}), extra dash styles (strokeStyle short-dash, long-dash, dash-dot, dash-dot-dot, fine-dot, sparse-dot), shadow kinds (drop, inner, layered, extrude = 3D, contact = ground; presets soft, drop, lifted, hard, glow, long, inner, elevated, neon, extrude, float) and text outlines. They work in add_elements, update_elements, build_diagram nodes/edges/zones and style presets, and show in every export.",
@@ -282,6 +283,27 @@ function tool(
 }
 
 const call = (method: string) => (args: Args) => rpc(method, args);
+
+// conventions (answered here: no app needed)
+tool(
+  "get_conventions",
+  "How architecture diagrams of a domain are usually drawn, in build_diagram terms (zone kinds and nesting, grid of subnets x availability zones, which icons, arrow kinds, what to leave out). Give `domain`, or `about` (the request text) to get the matching guides. Read it before building a cloud, Kubernetes or network diagram.",
+  { domain: z.enum(CONVENTION_DOMAINS).optional(), about: z.string().optional().describe("Text to match domains against, e.g. the user's request") },
+  async (args: Args) => {
+    const domains = typeof args.domain === "string" ? [args.domain as (typeof CONVENTION_DOMAINS)[number]] : matchConventions(String(args.about ?? ""));
+    if (!domains.length) return `No domain matched. Domains: ${CONVENTION_DOMAINS.join(", ")}.`;
+    return domains.map(conventionText).join("\n\n");
+  },
+  { readOnlyHint: true },
+);
+
+tool(
+  "get_diagram_spec",
+  "The spec a diagram was built from (build_diagram keeps it in the drawing), to edit and rebuild with build_diagram {replace: <diagram id>}. Without `diagram` and with several diagrams in the drawing, lists them. Hand edits made after the build are not in the spec.",
+  { drawing, diagram: z.string().optional().describe("Diagram id (build_diagram's result `diagram`); default the only one") },
+  call("get_diagram_spec"),
+  { readOnlyHint: true },
+);
 
 // files / drawings
 tool("list_drawings", "List open drawings (tabs): id, title, file path, unsaved changes, which is active, element count.", {}, call("list_drawings"), { readOnlyHint: true });
@@ -504,6 +526,7 @@ const node = z
     fillStyle: z.enum(["solid", "hachure", "cross-hatch", "zigzag", "zigzag-line", "dots", "dashed"]).optional().describe("Shape nodes: fill pattern (default solid)"),
     strokeStyle: lineStyle.optional().describe("Shape nodes: border style (default solid)"),
     zone: z.string().optional().describe("Id of the zone the node sits in"),
+    cell: z.string().optional().describe('Place in the grid instead of zone: "rowId/columnId" (e.g. "web/az-a"); "rowId/*" across a whole row or "*/columnId" across a whole column (a load balancer spanning the AZs: drawn between the two middle AZs)'),
     color: z.string().optional().describe("Stroke/text color (hex)"),
     fill: z.string().optional().describe("Fill color (hex), default white"),
     width: z.number().optional(),
@@ -525,6 +548,12 @@ const zone = z.object({
   fill: z.string().optional(),
   style: lineStyle.optional(),
   locked: z.boolean().optional().describe("Default true (users can't drag it by accident)"),
+  kind: z
+    .enum(["cloud", "region", "az", "vpc", "subnet-public", "subnet-private", "security-group", "autoscaling", "cluster", "namespace", "network", "dmz", "onprem", "trust", "tier", "group"])
+    .optional()
+    .describe(
+      "What the zone is; sets its colour and dash the way architecture diagrams do (AWS: cloud dark outline, region/az dashed outlines, vpc violet, subnet-public green, subnet-private teal; cluster/namespace blue; network/onprem slate; trust red dashed; group plain dashed). Guessed from the label when absent; zones with no kind are neutral grey. Prefer kinds over colours.",
+    ),
 });
 const arrowhead = z.enum(["arrow", "triangle", "triangle_outline", "dot", "circle", "circle_outline", "diamond", "diamond_outline", "bar", "crowfoot_one", "crowfoot_many", "crowfoot_one_or_many", "none"]);
 const kindStyle = z.object({
@@ -548,6 +577,7 @@ const edge = z.object({
   tail: arrowhead.optional().describe("Arrowhead at the start"),
   routing: z.enum(["elbow", "straight", "curved"]).optional(),
   kind: z.string().optional().describe('Relationship type, e.g. "Traffic", "Replication": every arrow of a kind is drawn the same (see kinds) and the legend lists it'),
+  step: z.number().int().min(1).max(99).optional().describe("Step number in a request/data flow: a numbered badge on the arrow (describe the steps in the diagram's `steps`)"),
 });
 const layoutOpts = {
   direction: z.enum(["right", "down", "left", "up"]).optional().describe("Flow direction, default right"),
@@ -563,6 +593,21 @@ const placeOpts = {
   look: z.enum(["polished", "professional", "sketch"]).optional().describe("polished (default): professional type plus colour by node role, 2 px strokes and soft shadows; professional: the same type with plain white nodes and no shadows; sketch: hand-drawn lines and handwriting fonts. Use sketch when the user asks for a sketch, whiteboard or hand-drawn look"),
   kinds: z.record(z.string(), kindStyle).optional().describe('Style per relationship kind, e.g. {"Traffic": {"color": "#1971c2", "weight": "primary"}, "Async": {"style": "dashed", "head": "triangle_outline"}}; kinds without an entry get a distinct colour'),
   legend: z.union([z.boolean(), z.string()]).optional().describe("Add a legend (true or its title)"),
+  showData: z.array(z.string()).optional().describe('Node `data` keys shown as each node\'s subtitle when it has none, e.g. ["instanceType", "ip"]'),
+  views: z
+    .array(
+      z.object({
+        name: z.string().describe('Page name, e.g. "Request flow"'),
+        kinds: z.array(z.string()).optional().describe("Arrow kinds kept at full strength"),
+        weights: z.array(z.enum(["primary", "normal", "secondary"])).optional().describe('Arrow weights kept, e.g. ["primary"] for the main path'),
+        steps: z.boolean().optional().describe("Keep the numbered steps' arrows"),
+        nodes: z.array(z.string()).optional().describe("Node ids kept besides the ends of kept arrows"),
+      }),
+    )
+    .optional()
+    .describe("Extra pages: the whole diagram becomes the first frame, and each view a copy below it where everything outside the view is faded (e.g. one page per flow). Frames export as PDF/PPTX pages."),
+  steps: z.array(z.string()).optional().describe('What each numbered step does, steps[0] = step 1 (e.g. "User resolves app.example.com in Route 53"); listed with badges under the diagram'),
+  legendIcons: z.enum(["auto", "all", "none"]).optional().describe("Icon rows in the legend: auto (default; captioned icons explain themselves, so only icons with a kind), all, none"),
   zoom: z.boolean().optional().describe("Zoom the view to the new diagram (default true)"),
 };
 tool(
@@ -574,15 +619,30 @@ tool(
     "score (lower is better), arrowsOnTopOfEachOther, arrowsThroughNodes, labelsColliding, crossings and `advice` (what to change in the spec if it is crowded). Read `quality`, then check the result with screenshot.",
     "Looks: look polished (default: nodes coloured by `role` (tint fill + deeper stroke of one hue per role), strokes 2 px, soft shadows, lifted on primary nodes, role rows in the legend), professional (plain white nodes) or sketch (when the user asks for hand-drawn); title + subtitle; node shapes include cylinder (database), cloud, queue, document, actor (person), server, hexagon, folder; node emphasis primary/muted and subtitle (IP, role); arrows have weight primary/normal/secondary, head/tail arrowheads (triangle, dot, diamond, crowfoot_many for ER), and a kind whose style is shared (kinds) and shown in the legend.",
     "Drawing well: keep to about 40 arrows or fewer; mark the main path's arrows primary and management or optional ones secondary; draw one arrow to a ZONE (from/to may be a zone id) instead of one per node; give a label only to short arrows; one colour per kind of relationship (use `kind` and a legend); if `advice` says a node has many arrows or an arrow is very long, change the spec and build again rather than accepting it.",
+    "Changing a built diagram: the diagram keeps its spec (result `diagram` id). To change its structure (nodes, zones, grid, edges, steps, views), get_diagram_spec, edit the spec and call build_diagram with it and `replace: <diagram id>`: a clean rebuild in the same place, one undo step. This beats many move / update / raw_update calls, which leave arrows and badges out of place.",
   ].join(" "),
   {
     drawing,
     nodes: z.array(node),
     edges: z.array(edge).optional(),
     zones: z.array(zone).optional(),
+    grid: z
+      .object({
+        id: z.string().optional().describe('Default "grid"; zone ids become "<id>.<column>" and "<id>.<row>.<column>"'),
+        label: z.string().optional().describe("Title of a zone drawn around the whole grid (none = no outer zone)"),
+        parent: z.string().optional().describe("Zone the grid sits in, e.g. the VPC"),
+        rows: z.array(z.union([z.string(), z.object({ id: z.string(), label: z.string().optional(), kind: zone.shape.kind })])).describe("Top to bottom. Usually tiers (public / web / app / data subnets; kind subnet-public / subnet-private is read from the label); or the AZs when the tiers are the columns"),
+        columns: z.array(z.union([z.string(), z.object({ id: z.string(), label: z.string().optional(), kind: zone.shape.kind })])).describe("Left to right, drawn as full-height bands. Usually availability zones (kind az: dashed); for a left-to-right flow make the tiers the columns and the AZs the rows"),
+        cells: z.record(z.string(), z.string()).optional().describe('Cell titles that differ from the row label, by "row/column", e.g. {"public/az-a": "Public 10.0.1.0/24"}'),
+      })
+      .optional()
+      .describe(
+        "Rows x columns of zones laid out as an aligned grid: the way to draw subnets per availability zone (AWS: VPC > AZ columns > one subnet per tier). Nodes join a cell with `cell`; draw each AZ's instances in its own cell (web-a, web-b) and arrows from a spanning node (ALB) to both.",
+      ),
     ...layoutOpts,
     iconSize: z.number().optional().describe("Icon size (longest side), default 64"),
     shadow: shadowArg.describe("Default shadow for every node (a node's own shadow wins); e.g. \"soft\" for a card look. Same values as node shadow"),
+    replace: z.union([z.string(), z.boolean()]).optional().describe("Rebuild an earlier diagram in its place (its `diagram` id, or true when the drawing has only one): the old elements go, the new ones take its spot, one undo step"),
     ...placeOpts,
   },
   call("build_diagram"),
@@ -632,7 +692,8 @@ tool(
     width: z.number().optional(),
     height: z.number().optional(),
     parent: z.string().optional(),
-    color: z.string().optional().describe("Border/title color (hex), default blue"),
+    kind: zone.shape.kind,
+    color: z.string().optional().describe("Border/title color (hex); default from kind (or the label), else blue"),
     fill: z.string().optional().describe("Fill (hex), default a light tint of color"),
     style: lineStyle.optional(),
     padding: z.number().optional().describe("Space around the members, default 24"),
@@ -642,8 +703,16 @@ tool(
 );
 tool(
   "add_legend",
-  "Add (or replace) a legend: one row per icon type (stencil name or kind) and per shape/arrow kind (set `kind` in build_diagram, or data.mydrawKind). Default position: under the diagram, right-aligned.",
-  { drawing, ids: ids.optional().describe("Only these elements (default all)"), title: z.string().optional(), x: z.number().optional(), y: z.number().optional(), replace: z.boolean().optional() },
+  "Add (or replace) a legend: one row per arrow kind, shape kind and node role, and icon rows as `icons` says (captioned icons explain themselves, so by default only icons with a kind are listed). More than 8 rows go in two columns. Default position: under the diagram, right-aligned.",
+  {
+    drawing,
+    ids: ids.optional().describe("Only these elements (default all)"),
+    title: z.string().optional(),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    replace: z.boolean().optional(),
+    icons: z.enum(["auto", "all", "none"]).optional().describe("Icon rows: auto (default: icons with a kind or no caption), all, none"),
+  },
   call("add_legend"),
 );
 tool(
@@ -655,6 +724,7 @@ tool(
     ...layoutOpts,
     onlyIfBetter: z.boolean().optional().describe("Leave the drawing as it is unless the new layout scores clearly better than the current one (result has unchanged: true, scoreBefore)"),
     makeRoom: z.boolean().optional().describe("With ids: push the shapes around a selection that grew out of its way (default true)"),
+    force: z.boolean().optional().describe("Run even on a grid diagram (which it would flatten; rebuild grids with build_diagram {replace} instead)"),
   },
   call("auto_layout"),
 );
@@ -731,7 +801,7 @@ tool(
   "lint_diagram",
   [
     "Check a drawing for common diagram problems. Run it after build_diagram, mermaid_to_scene, apply_template or a batch of edits, and when asked to review a diagram (together with screenshot).",
-    "Rules: overlap (warning: two nodes' boxes overlap; containment in zones/frames is fine), unconnected-arrow (warning: an arrow with a free start/end; `ends` says which), unlabeled-node (info: shape without label, icon without caption), missing-ip (info: only when some nodes have an ip in their data, the labelled nodes that lack one), off-palette-color (info: a stroke/fill color outside the app palettes and themes), edge-overlap (warning: two arrows run on top of each other), label-collision (warning: an arrow label sits under a node, zone title, another label or arrow; fix moves it to a free stretch), edge-through-node (warning: an arrow runs through a node it does not connect; fix re-routes it around), crowded-node (info: 7+ arrows meet at one node), long-edge (info: an arrow longer than 60% of the diagram).",
+    "Rules: overlap (warning: two nodes' boxes overlap; containment in zones/frames is fine), unconnected-arrow (warning: an arrow with a free start/end; `ends` says which), unlabeled-node (info: shape without label, icon without caption), missing-ip (info: only when some nodes have an ip in their data, the labelled nodes that lack one), off-palette-color (info: a stroke/fill color outside the app palettes and themes), edge-overlap (warning: two arrows run on top of each other), label-collision (warning: an arrow label sits under a node, zone title, another label or arrow; fix moves it to a free stretch), edge-through-node (warning: an arrow runs through a node it does not connect; fix re-routes it around), crowded-node (info: 7+ arrows meet at one node), long-edge (info: an arrow longer than 60% of the diagram), zone-colors (info: more than 4 zone colours without zone kinds), legend-too-big (info: a legend with more than 10 rows).",
     "Each issue: {rule, severity, id, label, message, other? (overlap partner), ends?, fix?}; summary counts per rule; warnings first, then top-left to bottom-right.",
     "fix:true applies every safe fix as ONE undo step (binds free arrow ends to a node within 40px, snaps off-palette colors to the nearest palette color) and returns the issues left plus `fixed`. Overlaps, labels and IPs are never changed automatically: fix them with move / update_elements.",
   ].join(" "),
@@ -739,7 +809,7 @@ tool(
     drawing,
     fix: z.boolean().optional().describe("Apply all safe fixes (one undo step)"),
     rules: z
-      .array(z.enum(["overlap", "unconnected-arrow", "unlabeled-node", "missing-ip", "off-palette-color", "edge-overlap", "label-collision", "edge-through-node", "crowded-node", "long-edge"]))
+      .array(z.enum(["overlap", "unconnected-arrow", "unlabeled-node", "missing-ip", "off-palette-color", "edge-overlap", "label-collision", "edge-through-node", "crowded-node", "long-edge", "zone-colors", "legend-too-big"]))
       .optional()
       .describe("Only these rules (default all)"),
   },

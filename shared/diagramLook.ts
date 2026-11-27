@@ -142,6 +142,18 @@ export function lookOf(name?: string | null): DiagramLook {
   return name === "sketch" ? LOOKS.sketch : name === "professional" ? LOOKS.professional : LOOKS.polished;
 }
 
+/** Every font name (and fallback) the looks use, so they can be loaded before text is measured. */
+export function lookFontNames(): string[] {
+  const out = new Set<string>();
+  for (const look of Object.values(LOOKS)) {
+    for (const t of [look.title, look.diagramSubtitle, look.zoneTitle, look.nodeLabel, look.nodeLabelBold, look.caption, look.nodeSubtitle, look.edgeLabel]) {
+      out.add(t.font);
+      out.add(t.fallback);
+    }
+  }
+  return [...out];
+}
+
 // ---------- arrow kinds ----------
 
 /** How every arrow of one kind ("Traffic", "Replication", ...) is drawn. */

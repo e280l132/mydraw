@@ -226,6 +226,7 @@ export function describe(el: El, map: ElMap): Loose {
     o.type = "zone";
     const title = zoneTitleOf(el, map) as (El & { text: string }) | undefined;
     if (title) o.label = title.text;
+    if (typeof el.customData?.mydrawZoneKind === "string") o.kind = el.customData.mydrawZoneKind;
   }
   const zone = zoneOf(el);
   if (zone) o.zone = zone;

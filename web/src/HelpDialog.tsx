@@ -123,6 +123,13 @@ export function helpSections(): Section[] {
       ],
     },
     {
+      title: "Zones",
+      rows: [
+        { text: "Zones (VPC, subnet, AZ, VLAN boxes) are locked so clicks inside them reach the icons and arrows" },
+        { text: "Click a zone's title to select that zone: drag to move it (its contents come along), resize, recolour, double-click the title to rename. It locks again when you click elsewhere" },
+      ],
+    },
+    {
       title: "Appearance",
       rows: [
         { text: "Main menu → Preferences: app theme (System, Light, Dark), drawing style (Clean or Sketch), autosave" },

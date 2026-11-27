@@ -189,6 +189,35 @@ export function fontNameById(id: number): string | undefined {
   return entries.get(id)?.family;
 }
 
+/**
+ * Load the font files of these font ids (Excalidraw's own and mydraw's) before text in them is
+ * measured. Registered fonts load lazily, when something is first drawn in them; until then the
+ * browser measures with a fallback font, so text built by code (diagram titles, zone titles) got a
+ * box too narrow for the real font and the canvas clipped its end. Never rejects.
+ */
+export async function ensureFontsLoaded(ids: Iterable<number>): Promise<void> {
+  const Fonts = excalidrawFonts();
+  if (!Fonts) return;
+  const loads: Promise<unknown>[] = [];
+  for (const id of new Set(ids)) {
+    for (const { fontFace } of Fonts.registered.get(id)?.fontFaces ?? []) {
+      if (!document.fonts.has(fontFace)) document.fonts.add(fontFace);
+      if (fontFace.status !== "loaded") loads.push(fontFace.load().catch(() => undefined));
+    }
+  }
+  if (loads.length) await Promise.all(loads);
+}
+
+/** `ensureFontsLoaded` by family names ("Montserrat Bold", "Excalifont"); unknown names are skipped. */
+export function ensureFontNamesLoaded(names: Iterable<string>): Promise<void> {
+  const ids: number[] = [];
+  for (const n of names) {
+    const id = fontIdByName(n);
+    if (id !== undefined) ids.push(id);
+  }
+  return ensureFontsLoaded(ids);
+}
+
 /** Family names of the custom fonts the elements' text uses. */
 export function usedFontFamilies(elements: readonly TextLike[]): string[] {
   return [...charsPerCustomFont(elements).keys()].map((id) => entries.get(id)?.family).filter((f): f is string => !!f);

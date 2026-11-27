@@ -175,9 +175,25 @@ describe("diagram spec", () => {
     const zones = [{ id: "a" }, { id: "b", parent: "a" }, { id: "c", parent: "b", color: "#ff0000" }];
     expect([...zoneDepths(zones).values()]).toEqual([0, 1, 2]);
     const c = zoneColors(zones);
-    expect(c.get("c")).toEqual({ stroke: "#ff0000", fill: tint("#ff0000") });
+    expect(c.get("c")).toEqual({ stroke: "#ff0000", fill: tint("#ff0000"), style: "solid" });
+    // No kind and no colour: neutral, a different shade per depth (not a palette colour in turn).
     expect(c.get("a")!.stroke).not.toBe(c.get("b")!.stroke);
     expect(tint("#000000", 0.5)).toBe("#808080");
+  });
+  it("zone colours follow the zone kind, given or read from the label", () => {
+    const c = zoneColors([
+      { id: "vpc", label: "VPC 10.0.0.0/16" },
+      { id: "aza", label: "AZ-a", parent: "vpc" },
+      { id: "pub", label: "Public Subnet", parent: "aza" },
+      { id: "web", label: "Web tier", parent: "vpc", kind: "subnet-private" },
+      { id: "web2", label: "Private Subnets — App Tier", parent: "vpc" },
+    ]);
+    expect(c.get("vpc")).toMatchObject({ kind: "vpc", stroke: "#8c4fff" });
+    expect(c.get("aza")).toMatchObject({ kind: "az", style: "dashed", fill: "transparent" });
+    expect(c.get("pub")).toMatchObject({ kind: "subnet-public" });
+    expect(c.get("web")!.fill).toBe(c.get("web2")!.fill);
+    expect(normalizeSpec({ nodes: [{ id: "n" }], zones: [{ id: "z", kind: "az" }] }).zones![0].kind).toBe("az");
+    expect(() => normalizeSpec({ nodes: [{ id: "n" }], zones: [{ id: "z", kind: "planet" }] })).toThrow(/kind/);
   });
   it("every template is a valid diagram", () => {
     for (const t of TEMPLATES) expect(() => normalizeSpec(t.spec), t.name).not.toThrow();

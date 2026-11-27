@@ -1,7 +1,8 @@
 // A zone's contents follow it when the zone is moved by hand (or by any edit that moves only the
 // zone rectangle). Agent `move` already carries contents; those elements have moved too, so they
 // are left alone here.
-import { CaptureUpdateAction } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, newElementWith } from "@excalidraw/excalidraw";
+import { badgeFixes } from "../../shared/stepBadges";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { applyUpdates, isZone, withGroupsAndLabels } from "./agent/sceneOps";
@@ -36,7 +37,16 @@ export function followZones(
     const dx = z.x - p.x;
     const dy = z.y - p.y;
     if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) continue;
-    if (Math.abs(z.width - p.w) > 0.01 || Math.abs(z.height - p.h) > 0.01) continue; // resized, not moved
+    if (Math.abs(z.width - p.w) > 0.01 || Math.abs(z.height - p.h) > 0.01) {
+      // Resized: the contents stay, the title keeps its place at the zone's top-left corner.
+      const title = live.find((m) => m.customData?.mydrawZoneTitle === z.id);
+      const q = title && prev.get(title.id);
+      if (title && q && Math.abs(title.x - q.x) < 0.01 && Math.abs(title.y - q.y) < 0.01) {
+        claimed.add(title.id);
+        moves.push({ id: title.id, dx, dy });
+      }
+      continue;
+    }
     for (const m of withGroupsAndLabels([z.id], live)) {
       if (m.id === z.id || claimed.has(m.id)) continue;
       if (m.type === "text" && (m as ExcalidrawElement & { containerId?: string | null }).containerId) continue; // follows its container
@@ -46,11 +56,26 @@ export function followZones(
       moves.push({ id: m.id, dx, dy });
     }
   }
-  if (!moves.length) return now;
+  if (!moves.length) {
+    followBadges(api, live);
+    return now;
+  }
   const r = applyUpdates(moves, live, appState);
   const byId = new Map(r.changed.map((e) => [e.id, e]));
   const all = api.getSceneElementsIncludingDeleted().map((e) => byId.get(e.id) ?? e);
   // EVENTUALLY: not its own undo step; it is recorded together with the move that caused it.
   api.updateScene({ elements: [...all, ...r.added], captureUpdate: CaptureUpdateAction.EVENTUALLY });
   return now;
+}
+
+/**
+ * Numbered step badges stay on their arrows when the user drags a shape (Excalidraw re-routes the
+ * bound arrow; the badge is a separate element). EVENTUALLY: part of the drag's undo step.
+ */
+function followBadges(api: ExcalidrawImperativeAPI, live: readonly ExcalidrawElement[]): void {
+  if (!live.some((e) => e.customData?.mydrawStepOf)) return;
+  const fixes = badgeFixes(live as never);
+  if (!fixes.size) return;
+  const all = api.getSceneElementsIncludingDeleted().map((e) => (fixes.has(e.id) ? newElementWith(e, fixes.get(e.id)! as never) : e));
+  api.updateScene({ elements: all, captureUpdate: CaptureUpdateAction.EVENTUALLY });
 }

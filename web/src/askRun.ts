@@ -25,9 +25,17 @@ export interface AskState {
   costUsd?: number;
   seconds?: number;
   tools: number;
+  /** Claude Code's session of this conversation: a follow-up resumes it. */
+  sessionId?: string;
+  /** The drawing (tab id) the conversation is about; a follow-up on another drawing starts afresh. */
+  drawingId: string | null;
+  /** Earlier turns of this conversation, oldest first. */
+  thread: { asked: string; result: string }[];
+  /** The current turn asked for an outline only (plan first). */
+  plan: boolean;
 }
 
-const IDLE: AskState = { status: "idle", runId: null, mode: null, asked: "", steps: [], note: "", result: "", noClaude: false, mcpFailed: false, tools: 0 };
+const IDLE: AskState = { status: "idle", runId: null, mode: null, asked: "", steps: [], note: "", result: "", noClaude: false, mcpFailed: false, tools: 0, drawingId: null, thread: [], plan: false };
 
 let state: AskState = IDLE;
 const listeners = new Set<() => void>();
@@ -68,8 +76,7 @@ function handle(e: AskEvent) {
     case "started":
       return set({ ...state, runId: e.runId, status: "running" });
     case "init":
-      if (e.mcp !== "connected") return set({ ...state, mcpFailed: true });
-      return;
+      return set({ ...state, ...(e.sessionId ? { sessionId: e.sessionId } : {}), ...(e.mcp !== "connected" ? { mcpFailed: true } : {}) });
     case "tool":
       return set({ ...state, steps: [...state.steps, { id: e.id, label: e.label }] });
     case "toolError":
@@ -77,7 +84,16 @@ function handle(e: AskEvent) {
     case "text":
       return set({ ...state, note: e.text });
     case "done":
-      return set({ ...state, status: e.ok ? "done" : "failed", result: e.text || (e.ok ? "Done." : "Claude stopped with an error."), costUsd: e.costUsd, seconds: e.seconds, tools: e.tools, note: "" });
+      return set({
+        ...state,
+        status: e.ok ? "done" : "failed",
+        result: e.text || (e.ok ? "Done." : "Claude stopped with an error."),
+        costUsd: e.costUsd,
+        seconds: e.seconds,
+        tools: e.tools,
+        note: "",
+        ...(e.sessionId ? { sessionId: e.sessionId } : {}),
+      });
     case "error":
       return set({ ...state, runId: e.runId, status: "failed", result: e.message, noClaude: !!e.noClaude, note: "" });
     case "cancelled":
@@ -85,11 +101,30 @@ function handle(e: AskEvent) {
   }
 }
 
-/** Starts a run (one at a time). */
+/**
+ * The session a new request on `drawingId` would continue: the last run's, when it finished on the
+ * same drawing. Undefined = a fresh conversation.
+ */
+export function followUpSession(drawingId: string): string | undefined {
+  if (askBusy() || state.drawingId !== drawingId || !state.sessionId) return undefined;
+  return state.status === "done" || state.status === "failed" || state.status === "cancelled" ? state.sessionId : undefined;
+}
+
+/** Starts a run (one at a time). With `req.resume` the earlier turn stays in the thread. */
 export async function startAsk(req: AskRequest): Promise<void> {
   subscribe();
   if (askBusy()) return;
-  set({ ...IDLE, status: "starting", mode: req.mode, asked: req.mode === "ask" ? req.prompt : `${req.mode === "tidy" ? "Tidy" : "Polish"}${req.selection.length ? " the selection" : ""}${req.prompt ? `: ${req.prompt}` : ""}` });
+  const thread = req.resume && state.asked ? [...state.thread, { asked: state.asked, result: state.result }].slice(-6) : [];
+  set({
+    ...IDLE,
+    status: "starting",
+    mode: req.mode,
+    drawingId: req.drawing.id,
+    thread,
+    plan: !!req.plan,
+    ...(req.resume ? { sessionId: req.resume } : {}),
+    asked: req.mode === "ask" ? req.prompt : `${req.mode === "tidy" ? "Tidy" : "Polish"}${req.selection.length ? " the selection" : ""}${req.prompt ? `: ${req.prompt}` : ""}`,
+  });
   try {
     const runId = await window.mydraw.askStart(req);
     // Events may already have arrived for this run (an early error is sent before the id returns).

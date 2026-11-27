@@ -2319,6 +2319,30 @@ body.md-panel-dragging * {
   overflow-wrap: anywhere;
 }
 
+/* Earlier turns of a follow-up conversation: compact, above the current one. */
+.md-ask-thread {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0 0 8px;
+  border-bottom: 1px dashed var(--md-border);
+  max-height: 160px;
+  overflow: auto;
+  font-size: 12px;
+}
+
+.md-ask-thread li + li {
+  margin-top: 6px;
+}
+
+.md-ask-said {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .md-ask-steps {
   margin: 0;
   padding-left: 20px;
@@ -4612,4 +4636,9 @@ input.md-is-range {
 .context-menu li[data-testid="copyStyles"],
 .context-menu li[data-testid="pasteStyles"] {
   display: none;
+}
+
+/* Zone titles are clickable (they select the locked zone: web/src/zoneEdit.ts). */
+.md-zone-title-hover canvas {
+  cursor: pointer !important;
 }

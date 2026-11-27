@@ -90,6 +90,7 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 
 **Diagrams from text** (MCP, and ⌥⌘U)
 - `build_diagram`: nodes, edges and nested zones, laid out automatically (ELK), with icons from the library.
+- **Zones by hand**: zones are locked so clicks inside them reach their contents; click a zone's **title** to select it (move with its contents, resize, recolour, double-click the title to rename). It locks again once you click elsewhere.
 - Mermaid (flowcharts become zones; other Mermaid diagram types go through Mermaid), starter templates (3-tier web, AWS VPC, GCP project, home network, Kubernetes, homelab), legends, `auto_layout`.
 - **Import from text** (⌥⌘U): paste or open CSV (a host list with zones, connections and properties, or a from/to list), YAML (the diagram spec with `a -> b: label` edges), or Mermaid.
 

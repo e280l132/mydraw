@@ -130,3 +130,43 @@ describe("helpers", () => {
     expect(DEFAULT_SETTINGS.askClaude.model).toBe("sonnet");
   });
 });
+
+describe("follow-ups, outlines and conventions", () => {
+  const sid = "0f8fad5b-d9cb-469f-a165-70867728950e";
+  it("keeps a valid session id and plan flag, drops junk", () => {
+    expect(normalizeAskRequest({ ...req(), resume: sid, plan: true })).toMatchObject({ resume: sid, plan: true });
+    expect(normalizeAskRequest({ ...req(), resume: "--dangerous" }).resume).toBeUndefined();
+    expect(normalizeAskRequest({ ...req({ mode: "tidy", prompt: "" }), plan: true }).plan).toBeUndefined();
+  });
+  it("resumes the session and keeps sessions", () => {
+    const args = claudeArgs(req({ resume: sid }), "{}");
+    expect(args).toContain(`--resume=${sid}`);
+    expect(args).not.toContain("--no-session-persistence");
+    expect(claudeArgs(req(), "{}").some((a) => a.startsWith("--resume"))).toBe(false);
+  });
+  it("tells Claude about the follow-up and the outline", () => {
+    expect(askSystemPrompt(req({ resume: sid }))).toMatch(/continues the conversation/);
+    expect(askSystemPrompt(req({ plan: true }))).toMatch(/PLAN FIRST/);
+    expect(askSystemPrompt(req())).not.toMatch(/PLAN FIRST/);
+  });
+  it("adds the conventions of the domain asked about", () => {
+    const aws = askSystemPrompt(req({ prompt: "3-tier web app on AWS with RDS Multi-AZ" }));
+    expect(aws).toMatch(/Conventions for AWS architecture/);
+    expect(aws).toMatch(/grid/);
+    expect(askSystemPrompt(req({ prompt: "draw my homelab VLANs" }))).toMatch(/Networks and homelabs/);
+    expect(askSystemPrompt(req({ prompt: "make it blue" }))).toMatch(/get_conventions/);
+  });
+  it("reads the session id from init and result lines", () => {
+    expect(parseStreamLine(JSON.stringify({ type: "system", subtype: "init", session_id: sid, mcp_servers: [{ name: "mydraw", status: "connected" }] }), 1)[0]).toMatchObject({ type: "init", sessionId: sid });
+    expect(parseStreamLine(JSON.stringify({ type: "result", subtype: "success", result: "ok", session_id: sid }), 1)[0]).toMatchObject({ type: "done", sessionId: sid });
+  });
+});
+
+describe("recipe runs can't edit raw elements", () => {
+  it("disallows raw_update and set_scene for Tidy and Polish, not for Ask", () => {
+    const dis = (mode: AskRequest["mode"]) => claudeArgs(req({ mode, prompt: "" }), "{}").find((a) => a.startsWith("--disallowedTools="))!;
+    expect(dis("tidy")).toMatch(/raw_update/);
+    expect(dis("polish")).toMatch(/set_scene/);
+    expect(dis("ask")).not.toMatch(/raw_update/);
+  });
+});

@@ -87,14 +87,16 @@ let n = 0;
 const rpc = (method, params) => new Promise((r) => { const id = ++n; waiting.set(id, r); mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\\n"); });
 await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fake-claude", version: "1" } });
 mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\\n");
-out({ type: "system", subtype: "init", model: "claude-" + opt("--model") + "-fake", mcp_servers: [{ name: "mydraw", status: "connected" }] });
+const session = opt("--resume") ?? "0f8fad5b-d9cb-469f-a165-70867728950e";
+out({ type: "system", subtype: "init", session_id: session, model: "claude-" + opt("--model") + "-fake", mcp_servers: [{ name: "mydraw", status: "connected" }] });
 const drawing = /drawing: "([^"]+)"/.exec(opt("--append-system-prompt"))[1];
 out({ type: "assistant", message: { content: [{ type: "text", text: "Adding a box." }, { type: "tool_use", id: "t1", name: "mcp__mydraw__add_elements", input: {} }] } });
-const res = await rpc("tools/call", { name: "add_elements", arguments: { drawing, elements: [{ type: "rectangle", id: "askbox", x: 0, y: 400, width: 120, height: 60, label: "from Claude" }] } });
+const boxId = opt("--resume") ? "askbox2" : "askbox";
+const res = await rpc("tools/call", { name: "add_elements", arguments: { drawing, elements: [{ type: "rectangle", id: boxId, x: opt("--resume") ? 200 : 0, y: 400, width: 120, height: 60, label: "from Claude" }] } });
 out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: !!res.result?.isError, content: res.result?.content ?? [] }] } });
 if (prompt.includes("SLOW")) await new Promise((r) => setTimeout(r, 60000));
 out({ type: "assistant", message: { content: [{ type: "tool_use", id: "t2", name: "mcp__mydraw__zoom_to_fit", input: {} }] } });
-out({ type: "result", subtype: "success", is_error: false, result: "Added a box labelled from Claude.", duration_ms: 1200, total_cost_usd: 0.001 });
+out({ type: "result", subtype: "success", is_error: false, session_id: session, result: "Added a box labelled from Claude.", duration_ms: 1200, total_cost_usd: 0.001 });
 mcp.kill();
 `,
   { mode: 0o755 },
@@ -1943,8 +1945,37 @@ step("Ask Claude box (⌥⌘J): runs claude with this app's MCP server, shows st
   assert.match(await page.textContent(".md-ask-result"), /Added a box/);
   const scene = JSON.stringify(await call("get_scene", { drawing: "Ask test" }));
   assert.match(scene, /from Claude/, "the fake claude's MCP call reached this drawing");
+  assert.ok(!log.args.some((a) => a.startsWith("--resume")), "the first request starts a conversation");
+  assert.ok(!log.args.includes("--no-session-persistence"), "sessions are kept for follow-ups");
+  assert.match(log.args.find((x) => x.startsWith("--append-system-prompt=")), /get_conventions/);
+
+  // A follow-up continues the conversation (claude --resume) and shows the earlier turn.
+  await page.fill(".md-ask-input", "and another one");
+  await page.keyboard.press(`${MOD}+Enter`);
+  await page.waitForSelector('.md-ask[data-ask-state="done"] .md-ask-thread', { timeout: 30000 });
+  const follow = JSON.parse(fs.readFileSync(fakeClaudeLog, "utf8"));
+  assert.ok(follow.args.includes("--resume=0f8fad5b-d9cb-469f-a165-70867728950e"), "the follow-up resumes the session");
+  assert.match(follow.args.find((x) => x.startsWith("--append-system-prompt=")), /continues the conversation/);
+  assert.match(await page.textContent(".md-ask-thread"), /add a box/);
   await page.click(".md-ask-clear");
-  assert.equal(await page.$(".md-ask-result"), null, "Clear empties the log");
+  assert.equal(await page.$(".md-ask-result"), null, "New conversation empties the log");
+
+  // Outline first: the request says to plan, then Build it resumes the same session.
+  await page.check(".md-ask-plan input");
+  await page.fill(".md-ask-input", "3-tier web app on AWS");
+  await page.keyboard.press(`${MOD}+Enter`);
+  await page.waitForSelector('.md-ask[data-ask-state="done"] .md-ask-build', { timeout: 30000 });
+  const planned = JSON.parse(fs.readFileSync(fakeClaudeLog, "utf8"));
+  const planPrompt = planned.args.find((x) => x.startsWith("--append-system-prompt="));
+  assert.match(planPrompt, /PLAN FIRST/);
+  assert.match(planPrompt, /Conventions for AWS architecture/, "the AWS conventions are added for an AWS request");
+  await page.click(".md-ask-build");
+  await page.waitForSelector('.md-ask[data-ask-state="done"] .md-ask-thread', { timeout: 30000 });
+  const built = JSON.parse(fs.readFileSync(fakeClaudeLog, "utf8"));
+  assert.equal(built.prompt, "Build it as outlined.");
+  assert.ok(built.args.some((a) => a.startsWith("--resume=")) && !/PLAN FIRST/.test(built.args.find((x) => x.startsWith("--append-system-prompt="))), "Build it acts in the same conversation");
+  await page.uncheck(".md-ask-plan input");
+  await page.click(".md-ask-clear");
 
   // Tidy with Claude: the recipe, with the drawing and the selection.
   await call("select", { drawing: "Ask test", ids: ["askbox"] });
@@ -2227,6 +2258,175 @@ await page.fill(".md-pal-input", "remove links");
 await page.keyboard.press("Enter");
 await waitFor(async () => !(await linkOf("rb")), "palette removes the link");
 
+step("Diagram quality: fonts load before text is measured, zone kinds, AZ x tier grid, numbered steps, views as pages, compact legend");
+{
+  await call("new_drawing", { title: "Grid test" });
+  const r = await call("build_diagram", {
+    drawing: "Grid test",
+    title: "3-Tier Web Application on AWS",
+    subtitle: "Route 53 → ALB → web → app → RDS Multi-AZ",
+    zones: [{ id: "gt_region", label: "AWS Cloud — Region us-east-1" }, { id: "gt_vpc", label: "VPC 10.0.0.0/16", parent: "gt_region" }],
+    grid: {
+      id: "gt",
+      parent: "gt_vpc",
+      rows: [{ id: "pub", label: "Public subnet" }, { id: "web", label: "Private subnet — web" }, { id: "data", label: "Private subnet — data" }],
+      columns: [{ id: "a", label: "Availability Zone A" }, { id: "b", label: "Availability Zone B" }],
+    },
+    nodes: [
+      { id: "gt_users", label: "Users", shape: "actor" },
+      { id: "gt_alb", label: "ALB", cell: "pub/*", role: "edge" },
+      { id: "gt_wa", label: "Web A", cell: "web/a" },
+      { id: "gt_wb", label: "Web B", cell: "web/b" },
+      { id: "gt_dba", label: "RDS primary", shape: "cylinder", cell: "data/a" },
+      { id: "gt_dbb", label: "RDS standby", shape: "cylinder", cell: "data/b" },
+    ],
+    edges: [
+      { from: "gt_users", to: "gt_alb", weight: "primary", kind: "Traffic", step: 1 },
+      { from: "gt_alb", to: "gt_wa", weight: "primary", kind: "Traffic", step: 2 },
+      { from: "gt_alb", to: "gt_wb", weight: "primary", kind: "Traffic" },
+      { from: "gt_wa", to: "gt_dba", kind: "SQL", step: 3 },
+      { from: "gt_wb", to: "gt_dba", kind: "SQL" },
+      { from: "gt_dba", to: "gt_dbb", kind: "Replication", style: "dashed" },
+    ],
+    steps: ["Users reach the load balancer", "The ALB sends the request to a web server", "The web server queries the primary database"],
+    views: [{ name: "Request flow", steps: true }],
+    legend: true,
+  });
+  assert.deepEqual(r.pages, ["3-Tier Web Application on AWS", "Request flow"]);
+  const els = await page.evaluate(() => window.__mydrawTest.api().getSceneElements().map((e) => ({ id: e.id, type: e.type, x: e.x, y: e.y, width: e.width, height: e.height, text: e.text, fontSize: e.fontSize, fontFamily: e.fontFamily, frameId: e.frameId, opacity: e.opacity, cd: e.customData ?? null })));
+  const byId = new Map(els.map((e) => [e.id, e]));
+  // The title's box is as wide as the title drawn in its real font.
+  const title = els.find((e) => e.type === "text" && e.text === "3-Tier Web Application on AWS");
+  const real = await page.evaluate(async ({ text, size, family }) => {
+    const name = window.__mydrawTest.fonts().list.find((f) => f.id === family)?.family;
+    if (!name) return { width: 0, known: false };
+    await document.fonts.load(`${size}px "${name}"`, text);
+    const c = document.createElement("canvas").getContext("2d");
+    c.font = `${size}px "${name}"`;
+    return { width: c.measureText(text).width, known: true };
+  }, { text: title.text, size: title.fontSize, family: title.fontFamily });
+  if (real.known) assert.ok(title.width >= real.width - 2, `title box ${title.width} fits the drawn title ${real.width}`);
+  // Zones: kinds from the labels; AZ columns dashed; cells are subnets.
+  const kind = (id) => byId.get(id)?.cd?.mydrawZoneKind;
+  assert.equal(kind("gt_region"), "region");
+  assert.equal(kind("gt_vpc"), "vpc");
+  assert.equal(kind("gt.a"), "az");
+  assert.equal(kind("gt.pub.a"), "subnet-public");
+  assert.equal(kind("gt.web.b"), "subnet-private");
+  // Grid: rows line up across AZs; nodes sit in their cells.
+  const box = (id) => byId.get(id);
+  assert.equal(Math.round(box("gt.web.a").y), Math.round(box("gt.web.b").y), "cells of a row line up");
+  const inside = (n, z) => box(n).x >= box(z).x && box(n).x + box(n).width <= box(z).x + box(z).width && box(n).y >= box(z).y && box(n).y + box(n).height <= box(z).y + box(z).height;
+  assert.ok(inside("gt_wa", "gt.web.a") && inside("gt_wb", "gt.web.b") && inside("gt_dbb", "gt.data.b"), "nodes are in their cells");
+  assert.ok(box("gt_alb").x + box("gt_alb").width / 2 > box("gt.a").x + box("gt.a").width && box("gt_alb").x + box("gt_alb").width / 2 < box("gt.b").x, "the ALB spans both AZs");
+  assert.equal(box("gt_wa").cd.mydrawZoneId, "gt.web.a");
+  // Steps: badges on arrows and the list under the diagram.
+  const badges = els.filter((e) => e.type === "ellipse" && e.cd?.mydrawStep && !e.frameId?.startsWith?.("x"));
+  assert.ok(badges.some((b) => b.cd.mydrawStepOf), "step badges on arrows");
+  assert.ok(els.some((e) => e.type === "text" && e.text === "The web server queries the primary database"), "steps listed");
+  // Legend: arrow kinds and roles only (captions explain the nodes), at most 8 rows per column.
+  const legendRows = els.filter((e) => e.cd?.mydrawLegend && e.type === "text" && e.frameId === box("gt_wa").frameId).length - 1;
+  assert.ok(legendRows > 0 && legendRows <= 8, `legend rows ${legendRows}`);
+  // Views: two frames; the copy fades what is not in the view.
+  const frames = els.filter((e) => e.type === "frame");
+  assert.equal(frames.length, 2);
+  const inView = els.filter((e) => e.frameId === frames.find((f) => f.id !== box("gt_wa").frameId)?.id);
+  assert.ok(inView.some((e) => e.opacity <= 18), "the view fades arrows outside it");
+  const lint = await call("lint_diagram", { drawing: "Grid test", rules: ["zone-colors", "legend-too-big"] });
+  assert.equal(lint.issues.length, 0, JSON.stringify(lint.issues));
+  // The diagram keeps its spec; a rebuild with replace swaps it in place (one undo step).
+  assert.ok(r.diagram, "build_diagram returns the diagram id");
+  const stored = await call("get_diagram_spec", { drawing: "Grid test" });
+  assert.equal(stored.diagram, r.diagram);
+  assert.equal(stored.spec.nodes.find((n) => n.id === "gt_wa").cell, "web/a");
+  assert.ok(!stored.spec.zones.some((z) => z.grid), "grid zones are not stored (made from the grid)");
+  const noAuto = await callRaw("auto_layout", { drawing: "Grid test" });
+  assert.ok(noAuto.isError && /grid/.test(noAuto.content[0].text), "auto_layout refuses to flatten a grid");
+  const respec = { ...stored.spec, views: undefined, title: "Rebuilt", drawing: "Grid test", replace: r.diagram };
+  respec.nodes = respec.nodes.filter((n) => n.id !== "gt_dbb");
+  respec.edges = respec.edges.filter((e) => e.to !== "gt_dbb" && e.from !== "gt_dbb");
+  const r2 = await call("build_diagram", respec);
+  assert.equal(r2.diagram, r.diagram, "the rebuild keeps the diagram id");
+  const after = await page.evaluate(() => window.__mydrawTest.api().getSceneElements().map((e) => ({ id: e.id, type: e.type, text: e.text, frameId: e.frameId, cd: e.customData ?? null, x: e.x, y: e.y, width: e.width, height: e.height })));
+  assert.ok(!after.some((e) => e.id === "gt_dbb"), "the removed node is gone");
+  assert.equal(after.filter((e) => e.type === "frame").length, 0, "the old pages are gone");
+  assert.equal(after.filter((e) => e.type === "text" && e.text === "3-Tier Web Application on AWS").length, 0);
+  assert.ok(after.some((e) => e.type === "text" && e.text === "Rebuilt"));
+  // A step badge follows its arrow when the arrow's nodes move.
+  await call("move", { drawing: "Grid test", ids: ["gt_users"], dx: -120, dy: 0 });
+  const moved = await page.evaluate(() => {
+    const els = window.__mydrawTest.api().getSceneElements();
+    const badge = els.find((e) => e.type === "ellipse" && e.customData?.mydrawStep === 1 && e.customData?.mydrawStepOf);
+    const arrow = els.find((e) => e.id === badge.customData.mydrawStepOf);
+    const pts = arrow.points.map(([x, y]) => ({ x: arrow.x + x, y: arrow.y + y }));
+    const c = { x: badge.x + badge.width / 2, y: badge.y + badge.height / 2 };
+    const dist = Math.min(...pts.slice(1).map((p, i) => {
+      const a = pts[i];
+      const l2 = (p.x - a.x) ** 2 + (p.y - a.y) ** 2 || 1;
+      const t = Math.max(0, Math.min(1, ((c.x - a.x) * (p.x - a.x) + (c.y - a.y) * (p.y - a.y)) / l2));
+      return Math.hypot(c.x - (a.x + t * (p.x - a.x)), c.y - (a.y + t * (p.y - a.y)));
+    }));
+    return dist;
+  });
+  assert.ok(moved < 2, `step badge stays on its arrow after a move (${moved}px off)`);
+  const conv = await callRaw("get_conventions", { domain: "aws" });
+  assert.match(conv.content[0].text, /Conventions for AWS architecture[\s\S]*grid/);
+}
+
+step("Zones by hand: a click on a zone title unlocks and selects the zone; drag moves it with its contents; it locks again after");
+{
+  await call("new_drawing", { title: "Zone edit" });
+  await call("add_elements", { drawing: "Zone edit", elements: [{ type: "rectangle", id: "ze_n", x: 400, y: 420, width: 140, height: 70, label: "web" }] });
+  await call("create_zone", { drawing: "Zone edit", id: "ze_z", label: "Subnet", ids: ["ze_n"], padding: 60 });
+  const toView = (sx, sy) =>
+    page.evaluate(([x, y]) => {
+      const st = window.__mydrawTest.api().getAppState();
+      return { x: (x + st.scrollX) * st.zoom.value + st.offsetLeft, y: (y + st.scrollY) * st.zoom.value + st.offsetTop };
+    }, [sx, sy]);
+  const state = () =>
+    page.evaluate(() => {
+      const api = window.__mydrawTest.api();
+      const els = api.getSceneElements();
+      const z = els.find((e) => e.id === "ze_z");
+      const t = els.find((e) => e.customData?.mydrawZoneTitle === "ze_z");
+      const n = els.find((e) => e.id === "ze_n");
+      return { zone: { x: z.x, y: z.y, w: z.width, h: z.height, locked: z.locked }, title: { x: t.x, y: t.y, w: t.width, h: t.height, locked: t.locked }, node: { x: n.x, y: n.y }, selected: Object.keys(api.getAppState().selectedElementIds) };
+    });
+  await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+  await call("select", { drawing: "Zone edit", ids: [] });
+  let st = await state();
+  assert.equal(st.zone.locked, true, "zones start locked");
+  // A click inside the zone (not on its title) does not select it.
+  // An empty spot inside the zone, below its node.
+  const spot = (z) => ({ x: z.x + 30, y: z.y + z.h - 20 });
+  const inner = await toView(spot(st.zone).x, spot(st.zone).y);
+  await page.mouse.click(inner.x, inner.y);
+  assert.ok(!(await state()).selected.includes("ze_z"), "a click inside a locked zone doesn't grab it");
+  // A click on the title selects the zone and unlocks it.
+  const tv = await toView(st.title.x + st.title.w / 2, st.title.y + st.title.h / 2);
+  await page.mouse.click(tv.x, tv.y);
+  await waitFor(async () => (await state()).selected.includes("ze_z"), "title click selects the zone");
+  st = await state();
+  assert.equal(st.zone.locked, false, "the zone is unlocked while selected");
+  assert.equal(st.title.locked, false);
+  // Drag it by its body: contents and title follow.
+  const from = await toView(spot(st.zone).x, spot(st.zone).y);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 60, from.y + 40, { steps: 8 });
+  await page.mouse.up();
+  const moved = await state();
+  const dx = moved.zone.x - st.zone.x;
+  assert.ok(Math.abs(dx) > 20, `zone moved (${dx})`);
+  assert.ok(Math.abs(moved.node.x - st.node.x - dx) < 1, "its contents moved with it");
+  assert.ok(Math.abs(moved.title.x - st.title.x - dx) < 1, "its title moved with it");
+  // Clicking elsewhere locks it again.
+  const away = await toView(moved.zone.x - 120, moved.zone.y + 40);
+  await page.mouse.click(away.x, away.y);
+  await waitFor(async () => (await state()).zone.locked === true, "the zone locks again once deselected");
+  assert.equal((await state()).title.locked, true);
+}
+
 step("Phase 7: quick connect: hover handles, connected copy as one undo step, stencil search, zones");
 await call("new_drawing", { title: "Quick connect" });
 await call("add_elements", {
@@ -2335,10 +2535,10 @@ await t((x) => x.command({ type: "help" }));
 await page.waitForSelector(".md-help h2");
 assert.match(await page.textContent(".md-help h2"), /features and shortcuts/, "help dialog title");
 const helpTitles = await page.$$eval(".md-help-section", (els) => els.map((e) => e.getAttribute("data-help")));
-for (const title of ["Files and tabs", "Export", "Stencils and icons", "Colors and styles", "Fonts", "Diagrams from text", "Properties, inventory and links", "Pages and presentation", "Checks and layout", "Appearance", "Command line and Claude Code"]) {
+for (const title of ["Files and tabs", "Export", "Stencils and icons", "Colors and styles", "Fonts", "Diagrams from text", "Properties, inventory and links", "Pages and presentation", "Checks and layout", "Zones", "Appearance", "Command line and Claude Code"]) {
   assert.ok(helpTitles.includes(title), `help has the "${title}" section`);
 }
-assert.equal(helpTitles.length, 13, "help section count");
+assert.equal(helpTitles.length, 14, "help section count");
 assert.match(await page.textContent(".md-help"), /Preferences → Quick connect shortcuts/, "help names the real menu path");
 await page.keyboard.press("Escape");
 await waitFor(async () => (await page.locator(".md-help").count()) === 0, "Esc closes help");

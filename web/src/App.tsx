@@ -67,6 +67,7 @@ import type { DrawingMeta } from "../../shared/drawingMeta";
 import { StyleSection } from "./StyleSection";
 import { PropertiesSection } from "./PropertiesSection";
 import { followZones, type Positions } from "./zoneFollow";
+import { isOverZoneTitle, relockZones, zoneTitleClick } from "./zoneEdit";
 import { ShadowSection } from "./ShadowSection";
 import { IconStyleSection } from "./IconStyleSection";
 import { newTracker, stampNewShadows, type NewShadowTracker } from "./shadowOps";
@@ -511,6 +512,7 @@ export function App() {
       if (appState.isLoading) return;
       const zoneApi = apis.current.get(id);
       if (zoneApi) zonePositions.current.set(id, followZones(zoneApi, zonePositions.current.get(id), elements, appState));
+      if (zoneApi) relockZones(zoneApi, elements, appState);
       if (zoneApi) {
         let tr = shadowTrackers.current.get(id);
         if (!tr) shadowTrackers.current.set(id, (tr = newTracker()));
@@ -642,6 +644,32 @@ export function App() {
     },
     [showToast],
   );
+
+  // Zones are locked so clicks inside them reach their contents; a click on a zone's title unlocks
+  // and selects that zone (web/src/zoneEdit.ts). The click itself is swallowed.
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!root) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!(e.target instanceof HTMLCanvasElement)) return;
+      const api = apis.current.get(activeRef.current);
+      if (!api || !zoneTitleClick(api, e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    // A hand cursor over a zone title says it can be clicked.
+    const onPointerMove = (e: PointerEvent) => {
+      const api = apis.current.get(activeRef.current);
+      const over = !!api && e.target instanceof HTMLCanvasElement && e.buttons === 0 && isOverZoneTitle(api, e);
+      root.classList.toggle("md-zone-title-hover", over);
+    };
+    root.addEventListener("pointerdown", onPointerDown, true);
+    root.addEventListener("pointermove", onPointerMove, { capture: true, passive: true });
+    return () => {
+      root.removeEventListener("pointerdown", onPointerDown, true);
+      root.removeEventListener("pointermove", onPointerMove, true);
+    };
+  }, []);
 
   // Eyedropper: the next click on the canvas copies that element's color into the custom swatch.
   // The click is swallowed so Excalidraw doesn't change the selection.

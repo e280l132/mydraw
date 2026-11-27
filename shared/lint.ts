@@ -4,13 +4,14 @@
 // and the MCP tool `lint_diagram` both run it through web/src/lintOps.ts, which applies the fixes.
 import { normalizeHex, hexToRgb } from "./colorMath";
 import { tint, ZONE_PALETTE } from "./diagram";
+import { neutralZoneStyle, ZONE_KIND_STYLES } from "./zoneKinds";
 import { inventoryField } from "./inventory";
 import { qualityLint, type QEl } from "./lintQuality";
 import { PALETTES, resolveColor } from "./palettes";
 import { extractGraph, type SceneEl } from "./sceneGraph";
 import { BUILTIN_PRESETS, BUILTIN_THEMES } from "./styles";
 
-export const LINT_RULES = ["overlap", "unconnected-arrow", "unlabeled-node", "missing-ip", "off-palette-color", "edge-overlap", "label-collision", "edge-through-node", "crowded-node", "long-edge"] as const;
+export const LINT_RULES = ["overlap", "unconnected-arrow", "unlabeled-node", "missing-ip", "off-palette-color", "edge-overlap", "label-collision", "edge-through-node", "crowded-node", "long-edge", "zone-colors", "legend-too-big"] as const;
 export type LintRule = (typeof LINT_RULES)[number];
 export type LintSeverity = "warning" | "info";
 
@@ -25,7 +26,14 @@ export const LINT_SEVERITY: Record<LintRule, LintSeverity> = {
   "edge-through-node": "warning",
   "crowded-node": "info",
   "long-edge": "info",
+  "zone-colors": "info",
+  "legend-too-big": "info",
 };
+
+/** More distinct zone border colours than this, with zones that have no kind, reads as a rainbow. */
+export const MAX_ZONE_COLORS = 4;
+/** More legend rows than this crowd the drawing. */
+export const MAX_LEGEND_ROWS = 10;
 
 export type ArrowEnd = "start" | "end";
 
@@ -144,6 +152,9 @@ function builtinAllowed(): Set<string> {
     }
   }
   for (const pair of ZONE_PALETTE) for (const c of pair) out.add(c.toLowerCase());
+  for (const z of [...Object.values(ZONE_KIND_STYLES), ...[0, 1, 2, 3].map(neutralZoneStyle)]) {
+    for (const c of [z.stroke, z.fill]) if (c !== "transparent") out.add(c.toLowerCase());
+  }
   return out;
 }
 let BUILTIN_ALLOWED: Set<string> | null = null;
@@ -173,6 +184,8 @@ export function lintScene(elements: readonly LintEl[], opts: LintOptions = {}): 
     return (t?.text ?? "").trim();
   };
   const isLegend = (e: LintEl) => !!e.customData?.mydrawLegend;
+  /** Numbered step badges and the steps list: decoration of arrows, not nodes or notes. */
+  const isStep = (e: LintEl) => !!e.customData?.mydrawStep || !!e.customData?.mydrawSteps;
   const isZone = (e: LintEl) => !!e.customData?.mydrawZone;
   const isIcon = (e: LintEl) => e.customData?.mydrawNode === "icon";
   const stencilName = (e: LintEl) => (e.customData?.mydrawStencil as { name?: string } | undefined)?.name;
@@ -183,10 +196,10 @@ export function lintScene(elements: readonly LintEl[], opts: LintOptions = {}): 
   const nodes = graph.nodes.map((n) => map.get(n.id)!).filter(Boolean);
 
   // Node-like elements: shapes and icon nodes that are not zones or legend (also unlabeled ones).
-  const nodeLike = live.filter((e) => (isIcon(e) || SHAPES.has(e.type)) && !isZone(e) && !isLegend(e));
+  const nodeLike = live.filter((e) => (isIcon(e) || SHAPES.has(e.type)) && !isZone(e) && !isLegend(e) && !isStep(e));
 
   // Free text labels a shape when its centre is inside the shape (hand-drawn diagrams do that).
-  const freeTexts = live.filter((e) => e.type === "text" && !e.containerId && !e.customData?.mydrawZoneTitle && !isLegend(e) && (e.text ?? "").trim());
+  const freeTexts = live.filter((e) => e.type === "text" && !e.containerId && !e.customData?.mydrawZoneTitle && !isLegend(e) && !isStep(e) && (e.text ?? "").trim());
   const hasFreeLabel = (el: LintEl) => {
     const b = boxOf(el);
     return freeTexts.some((t) => {
@@ -330,6 +343,33 @@ export function lintScene(elements: readonly LintEl[], opts: LintOptions = {}): 
         push("off-palette-color", el, `${what} ${c} is not in the palette (nearest: ${near.name} ${near.color})`, {
           fix: { kind: "color", property: prop, color: near.color, name: near.name },
         });
+      }
+    }
+  }
+
+  // zone-colors: zones coloured in turn instead of by what they are
+  if (on("zone-colors")) {
+    const zones = live.filter((e) => isZone(e) && !e.customData?.mydrawZoneKind);
+    const colors = new Set(zones.map((z) => canonical(z.strokeColor)).filter((c): c is string => !!c && c !== "transparent"));
+    if (colors.size > MAX_ZONE_COLORS) {
+      push("zone-colors", zones[0], `${colors.size} different zone colours: give zones a kind (vpc, az, subnet-public, subnet-private, network, tier, ...) so the same kind of boundary looks the same, or use one neutral colour`);
+    }
+  }
+
+  // legend-too-big: a legend longer than the diagram it explains
+  if (on("legend-too-big")) {
+    // Per legend (one group each; views copy the legend onto every page).
+    const legends = new Map<string, LintEl[]>();
+    for (const e of live) {
+      if (!isLegend(e)) continue;
+      const g = e.groupIds?.[0] ?? "";
+      legends.set(g, [...(legends.get(g) ?? []), e]);
+    }
+    for (const legend of legends.values()) {
+      const rows = legend.filter((e) => e.type === "text").length - 1;
+      const frame = legend.find((e) => e.type === "rectangle");
+      if (frame && rows > MAX_LEGEND_ROWS) {
+        push("legend-too-big", frame, `The legend has ${rows} rows: list only arrow kinds and roles (add_legend icons "auto": captioned icons need no row)`);
       }
     }
   }
