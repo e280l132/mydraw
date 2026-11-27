@@ -5,16 +5,23 @@
 // component.)
 import type { IconSketch } from "../../shared/iconSketch";
 import { captionFontId, type CaptionPrefs } from "./library/captionFont";
-import { getCommonBounds, newElementWith } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, getCommonBounds, newElementWith } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { Box } from "../../shared/geometry";
 import type { LibraryItem } from "../../shared/library";
-import { facingSide, growToContain, OPPOSITE_SIDE, pickAnchor, pickPrimary, quickConnectBox, QUICK_COPY_GAP, QUICK_COPY_MARGIN, unionBox, type QuickSide } from "../../shared/quickConnect";
-import { loadIconImage, makeIconNode } from "./agent/diagram";
+import { facingSide, growToContain, OPPOSITE_SIDE, pickPrimary, quickConnectBox, QUICK_COPY_GAP, QUICK_COPY_MARGIN, unionBox, type QuickSide } from "../../shared/quickConnect";
+import { loadIconImage, makeIconNode, shapeImage } from "./agent/diagram";
+import { LinkPlanner, linkArrow, loadLinkStyle, type LinkStyle } from "./linkOps";
+import { nextLabel } from "../../shared/labelNumber";
+import type { Point } from "../../shared/geometry";
+import type { BinaryFileData } from "@excalidraw/excalidraw/types";
 import {
   boxOf,
   buildElements,
   iconNodeOf,
+  isIconNode,
+  relabel,
+  remeasureText,
   isLinear,
   isZone,
   randomId,
@@ -236,120 +243,422 @@ function growContainers(source: El, box: Box, map: ElMap): El[] {
   return changed;
 }
 
+export interface AttachOptions {
+  /** Centre of the new unit (dropped there by a drag); default: beside the source on `side`. */
+  at?: Point;
+  /** How the connecting arrow is drawn; default: the link style of ⌘-link mode (`mydraw.linkStyle`). */
+  style?: LinkStyle;
+}
+
+/** What adding a unit beside another would do (nothing committed). */
+export interface AttachPlan {
+  /** Where the new unit goes. */
+  box: Box;
+  /** The new unit's elements, in place. */
+  fresh: El[];
+  /** The connecting arrow (empty without one). */
+  arrows: El[];
+  /** Existing elements that change: arrow bindings, zones and frames grown to hold the new unit. */
+  changed: El[];
+  /** The new unit's main element. */
+  primary: El;
+  /** The arrow's route (scene coordinates), for previews; null without an arrow. */
+  route: Point[] | null;
+}
+
 /**
- * Place `els` (a new unit) on `side` of `unit`, optionally connect them with a bound arrow, and
- * commit everything as one undo step, selecting the new unit. Returns the new unit's id.
+ * Plan placing `els` (a new unit) on `side` of `unit` (or centred on `opts.at`), optionally joined
+ * to it by an arrow in the link style. `scene` may include elements not committed yet (earlier
+ * units of the same step).
  */
-function attach(api: ExcalidrawImperativeAPI, unit: QuickUnit, side: QuickSide, els: El[], connect: boolean): string {
-  const scene = api.getSceneElements();
+export function planAttach(scene: readonly El[], st: AppState, unit: QuickUnit, side: QuickSide, els: El[], connect: boolean, opts: AttachOptions = {}): AttachPlan {
   const map = liveMap(scene);
-  const st = api.getAppState();
   const [bx1, by1, bx2, by2] = getCommonBounds(els);
+  const size = { width: bx2 - bx1, height: by2 - by1 };
   // A shape (or zone, frame) drawn around the unit is where it lives, not something to avoid: the
   // copy stays inside it when there is room.
   const containers = containersOf(unit, scene);
-  const box = quickConnectBox({
-    source: unit.box,
-    side,
-    size: { width: bx2 - bx1, height: by2 - by1 },
-    obstacles: obstacleBoxes(unit.primary, scene, map, new Set(containers.map((c) => c.id))),
-    within: containers[0] ? boxOf(containers[0]) : undefined,
-    // A plain copy sits close beside the original; a connected one leaves room for the arrow.
-    ...(connect ? {} : { gap: QUICK_COPY_GAP, margin: QUICK_COPY_MARGIN, minGap: 12 }),
-  });
+  const box = opts.at
+    ? { x: opts.at.x - size.width / 2, y: opts.at.y - size.height / 2, ...size }
+    : quickConnectBox({
+        source: unit.box,
+        side,
+        size,
+        obstacles: obstacleBoxes(unit.primary, scene, map, new Set(containers.map((c) => c.id))),
+        within: containers[0] ? boxOf(containers[0]) : undefined,
+        // A plain copy sits close beside the original; a connected one leaves room for the arrow.
+        ...(connect ? {} : { gap: QUICK_COPY_GAP, margin: QUICK_COPY_MARGIN, minGap: 12 }),
+      });
   const dx = box.x - bx1;
   const dy = box.y - by1;
   const frameId = unit.primary.frameId ?? null;
   let fresh = els.map((e) => ({ ...e, x: e.x + dx, y: e.y + dy, frameId }) as El);
+  const target = pickPrimary(fresh);
+  if (!target) throw new Error("there is nothing to add");
 
   const changed: El[] = [];
   let arrows: El[] = [];
+  let route: Point[] | null = null;
   if (connect) {
-    // The arrow runs between the facing sides' anchors (a stencil's caption hangs below its image).
-    const from = pickAnchor(unit.members, side);
-    const to = pickAnchor(fresh, OPPOSITE_SIDE[side]);
-    if (!from || !to) throw new Error("there is nothing to connect");
-    // Same routing default as build_diagram: elbow, which is straight when in line.
-    const r = buildElements([{ type: "arrow", id: randomId(), from: from.id, to: to.id, routing: "elbow" }], [...scene, ...fresh], st);
+    const style = opts.style ?? loadLinkStyle();
+    const all = [...scene, ...fresh];
+    const allMap = liveMap(all);
+    const editing = st.editingGroupId ?? null;
+    const planner = new LinkPlanner({ elements: all, editingGroupId: editing }, unit.id, side);
+    // Beside the source: into the facing side, so the arrow is straight. Dropped elsewhere: the best side.
+    const plan = planner.plan({ unitId: target.id, side: opts.at ? "auto" : OPPOSITE_SIDE[side], ratio: 0.5 }, [], style.routing, (id) => unitFor(allMap.get(id), allMap, editing));
+    if (!plan) throw new Error("there is nothing to connect");
+    const r = linkArrow(all, st, plan, style);
     const freshIds = new Set(fresh.map((e) => e.id));
     changed.push(...r.changed.filter((e) => !freshIds.has(e.id)));
     for (const c of r.changed) if (freshIds.has(c.id)) fresh = fresh.map((e) => (e.id === c.id ? c : e));
-    arrows = r.added.map((e) => ({ ...e, frameId }) as El);
+    arrows = r.added;
+    route = plan.points;
   }
-
   changed.push(...growContainers(unit.primary, box, map));
+  return { box, fresh, arrows, changed, primary: pickPrimary(fresh) ?? target, route };
+}
 
-  const primary = pickPrimary(fresh);
-  if (!primary) throw new Error("there is nothing to add");
-  const group = primary.groupIds.at(-1);
-  commitElements(api, changed, [...fresh, ...arrows], {
-    selectedElementIds: Object.fromEntries(fresh.filter((e) => !(e.type === "text" && (e as El & Loose).containerId && !group)).map((e) => [e.id, true])),
-    selectedGroupIds: group ? { [group]: true } : {},
-    editingGroupId: null,
-  } as Partial<AppState>);
-  return primary.id;
+/** Selection that selects the new units as a click would (a group as its group). */
+function selectionOf(units: readonly El[][]): Partial<AppState> {
+  const ids: Record<string, true> = {};
+  const groups: Record<string, true> = {};
+  for (const fresh of units) {
+    const primary = pickPrimary(fresh);
+    const group = primary?.groupIds.at(-1);
+    if (group) groups[group] = true;
+    for (const e of fresh) if (!(e.type === "text" && (e as El & Loose).containerId && !group)) ids[e.id] = true;
+  }
+  return { selectedElementIds: ids, selectedGroupIds: groups, editingGroupId: null } as Partial<AppState>;
+}
+
+interface Job {
+  unit: QuickUnit;
+  els: El[];
+  /** Centre for this unit's new unit (drag and drop), else beside it. */
+  at?: Point;
+}
+
+/** Plan several new units (each beside its own source); each placement sees the ones before it. */
+function planMany(api: ExcalidrawImperativeAPI, jobs: readonly Job[], side: QuickSide, connect: boolean, opts: AttachOptions = {}) {
+  const st = api.getAppState();
+  let scene: El[] = [...api.getSceneElements()];
+  const added = new Map<string, El>();
+  const changed = new Map<string, El>();
+  const plans: AttachPlan[] = [];
+  for (const job of jobs) {
+    const p = planAttach(scene, st, job.unit, side, job.els, connect, { ...opts, at: job.at ?? opts.at });
+    for (const c of p.changed) {
+      if (added.has(c.id)) added.set(c.id, c);
+      else changed.set(c.id, c);
+    }
+    for (const e of [...p.fresh, ...p.arrows]) added.set(e.id, e);
+    const byId = new Map(p.changed.map((c) => [c.id, c]));
+    scene = [...scene.map((e) => byId.get(e.id) ?? e), ...p.fresh, ...p.arrows];
+    plans.push(p);
+  }
+  return { plans, changed, added };
 }
 
 /**
- * Add a copy of the unit `unitId` (same type, size, style and label; a stencil with its caption; a
- * group as a group) on `side`. With `connect` (the default) an arrow joins them; without it the copy
- * just sits beside the original.
+ * Add several new units at once (each beside its own source), as ONE undo step, selecting them.
+ * Returns the new units' main element ids.
  */
-export function addConnectedCopy(api: ExcalidrawImperativeAPI, unitId: string, side: QuickSide, opts: { connect?: boolean } = {}): string | null {
-  const unit = unitById(api, unitId);
-  if (!unit) return null;
-  const members = unit.members.map((m) => ({ ...m, link: null, customData: copyCustomData(m.customData as Loose | undefined) }) as El);
-  return attach(api, unit, side, cloneForInsert(members), opts.connect !== false);
+function attachMany(api: ExcalidrawImperativeAPI, jobs: readonly Job[], side: QuickSide, connect: boolean, opts: AttachOptions = {}): string[] {
+  const { plans, changed, added } = planMany(api, jobs, side, connect, opts);
+  commitElements(api, [...changed.values()], [...added.values()], selectionOf(plans.map((p) => p.fresh)));
+  return plans.map((p) => p.primary.id);
 }
 
-/** Add `item` (an SVG/PNG stencil) as an icon node on `side` of `unitId`, connected by an arrow. */
+/** Centres for copies dropped at `at`: the first unit's copy there, the others keeping their offsets. */
+function dropCentres(units: readonly QuickUnit[], at: Point | undefined): (Point | undefined)[] {
+  if (!at || !units.length) return units.map(() => undefined);
+  const c0 = { x: units[0].box.x + units[0].box.width / 2, y: units[0].box.y + units[0].box.height / 2 };
+  return units.map((u) => ({ x: at.x + u.box.x + u.box.width / 2 - c0.x, y: at.y + u.box.y + u.box.height / 2 - c0.y }));
+}
+
+function copyJobs(api: ExcalidrawImperativeAPI, unitIds: readonly string[], side: QuickSide, at?: Point): Job[] {
+  const units = unitIds.map((id) => unitById(api, id)).filter((u): u is QuickUnit => !!u);
+  // Order along the side, so each copy finds its spot next to the one placed before it.
+  const horizontal = side === "top" || side === "bottom";
+  if (!at) units.sort((a, b) => (horizontal ? a.box.x - b.box.x : a.box.y - b.box.y));
+  const centres = dropCentres(units, at);
+  const names: string[] = [];
+  return units.map((unit, i) => {
+    const els = copyOf(api, unit, names);
+    names.push(...textsOf(els));
+    return { unit, els, at: centres[i] };
+  });
+}
+
+/**
+ * Where copies of `unitIds` on `side` (or dropped at `at`) would go, and their arrows' routes: for
+ * previews, nothing is changed. Null when nothing can be copied.
+ */
+export function previewCopies(api: ExcalidrawImperativeAPI, unitIds: readonly string[], side: QuickSide, connect: boolean, at?: Point): { boxes: Box[]; routes: Point[][] } | null {
+  try {
+    const jobs = copyJobs(api, unitIds, side, at);
+    if (!jobs.length) return null;
+    const { plans } = planMany(api, jobs, side, connect);
+    return { boxes: plans.map((p) => p.box), routes: plans.flatMap((p) => (p.route ? [p.route] : [])) };
+  } catch {
+    return null;
+  }
+}
+
+/** Copy of a unit's members (fresh ids, no link, only our own customData), labelled for a copy when `count` is on. */
+function copyOf(api: ExcalidrawImperativeAPI, unit: QuickUnit, extraNames: string[] = []): El[] {
+  const members = unit.members.map((m) => ({ ...m, link: null, customData: copyCustomData(m.customData as Loose | undefined) }) as El);
+  const fresh = cloneForInsert(members);
+  return countLabel(fresh, [...textsOf(api.getSceneElements()), ...extraNames], api.getAppState());
+}
+
+const textsOf = (els: readonly El[]) => els.filter((e) => e.type === "text" && !e.isDeleted).map((e) => String((e as El & Loose).originalText ?? (e as El & Loose).text ?? ""));
+
+/**
+ * The copy's label counted up ("web-1" -> "web-2", "Server" -> "Server 2"; see shared/labelNumber.ts).
+ * Only for a unit with exactly one text (a shape's label, an icon's caption); groups of labelled
+ * shapes are copied as they are.
+ */
+function countLabel(fresh: El[], existing: string[], st: AppState): El[] {
+  const texts = fresh.filter((e) => e.type === "text");
+  if (texts.length !== 1) return fresh;
+  const label = texts[0] as El & Loose;
+  const next = nextLabel(String(label.originalText ?? label.text ?? ""), existing);
+  if (!next) return fresh;
+  const map = liveMap(fresh);
+  const container = label.containerId ? map.get(label.containerId as string) : undefined;
+  if (container && !isIconNode(container)) {
+    const r = relabel(container, next, map, st);
+    const byId = new Map([...r.changed, ...r.added].map((e) => [e.id, e]));
+    return fresh.map((e) => byId.get(e.id) ?? e);
+  }
+  // An icon's caption (bound to the borderless node, or a stencil's free caption): re-measured and
+  // kept centred under the icon.
+  const t = remeasureText(label, { text: next });
+  const moved = newElementWith(t, { x: label.x + label.width / 2 - t.width / 2 } as never);
+  return fresh.map((e) => (e.id === label.id ? moved : e));
+}
+
+/**
+ * Add a copy of the unit `unitId` (same type, size, style; label counted up; a stencil with its
+ * caption; a group as a group) on `side`, or centred on `opts.at`. With `connect` (the default) an
+ * arrow in the link style joins them; without it the copy just sits beside the original.
+ */
+export function addConnectedCopy(api: ExcalidrawImperativeAPI, unitId: string, side: QuickSide, opts: { connect?: boolean; at?: Point } = {}): string | null {
+  return addConnectedCopies(api, [unitId], side, opts)[0] ?? null;
+}
+
+/**
+ * The same for several units: each gets its own copy on `side` (or, with `at`, dropped there keeping
+ * their arrangement), one undo step. Returns the new units' main element ids.
+ */
+export function addConnectedCopies(api: ExcalidrawImperativeAPI, unitIds: readonly string[], side: QuickSide, opts: { connect?: boolean; at?: Point } = {}): string[] {
+  const jobs = copyJobs(api, unitIds, side, opts.at);
+  return jobs.length ? attachMany(api, jobs, side, opts.connect !== false) : [];
+}
+
+/** Jobs adding the same new unit (`els`, fresh ids for each) beside each of `unitIds`. */
+function sameForEach(api: ExcalidrawImperativeAPI, unitIds: readonly string[], els: El[], at?: Point): Job[] {
+  const units = unitIds.map((id) => unitById(api, id)).filter((u): u is QuickUnit => !!u);
+  const centres = dropCentres(units, at);
+  return units.map((unit, i) => ({ unit, els: i === 0 ? els : cloneForInsert(els), at: centres[i] }));
+}
+
+const idList = (ids: string | readonly string[]) => (typeof ids === "string" ? [ids] : ids);
+
+/** Add `item` (an SVG/PNG stencil) as an icon node on `side` of each of `unitIds`, connected by an arrow. Returns the first new node's id. */
 export async function addConnectedStencil(
   api: ExcalidrawImperativeAPI,
-  unitId: string,
+  unitIds: string | readonly string[],
   side: QuickSide,
   item: LibraryItem,
   sketch: IconSketch | null = null,
   captionPrefs: CaptionPrefs | null = null,
+  opts: AttachOptions = {},
 ): Promise<string | null> {
   if (item.kind !== "svg" && item.kind !== "png") throw new Error(`“${item.name}” is not an icon`);
   const st = api.getAppState();
-  const opts = { fontFamily: captionFontId(captionPrefs, !!sketch, st.currentItemFontFamily as number), strokeColor: st.currentItemStrokeColor };
-  const { image, files } = await loadIconImage(item, { ...opts, sketch });
+  const style = { fontFamily: captionFontId(captionPrefs, !!sketch, st.currentItemFontFamily as number), strokeColor: st.currentItemStrokeColor };
+  const { image, files } = await loadIconImage(item, { ...style, sketch });
   // The scene may have changed while the icon loaded.
-  const unit = unitById(api, unitId);
+  const unit = unitById(api, idList(unitIds)[0]);
   if (!unit) return null;
   const zone = zoneOf(unit.primary);
   const els = makeIconNode({
     image,
     caption: item.name,
-    ...opts,
+    ...style,
     x: 0,
     y: 0,
     customData: zone ? { mydrawZoneId: zone } : undefined,
     stencil: { id: item.id, name: item.name },
   });
-  const id = attach(api, unit, side, els, true);
+  const [id] = attachMany(api, sameForEach(api, idList(unitIds), els, opts.at), side, true, { style: opts.style });
   // After updateScene: Excalidraw loads images for files added while an element uses them.
   api.addFiles(files);
-  return id;
+  return id ?? null;
+}
+
+/** Basic shapes the quick connect picker offers besides stencils. */
+export type QuickShape = "rectangle" | "rounded" | "ellipse" | "diamond" | "cylinder" | "cloud" | "document" | "hexagon";
+export const QUICK_SHAPES: readonly QuickShape[] = ["rectangle", "rounded", "ellipse", "diamond", "cylinder", "cloud", "document", "hexagon"];
+export const QUICK_SHAPE_LABEL: Record<QuickShape, string> = {
+  rectangle: "Rectangle",
+  rounded: "Rounded rectangle",
+  ellipse: "Ellipse",
+  diamond: "Diamond",
+  cylinder: "Database (cylinder)",
+  cloud: "Cloud",
+  document: "Document",
+  hexagon: "Hexagon",
+};
+
+/**
+ * Add a new empty shape on `side` of `unitId`, connected by an arrow. Plain shapes take the size of
+ * the source when it is a plain shape, and the current style for new shapes; drawn shapes (cylinder,
+ * cloud, ...) are icon nodes like build_diagram's. Returns the new shape's id (the element whose
+ * label to edit).
+ */
+export async function addConnectedShape(api: ExcalidrawImperativeAPI, unitIds: string | readonly string[], side: QuickSide, shape: QuickShape, opts: AttachOptions = {}): Promise<string | null> {
+  const st = api.getAppState();
+  const unitId = idList(unitIds)[0];
+  let unit = unitById(api, unitId);
+  if (!unit) return null;
+  const src = unit.primary;
+  const plain = SHAPES.has(src.type) && !isIconNode(src);
+  const width = plain ? Math.max(60, Math.round(src.width)) : 140;
+  const height = plain ? Math.max(40, Math.round(src.height)) : 70;
+  const zone = zoneOf(src);
+  const customData = zone ? { mydrawZoneId: zone } : undefined;
+  let els: El[];
+  let files: BinaryFileData[] = [];
+  if (shape === "rectangle" || shape === "rounded" || shape === "ellipse" || shape === "diamond") {
+    const r = buildElements(
+      [
+        {
+          type: shape === "rounded" ? "rectangle" : shape,
+          id: randomId(),
+          x: 0,
+          y: 0,
+          width,
+          height,
+          ...(shape === "rounded" ? { roundness: { type: 3 } } : shape === "rectangle" ? { roundness: null } : {}),
+          ...(customData ? { customData } : {}),
+        },
+      ],
+      api.getSceneElements(),
+      st,
+    );
+    els = r.added;
+  } else {
+    const fill = st.currentItemBackgroundColor && st.currentItemBackgroundColor !== "transparent" ? st.currentItemBackgroundColor : "#ffffff";
+    const drawn = await shapeImage(shape, { width, height, stroke: st.currentItemStrokeColor, fill, strokeWidth: st.currentItemStrokeWidth });
+    files = [drawn.file];
+    const node = makeIconNode({
+      image: drawn.image as never,
+      caption: "",
+      fontFamily: st.currentItemFontFamily as number,
+      strokeColor: st.currentItemStrokeColor,
+      x: 0,
+      y: 0,
+      labelInside: true,
+      customData: { ...(customData ?? {}), mydrawShape: shape },
+    });
+    // The shape image goes first: Excalidraw draws a bound label right after its container.
+    const [container, image, ...rest] = node;
+    els = [image, container, ...rest];
+    // The scene may have changed while the shape was drawn.
+    unit = unitById(api, unitId);
+    if (!unit) return null;
+  }
+  const [id] = attachMany(api, sameForEach(api, idList(unitIds), els, opts.at), side, true, { style: opts.style });
+  if (files.length) api.addFiles(files);
+  return id ?? null;
 }
 
 /**
- * Connect the unit `fromId` (leaving from its `side`) to the existing unit `toId` with a bound elbow
- * arrow, arriving on the side of the target that faces the source. One undo step; the selection is
- * left alone so several connections can be made in a row. Returns the arrow id.
+ * Connect the unit `fromId` (leaving from its `side`) to the existing unit `toId` with an arrow in
+ * the link style, arriving on the side of the target that faces the source. One undo step; the
+ * selection is left alone so several connections can be made in a row. Returns the arrow id.
  */
-export function connectUnits(api: ExcalidrawImperativeAPI, fromId: string, side: QuickSide, toId: string): string | null {
-  const a = unitById(api, fromId);
-  const b = unitById(api, toId);
-  if (!a || !b || a.id === b.id) return null;
-  const from = pickAnchor(a.members, side);
-  const to = pickAnchor(b.members, facingSide(a.box, b.box));
-  if (!from || !to) return null;
-  const id = randomId();
-  const r = buildElements([{ type: "arrow", id, from: from.id, to: to.id, routing: "elbow" }], api.getSceneElements(), api.getAppState());
-  // Inside one frame the arrow belongs to it too; across frames it stays outside both.
-  const frameId = a.primary.frameId && a.primary.frameId === b.primary.frameId ? a.primary.frameId : null;
-  commitElements(api, r.changed, r.added.map((e) => ({ ...e, frameId }) as El));
-  return id;
+export function connectUnits(api: ExcalidrawImperativeAPI, fromId: string, side: QuickSide, toId: string, style: LinkStyle = loadLinkStyle()): string | null {
+  return connectMany(api, [fromId], side, toId, style)[0] ?? null;
+}
+
+/** Connect each of `fromIds` (leaving from `side`) to `toId`, one undo step. Returns the arrow ids. */
+export function connectMany(api: ExcalidrawImperativeAPI, fromIds: readonly string[], side: QuickSide, toId: string, style: LinkStyle = loadLinkStyle()): string[] {
+  const st = api.getAppState();
+  let scene: El[] = [...api.getSceneElements()];
+  const target = unitById(api, toId);
+  if (!target) return [];
+  const added: El[] = [];
+  const changed = new Map<string, El>();
+  const ids: string[] = [];
+  for (const fromId of fromIds) {
+    const a = unitById(api, fromId);
+    if (!a || a.id === target.id) continue;
+    const map = liveMap(scene);
+    let planner: LinkPlanner;
+    try {
+      planner = new LinkPlanner({ elements: scene, editingGroupId: st.editingGroupId ?? null }, a.id, side);
+    } catch {
+      continue;
+    }
+    const plan = planner.plan({ unitId: target.id, side: facingSide(a.box, target.box), ratio: 0.5 }, [], style.routing, (id) => unitFor(map.get(id), map, st.editingGroupId ?? null));
+    if (!plan) continue;
+    const r = linkArrow(scene, st, plan, style);
+    for (const c of r.changed) changed.set(c.id, c);
+    added.push(...r.added);
+    const byId = new Map(r.changed.map((c) => [c.id, c]));
+    scene = [...scene.map((e) => byId.get(e.id) ?? e), ...r.added];
+    ids.push(r.id);
+  }
+  if (ids.length) commitElements(api, [...changed.values()], added);
+  return ids;
+}
+
+/** Every selected unit (a group counts once), or [] when something that is not a unit is selected too. */
+export function selectedUnits(api: ExcalidrawImperativeAPI): QuickUnit[] {
+  const st = api.getAppState();
+  const sel = st.selectedElementIds;
+  const scene = api.getSceneElements();
+  const map = liveMap(scene);
+  const out = new Map<string, QuickUnit>();
+  for (const el of scene) {
+    if (!sel[el.id]) continue;
+    if (el.type === "text" && (el as El & Loose).containerId && sel[(el as El & Loose).containerId as string]) continue;
+    const u = unitFor(el, map, st.editingGroupId);
+    if (!u) return [];
+    out.set(u.id, u);
+  }
+  return [...out.values()];
+}
+
+/** The units directly connected to `unitId` by arrows, in reading order (top to bottom, left to right). */
+export function neighboursOf(api: ExcalidrawImperativeAPI, unitId: string): QuickUnit[] {
+  const unit = unitById(api, unitId);
+  if (!unit) return [];
+  const scene = api.getSceneElements();
+  const map = liveMap(scene);
+  const editing = api.getAppState().editingGroupId;
+  const own = new Set(unit.members.map((m) => m.id));
+  const out = new Map<string, QuickUnit>();
+  for (const e of scene) {
+    if (e.isDeleted || e.type !== "arrow") continue;
+    const a = e as El & { startBinding?: { elementId: string } | null; endBinding?: { elementId: string } | null };
+    const ends = [a.startBinding?.elementId, a.endBinding?.elementId];
+    if (!ends.some((id) => id && own.has(id))) continue;
+    for (const id of ends) {
+      if (!id || own.has(id)) continue;
+      const u = unitFor(map.get(id), map, editing);
+      if (u && u.id !== unit.id) out.set(u.id, u);
+    }
+  }
+  return [...out.values()].sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x);
+}
+
+/** Select a unit as a click would (a group as its group). */
+export function selectUnit(api: ExcalidrawImperativeAPI, u: QuickUnit): void {
+  api.updateScene({ appState: { ...api.getAppState(), ...selectionOf([u.members]) } as AppState, captureUpdate: CaptureUpdateAction.NEVER });
 }

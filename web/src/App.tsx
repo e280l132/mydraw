@@ -1957,6 +1957,7 @@ export function App() {
           captionPrefs={settings}
           blocked={shortcutsOpen || fontsOpen || helpOpen || inventoryOpen || importOpen || historyOpen || exportOpen || paletteOpen || findOpen || picking || packsOpen || !!saveSelection || !!renaming}
           onToast={showToast}
+          onOpenSettings={() => setShortcutsOpen(true)}
         />
       )}
       {activeId && brushing && (

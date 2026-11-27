@@ -20,7 +20,7 @@ import {
   type El,
   type ElMap,
 } from "./agent/sceneOps";
-import { unitById, type QuickUnit } from "./quickConnectOps";
+import { unitById, unitFor, type QuickUnit } from "./quickConnectOps";
 import { commitElements, selectedIds } from "./uiActions";
 
 type Loose = Record<string, unknown>;
@@ -94,13 +94,23 @@ export class LinkPlanner {
   private fromBox: Box;
   private obstacleCache = new Map<string, Box[]>();
 
+  /**
+   * `from`: the live drawing, or a list of elements (the scene plus things not committed yet, e.g. a
+   * quick-connect copy that is being added in the same step).
+   */
   constructor(
-    api: ExcalidrawImperativeAPI,
+    from: ExcalidrawImperativeAPI | { elements: readonly El[]; editingGroupId?: string | null },
     readonly sourceId: string,
     readonly side: Side,
   ) {
-    this.map = liveMap(api.getSceneElements());
-    const unit = unitById(api, sourceId);
+    let unit: QuickUnit | null;
+    if ("getSceneElements" in from) {
+      this.map = liveMap(from.getSceneElements());
+      unit = unitById(from, sourceId);
+    } else {
+      this.map = liveMap(from.elements);
+      unit = unitFor(this.map.get(sourceId), this.map, from.editingGroupId ?? null);
+    }
     if (!unit) throw new Error("the shape is gone");
     this.source = unit;
     const anchor = pickAnchor(unit.members, side);
@@ -182,9 +192,35 @@ function distance(a: Box, b: Box, side: Side): number {
 
 /** Commit a planned link as one undo step. Returns the arrow id. */
 export function createLink(api: ExcalidrawImperativeAPI, plan: LinkPlan, style: LinkStyle): string {
-  const scene = api.getSceneElements();
+  return createLinks(api, [plan], style)[0];
+}
+
+/** Commit several planned links (from several sources) as ONE undo step. Returns the arrow ids. */
+export function createLinks(api: ExcalidrawImperativeAPI, plans: readonly LinkPlan[], style: LinkStyle): string[] {
+  const st = api.getAppState();
+  let scene: El[] = [...api.getSceneElements()];
+  const changed = new Map<string, El>();
+  const added: El[] = [];
+  const ids: string[] = [];
+  for (const plan of plans) {
+    const r = linkArrow(scene, st, plan, style);
+    for (const c of r.changed) changed.set(c.id, c);
+    added.push(...r.added);
+    const byId = new Map(r.changed.map((c) => [c.id, c]));
+    scene = [...scene.map((e) => byId.get(e.id) ?? e), ...r.added];
+    ids.push(r.id);
+  }
+  commitElements(api, [...changed.values()], added);
+  return ids;
+}
+
+/**
+ * The arrow for a planned link (styled like a new arrow, with our route, bindings, heads and dash),
+ * without committing it: `added` = the arrow, `changed` = the ends with the arrow in their
+ * boundElements. `scene` may hold elements that are not committed yet (they come back in `changed`).
+ */
+export function linkArrow(scene: readonly El[], st: AppState, plan: LinkPlan, style: LinkStyle): { id: string; changed: El[]; added: El[] } {
   const map = liveMap(scene);
-  const st: AppState = api.getAppState();
   const from = map.get(plan.fromId);
   if (!from) throw new Error("the shape is gone");
   const to = plan.toId ? map.get(plan.toId) : undefined;
@@ -232,8 +268,7 @@ export function createLink(api: ExcalidrawImperativeAPI, plan: LinkPlan, style: 
     strokeStyle: style.dashed ? "dashed" : "solid",
     customData: Object.keys(data).length ? data : undefined,
   } as El;
-  commitElements(api, changed, [arrow, ...r.added.filter((e) => e.id !== id)]);
-  return id;
+  return { id, changed, added: [arrow, ...r.added.filter((e) => e.id !== id)] };
 }
 
 /**

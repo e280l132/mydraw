@@ -30,7 +30,9 @@ describe("actionFor: defaults", () => {
     expect(actionFor(mac, held("MetaRight"), "left", true)).toBe("linkTo");
     expect(actionFor(mac, held("Meta"), "left", true)).toBe("linkTo"); // side unknown (flag only)
     expect(actionFor(mac, held("ShiftLeft"), "left", true)).toBe("pickStencil");
-    expect(actionFor(mac, held(), "right", true)).toBe("pickStencil");
+    expect(actionFor(mac, held(), "right", true)).toBe("menu");
+    expect(actionFor(mac, held("ControlLeft"), "right", true)).toBe("menu"); // Control-click = right-click on a Mac
+    expect(actionFor(pc, held("ControlLeft", "ShiftLeft"), "left", false)).toBe("menu");
   });
 
   it("uses Ctrl for linking off a Mac", () => {
@@ -62,9 +64,9 @@ describe("actionFor: sides, Control, F-keys", () => {
     const q = withKeys(mac, { connectedCopy: ["Control"] });
     expect(actionFor(q, held("ControlLeft"), "left", true)).toBe("connectedCopy");
     expect(actionFor(q, held("ControlLeft"), "right", true)).toBe("connectedCopy");
-    expect(actionFor(q, held(), "right", true)).toBe("pickStencil");
+    expect(actionFor(q, held(), "right", true)).toBe("menu");
     // Off a Mac a right-click is a right-click.
-    expect(actionFor(withKeys(pc, { connectedCopy: ["Alt"] }), held("ControlLeft"), "right", false)).toBe("pickStencil");
+    expect(actionFor(withKeys(pc, { connectedCopy: ["Alt"] }), held("ControlLeft"), "right", false)).toBe("menu");
   });
 
   it("supports function keys, alone or with modifiers", () => {
@@ -110,7 +112,8 @@ describe("keys", () => {
     expect(describeCombo(["Alt"], true)).toBe("Option-click");
     expect(describeCombo(["Shift", "MetaRight"], true)).toBe("Right ⌘-Shift-click");
     expect(describeCombo(["F5", "AltLeft"], true)).toBe("Left Option-F5-click");
-    expect(describeBinding(mac.bindings.pickStencil, true)).toBe("Shift-click or right-click");
+    expect(describeBinding(mac.bindings.pickStencil, true)).toBe("Shift-click");
+    expect(describeBinding(mac.bindings.menu, true)).toBe("Control-click or right-click");
   });
 });
 
@@ -132,7 +135,9 @@ describe("normalizeQuickConnect", () => {
     const n = normalizeQuickConnect(old, true);
     expect(n.bindings.connectedCopy.keys).toEqual(["Shift"]);
     expect(n.bindings.linkTo.keys).toEqual(["Meta"]);
-    expect(n.bindings.pickStencil).toEqual({ keys: ["Alt"], rightClick: true });
+    // Right-click moved to the menu (saved before it existed).
+    expect(n.bindings.pickStencil).toEqual({ keys: ["Alt"] });
+    expect(n.bindings.menu).toEqual({ keys: ["Control"], rightClick: true });
     expect(normalizeQuickConnect(old, false).bindings.linkTo.keys).toEqual(["Control"]);
   });
 
@@ -146,6 +151,27 @@ describe("normalizeQuickConnect", () => {
     const n = normalizeQuickConnect({ bindings: { connectedCopy: { keys: ["MetaRight"] } } }, true);
     expect(n.bindings.connectedCopy.keys).toEqual(["MetaRight"]);
     expect(n.bindings.linkTo.keys).toEqual(["Meta"]);
+  });
+});
+
+describe("menu migration", () => {
+  it("gives the menu a free combo when saved settings already use Control", () => {
+    const n = normalizeQuickConnect({ bindings: { copy: { keys: ["F5"] }, connectedCopy: { keys: ["MetaRight"] }, linkTo: { keys: ["Meta"] }, pickStencil: { keys: ["Control"], rightClick: true } } }, true);
+    expect(n.bindings.connectedCopy.keys).toEqual(["MetaRight"]); // kept, not reset
+    expect(n.bindings.pickStencil).toEqual({ keys: ["Control"] });
+    expect(n.bindings.menu).toEqual({ keys: ["Control", "Shift"], rightClick: true });
+    expect(findConflicts(n)).toEqual([]);
+  });
+
+  it("keeps a saved menu binding as it is", () => {
+    const n = normalizeQuickConnect({ bindings: { menu: { keys: ["F2"] }, pickStencil: { keys: ["Shift"], rightClick: true } } }, true);
+    expect(n.bindings.menu).toEqual({ keys: ["F2"] });
+    expect(n.bindings.pickStencil.rightClick).toBe(true);
+  });
+
+  it("reads editLabel", () => {
+    expect(normalizeQuickConnect({ editLabel: true }, true).editLabel).toBe(true);
+    expect(normalizeQuickConnect({ editLabel: "yes" }, true).editLabel).toBe(false);
   });
 });
 

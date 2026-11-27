@@ -115,6 +115,8 @@ renders in a fallback font, and saved files keep the fonts they carry.
 | `.dropdown-menu-item-custom` styling for our menu rows | `web/src/AppMenu.tsx`, `styles.css` | by hand |
 | Excalidraw's layers share the page's stacking context: static canvas `--zIndex-canvas` 1, interactive canvas 2, UI layer `--zIndex-layerUI` 4. The fallback grid overlay (`.md-grid-canvas`, z-index 1, after Excalidraw in the DOM) relies on this to sit under handles, toolbars and menus. Never raise Excalidraw's own elements (e.g. `.Island`) to fix stacking: its menus live inside Islands and end up behind the style panel | `styles.css` | smoke (menu above style panel), by hand for the fallback |
 | Keyboard shortcuts work only while `.excalidraw` has focus (we focus it after closing our dialogs) | `App.tsx`, `QuickConnect.tsx` | smoke |
+| A synthetic `dblclick` on the interactive canvas over a selected plain shape starts editing its label (Excalidraw has no API to start text editing) | `editLabelOf` in `QuickConnect.tsx` | smoke "Quick connect: preview, right-click menu…" (diamond label typed) |
+| ⌘+arrow is Excalidraw's flowchart key; our ⌥⌘+arrow is swallowed in a window capture listener before Excalidraw's document listener sees it | `QuickConnect.tsx` keyboard effect | smoke (keyboard chain) |
 | `CaptureUpdateAction`: `IMMEDIATELY` = own undo step; `NEVER` = not in history; `EVENTUALLY` merges into the *previous* committed change | executor, zone follow, icon recolor | smoke |
 | Selection changes are recorded in undo history; `customData` changes are not | properties, executor | smoke |
 | `updateScene` before `addFiles` when swapping an image's `fileId` (images load only for files added while referenced) | `web/src/library/iconColor.ts` | smoke (recolor) |

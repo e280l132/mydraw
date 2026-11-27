@@ -29,6 +29,9 @@ export const SHORTCUTS = {
   quickSaveStencil: "⌥⌘S",
   copyLook: "⌥⌘C",
   align: "⇧⌘←/→/↑/↓",
+  quickAdd: "⌥⌘←/→/↑/↓",
+  quickAddCopy: "⇧⌥⌘←/→/↑/↓",
+  quickNext: "⇥",
   bold: "⌘B",
   italic: "⌘I",
 } as const;

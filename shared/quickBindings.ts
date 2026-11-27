@@ -29,14 +29,15 @@ export function familyOf(t: KeyToken): ModFamily | null {
 }
 const isSided = (t: KeyToken) => SIDED.includes(t);
 
-export type QuickAction = "copy" | "connectedCopy" | "linkTo" | "pickStencil";
-export const QUICK_ACTIONS: readonly QuickAction[] = ["copy", "connectedCopy", "linkTo", "pickStencil"];
+export type QuickAction = "copy" | "connectedCopy" | "linkTo" | "pickStencil" | "menu";
+export const QUICK_ACTIONS: readonly QuickAction[] = ["copy", "connectedCopy", "linkTo", "pickStencil", "menu"];
 
 export const ACTION_LABEL: Record<QuickAction, string> = {
   copy: "Add a copy",
   connectedCopy: "Add a copy joined by an arrow",
   linkTo: "Draw an arrow to another shape",
-  pickStencil: "Pick a stencil",
+  pickStencil: "Pick a shape or stencil",
+  menu: "Open the quick connect menu",
 };
 
 export interface QuickBinding {
@@ -62,22 +63,30 @@ export const LINK_KEY_LABEL: Record<LinkKeyName, string> = {
 export interface QuickConnectSettings {
   bindings: Record<QuickAction, QuickBinding>;
   linkKeys: LinkKeys;
+  /** Open the new shape's label for typing right after quick connect adds it. */
+  editLabel: boolean;
 }
 
 /** Mac or not, wherever this runs (renderer, main, tests). */
 export const IS_MAC_PLATFORM: boolean =
   typeof navigator !== "undefined" && navigator.platform ? /Mac|darwin/i.test(navigator.platform) : (globalThis as { process?: { platform?: string } }).process?.platform === "darwin";
 
-/** The old defaults: click, Option-click, ⌘-click (Ctrl-click off a Mac), Shift-click / right-click; R, A, D. */
+/** Key combos tried, in order, for the menu when settings saved before it existed have no binding for it. */
+const MENU_KEYS = (mac: boolean): KeyToken[][] =>
+  mac ? [["Control"], ["Control", "Shift"], ["Control", "Alt"], ["Alt", "Shift"]] : [["Control", "Shift"], ["Control", "Alt"], ["Alt", "Shift"]];
+
+/** The defaults: click, Option-click, ⌘-click (Ctrl-click off a Mac), Shift-click, right-click (menu); R, A, D. */
 export function defaultQuickConnect(mac = IS_MAC_PLATFORM): QuickConnectSettings {
   return {
     bindings: {
       copy: { keys: [] },
       connectedCopy: { keys: ["Alt"] },
       linkTo: { keys: [mac ? "Meta" : "Control"] },
-      pickStencil: { keys: ["Shift"], rightClick: true },
+      pickStencil: { keys: ["Shift"] },
+      menu: { keys: MENU_KEYS(mac)[0], rightClick: true },
     },
     linkKeys: { routing: "r", heads: "a", dashed: "d" },
+    editLabel: false,
   };
 }
 
@@ -88,7 +97,7 @@ export function cloneQuickConnect(q: QuickConnectSettings): QuickConnectSettings
   for (const a of QUICK_ACTIONS) {
     bindings[a] = { keys: [...q.bindings[a].keys], ...(q.bindings[a].rightClick ? { rightClick: true } : {}) };
   }
-  return { bindings, linkKeys: { ...q.linkKeys } };
+  return { bindings, linkKeys: { ...q.linkKeys }, editLabel: q.editLabel };
 }
 
 /**
@@ -160,7 +169,17 @@ export function normalizeQuickConnect(raw: unknown, mac = IS_MAC_PLATFORM): Quic
   const out = defaultQuickConnect(mac);
   for (const a of QUICK_ACTIONS) out.bindings[a] = readBinding(b[a], out.bindings[a], mac);
   for (const n of LINK_KEY_NAMES) if (validLinkKey(k[n])) out.linkKeys[n] = (k[n] as string).toLowerCase();
-  return findConflicts(out).length ? defaultQuickConnect(mac) : out;
+  out.editLabel = r.editLabel === true;
+  if (!b.menu) {
+    // Saved before the menu existed: right-click now opens the menu, and the menu takes the first
+    // key combo nothing else uses (so old custom keys never clash with it and reset everything).
+    for (const a of QUICK_ACTIONS) if (a !== "menu") delete out.bindings[a].rightClick;
+    const used = new Set(QUICK_ACTIONS.filter((a) => a !== "menu").map((a) => keysId(out.bindings[a].keys)));
+    const free = MENU_KEYS(mac).find((keys) => !used.has(keysId(keys)));
+    if (free) out.bindings.menu = { keys: free, rightClick: true };
+  }
+  if (!findConflicts(out).length) return out;
+  return { ...defaultQuickConnect(mac), editLabel: out.editLabel };
 }
 
 /**

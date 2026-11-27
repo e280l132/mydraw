@@ -17,14 +17,15 @@ import type { Point } from "../../shared/geometry";
 import { nearestSide, snapRatio } from "../../shared/avoidRoute";
 import type { QuickSide } from "../../shared/quickConnect";
 import type { LinkKeys } from "../../shared/quickBindings";
-import { createLink, LINK_HEADS, LINK_ROUTINGS, LinkPlanner, loadLinkStyle, saveLinkStyle, type LinkEnd, type LinkPlan, type LinkStyle } from "./linkOps";
+import { createLinks, LINK_HEADS, LINK_ROUTINGS, LinkPlanner, loadLinkStyle, saveLinkStyle, type LinkEnd, type LinkPlan, type LinkStyle } from "./linkOps";
 import { quickSourceAt, unitById } from "./quickConnectOps";
 import { pickAnchor } from "../../shared/quickConnect";
 import { boxOf } from "./agent/sceneOps";
 
 interface Props {
   getApi(): ExcalidrawImperativeAPI | undefined;
-  sourceId: string;
+  /** The units the arrows start from (several when several were selected: one arrow each). */
+  sourceIds: string[];
   side: QuickSide;
   /** Keys that switch routing / arrow heads / dashed (Settings.quickConnect.linkKeys). */
   keys: LinkKeys;
@@ -39,8 +40,10 @@ type Box4 = { x1: number; y1: number; x2: number; y2: number };
 
 interface Frame {
   path: Point[];
+  /** The routes from the other sources (several selected). */
+  others: Point[][];
   ok: boolean;
-  source: Box4;
+  sources: Box4[];
   target: Box4 | null;
   /** The port the arrow arrives at (when on a target), and the quarter points the user can aim at. */
   port: Point | null;
@@ -98,7 +101,7 @@ function pathData(points: Point[], curved: boolean): string {
   return points.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" ");
 }
 
-export function LinkMode({ getApi, sourceId, side, keys, pressedAt, onEnd, onToast }: Props) {
+export function LinkMode({ getApi, sourceIds, side, keys, pressedAt, onEnd, onToast }: Props) {
   const keysRef = useRef(keys);
   keysRef.current = keys;
   const [style, setStyleState] = useState<LinkStyle>(loadLinkStyle);
@@ -109,15 +112,21 @@ export function LinkMode({ getApi, sourceId, side, keys, pressedAt, onEnd, onToa
     styleRef.current = s;
     setStyleState(s);
   };
-  const planner = useMemo(() => {
+  const planners = useMemo(() => {
     const api = getApi();
-    try {
-      return api ? new LinkPlanner(api, sourceId, side) : null;
-    } catch {
-      return null;
-    }
+    if (!api) return [];
+    return sourceIds.flatMap((id) => {
+      try {
+        return [new LinkPlanner(api, id, side)];
+      } catch {
+        return [];
+      }
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const planner = planners[0] ?? null;
+  const sourceSet = useMemo(() => new Set(sourceIds), [sourceIds]);
+  const barRef = useRef<HTMLDivElement>(null);
   const waypoints = useRef<Point[]>([]);
   const lastEmpty = useRef<{ t: number; p: Point } | null>(null);
   const spaceHeld = useRef(false);
@@ -132,7 +141,7 @@ export function LinkMode({ getApi, sourceId, side, keys, pressedAt, onEnd, onToa
     const st = api.getAppState();
     const p = viewportCoordsToSceneCoords({ clientX, clientY }, st);
     const u = onCanvas ? quickSourceAt(api, p.x, p.y) : null;
-    if (!u || u.id === planner?.sourceId || (planner && u.members.some((m) => m.id === sourceId))) return { end: { point: p }, explicit: false };
+    if (!u || sourceSet.has(u.id) || u.members.some((m) => sourceSet.has(m.id))) return { end: { point: p }, explicit: false };
     const { side: s } = nearestSide(u.box, p);
     const horizontalSide = s === "top" || s === "bottom";
     const edgeDist =
@@ -150,19 +159,19 @@ export function LinkMode({ getApi, sourceId, side, keys, pressedAt, onEnd, onToa
     return { end: { unitId: u.id, side: "auto", ratio: 0.5 }, explicit: false };
   };
 
-  const plan = (api: ExcalidrawImperativeAPI, end: LinkEnd): LinkPlan | null =>
-    planner ? planner.plan(end, waypoints.current, styleRef.current.routing, (id) => unitById(api, id)) : null;
+  const plansFor = (api: ExcalidrawImperativeAPI, end: LinkEnd): LinkPlan[] =>
+    planners.map((pl) => pl.plan(end, waypoints.current, styleRef.current.routing, (id) => unitById(api, id))).filter((p): p is LinkPlan => !!p);
 
   const finish = (end: LinkEnd, keepGoing: boolean) => {
     const api = getApi();
     if (!api || !planner) return endRef.current();
-    const p = plan(api, end);
-    if (!p) {
+    const ps = plansFor(api, end);
+    if (!ps.length) {
       onToast("Those two can't be connected.", true);
       return;
     }
     try {
-      createLink(api, p, styleRef.current);
+      createLinks(api, ps, styleRef.current);
     } catch (e) {
       onToast(`Could not connect: ${(e as Error).message}`, true);
     }
@@ -192,6 +201,8 @@ export function LinkMode({ getApi, sourceId, side, keys, pressedAt, onEnd, onToa
         endRef.current();
         return;
       }
+      // The style bar is part of link mode.
+      if (e.target instanceof Node && barRef.current?.contains(e.target)) return;
       // A click on the toolbar, a panel or a dialog ends linking and does its normal thing (and
       // keeps the focus it gives, e.g. to an input).
       if (!(e.target instanceof HTMLCanvasElement) || !api) {
@@ -298,12 +309,13 @@ export function LinkMode({ getApi, sourceId, side, keys, pressedAt, onEnd, onToa
       const key = JSON.stringify([ptr, waypoints.current.length, waypoints.current.at(-1), styleRef.current, st.scrollX, st.scrollY, st.zoom.value]);
       if (key === lastKey) return;
       lastKey = key;
-      const sourceUnit = unitById(api, sourceId);
-      if (!sourceUnit) return endRef.current();
+      const sourceUnits = sourceIds.map((id) => unitById(api, id));
+      if (sourceUnits.some((u) => !u)) return endRef.current();
       let f: Frame = {
         path: [],
+        others: [],
         ok: true,
-        source: boxToScreen(st, sourceUnit.box),
+        sources: sourceUnits.map((u) => boxToScreen(st, u!.box)),
         target: null,
         port: null,
         ports: [],
@@ -314,9 +326,9 @@ export function LinkMode({ getApi, sourceId, side, keys, pressedAt, onEnd, onToa
       };
       if (ptr) {
         const { end, explicit } = endFor(api, ptr.x, ptr.y, ptr.onCanvas);
-        const p = plan(api, end);
+        const [p, ...rest] = plansFor(api, end);
         if (p) {
-          f = { ...f, path: p.points.map((q) => toScreen(st, q)), ok: p.ok, explicitSide: explicit };
+          f = { ...f, path: p.points.map((q) => toScreen(st, q)), others: rest.map((o) => o.points.map((q) => toScreen(st, q))), ok: p.ok && rest.every((o) => o.ok), explicitSide: explicit };
           if ("unitId" in end) {
             const u = unitById(api, end.unitId);
             if (u) {
@@ -369,7 +381,18 @@ export function LinkMode({ getApi, sourceId, side, keys, pressedAt, onEnd, onToa
             <path d="M0,0 L10,5 L0,10 z" className="md-qc-headpath" />
           </marker>
         </defs>
-        {frame && <rect className="md-qc-src" x={frame.source.x1 - 4} y={frame.source.y1 - 4} width={frame.source.x2 - frame.source.x1 + 8} height={frame.source.y2 - frame.source.y1 + 8} rx="6" />}
+        {frame?.sources.map((b, i) => <rect key={i} className="md-qc-src" x={b.x1 - 4} y={b.y1 - 4} width={b.x2 - b.x1 + 8} height={b.y2 - b.y1 + 8} rx="6" />)}
+        {frame?.others.map((o, i) =>
+          o.length > 1 ? (
+            <path
+              key={i}
+              className={`md-qc-path${style.dashed ? " dashed" : ""}`}
+              d={pathData(o, style.routing === "curved")}
+              markerEnd={heads === "none" ? undefined : "url(#md-qc-head)"}
+              markerStart={heads === "both" ? "url(#md-qc-head)" : undefined}
+            />
+          ) : null,
+        )}
         {frame?.target && (
           <rect className="md-qc-target" x={frame.target.x1 - 4} y={frame.target.y1 - 4} width={frame.target.x2 - frame.target.x1 + 8} height={frame.target.y2 - frame.target.y1 + 8} rx="6" />
         )}
@@ -398,6 +421,24 @@ export function LinkMode({ getApi, sourceId, side, keys, pressedAt, onEnd, onToa
           {!frame.ok && <div className="md-qc-link-warn">No clear way around: drawn as a plain elbow</div>}
         </div>
       )}
+      {/* The same options by mouse. */}
+      <div className="md-qc-link-bar" ref={barRef} role="toolbar" aria-label="Link style" onMouseDown={(e) => e.preventDefault() /* keep the keys going to link mode */}>
+        {LINK_ROUTINGS.map((r) => (
+          <button key={r} className={`md-qc-link-opt${style.routing === r ? " active" : ""}`} data-routing={r} title={`${ROUTING_LABEL[r]} (${keys.routing.toUpperCase()} cycles)`} onClick={() => setStyle({ ...styleRef.current, routing: r })}>
+            {ROUTING_LABEL[r]}
+          </button>
+        ))}
+        <span className="md-qc-link-sep" />
+        {LINK_HEADS.map((h) => (
+          <button key={h} className={`md-qc-link-opt${style.heads === h ? " active" : ""}`} data-heads={h} title={`${h === "none" ? "Line (no arrowheads)" : h === "both" ? "Arrowheads at both ends" : "Arrowhead at the end"} (${keys.heads.toUpperCase()} cycles)`} onClick={() => setStyle({ ...styleRef.current, heads: h })}>
+            {HEADS_LABEL[h]}
+          </button>
+        ))}
+        <span className="md-qc-link-sep" />
+        <button className={`md-qc-link-opt${style.dashed ? " active" : ""}`} data-dashed title={`Dashed (${keys.dashed.toUpperCase()})`} onClick={() => setStyle({ ...styleRef.current, dashed: !styleRef.current.dashed })}>
+          Dashed
+        </button>
+      </div>
     </div>
   );
 }

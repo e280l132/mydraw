@@ -2881,6 +2881,193 @@ body.md-panel-dragging * {
   padding: 8px 6px;
 }
 
+/* Link mode: style options by mouse. */
+.md-qc-link-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--md-panel);
+  color: var(--md-fg);
+  border: 1px solid var(--md-border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  pointer-events: auto;
+  font-size: 12px;
+}
+
+.md-qc-link-opt {
+  padding: 4px 8px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.md-qc-link-opt:hover {
+  background: color-mix(in srgb, var(--md-accent) 10%, transparent);
+}
+
+.md-qc-link-opt.active {
+  color: #fff;
+  background: var(--md-accent);
+}
+
+.md-qc-link-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--md-border);
+}
+
+/* Where a quick-connect copy would go (hovering a handle, dragging one). */
+.md-qc-ghost {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.md-qc-ghost .md-qc-ghost-box {
+  fill: color-mix(in srgb, var(--md-accent) 8%, transparent);
+  stroke: var(--md-accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+
+.md-qc-ghost .md-qc-ghost-path {
+  fill: none;
+  stroke: var(--md-accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  opacity: 0.8;
+}
+
+.md-qc-ghost .md-qc-ghost-target {
+  fill: color-mix(in srgb, var(--md-accent) 10%, transparent);
+  stroke: var(--md-accent);
+  stroke-width: 2;
+}
+
+.md-qc-dragging,
+.md-qc-dragging * {
+  cursor: copy !important;
+}
+
+/* Right-click menu on a handle. */
+.md-qc-menu {
+  position: fixed;
+  z-index: 60;
+  width: 236px;
+  padding: 6px;
+  border-radius: 10px;
+  background: var(--md-panel);
+  color: var(--md-fg);
+  border: 1px solid var(--md-border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  font-size: 13px;
+}
+
+.md-qc-menu-title {
+  padding: 4px 8px 2px;
+  font-size: 11px;
+  color: var(--md-muted);
+}
+
+.md-qc-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.md-qc-menu-item.active {
+  background: color-mix(in srgb, var(--md-accent) 16%, transparent);
+}
+
+.md-qc-menu-item svg {
+  flex: none;
+  color: var(--md-accent);
+}
+
+.md-qc-menu-item .md-qc-menu-key {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--md-muted);
+}
+
+.md-qc-menu-chips {
+  display: flex;
+  gap: 4px;
+  padding: 2px 8px 4px;
+}
+
+.md-qc-menu-chip {
+  flex: 1;
+  padding: 3px 0;
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--md-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.md-qc-menu-chip.on {
+  color: #fff;
+  background: var(--md-accent);
+  border-color: var(--md-accent);
+}
+
+.md-qc-menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--md-border);
+}
+
+/* Basic shapes in the picker. */
+.md-qc-shapes {
+  display: flex;
+  justify-content: space-between;
+  gap: 2px;
+}
+
+.md-qc-shape {
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--md-fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.md-qc-shape:hover,
+.md-qc-shape.active {
+  border-color: var(--md-accent);
+  background: color-mix(in srgb, var(--md-accent) 12%, transparent);
+}
+
 /* ---------- properties section ---------- */
 
 .md-props-input {
@@ -3254,6 +3441,13 @@ body.md-panel-dragging * {
 
 .md-qcs h3 {
   margin: 18px 0 6px;
+  font-size: 13px;
+}
+
+.md-qcs-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
 }
 

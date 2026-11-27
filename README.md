@@ -103,11 +103,17 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 - **Pages** (⌥⌘P): frames are pages, each with a small preview that updates as you edit. Click to zoom, double-click to rename, arrows to reorder. Exports follow the order.
 - **Presentation** (⌥⌘↵): frames as full-screen slides. Arrows, space or click to move, Esc to leave.
 
-**Quick connect** (hover or select a shape, icon or group; four "+" handles appear)
-- **Click**: add a copy beside it (no arrow).
-- **Option-click**: add a connected copy, joined by an arrow.
-- **⌘-click or ⌘-drag**: draw an arrow to another shape. The arrow routes around shapes in between, keeps a clear distance from them, and previews live as you move. Point at a side of the target to choose it. Click empty canvas to add a bend point (Backspace removes it). Double-click or Enter ends the arrow on empty canvas. Shift-click keeps linking from the same shape. While linking: R cycles the style (around shapes, elbow, straight, curved), A cycles arrowheads, D toggles dashed. Esc or right-click cancels.
-- **Shift-click or right-click**: pick a stencil for a new connected node.
+**Quick connect** (hover or select a shape, icon or group, or select several; four "+" handles appear)
+- **Click**: add a copy beside it (no arrow). Hovering a handle shows where it will go (with Option held, the arrow too).
+- **Option-click**: add a connected copy. The arrow uses the last link style (below), so copies can be joined by plain lines too.
+- **Drag a handle**: drop a connected copy where you let go, or onto another shape to connect to it. Esc cancels.
+- **⌘-click or ⌘-drag**: draw an arrow to another shape. The arrow routes around shapes in between, keeps a clear distance from them, and previews live as you move. Point at a side of the target to choose it. Click empty canvas to add a bend point (Backspace removes it). Double-click or Enter ends the arrow on empty canvas. Shift-click keeps linking from the same shape. While linking: the bar at the bottom (or R, A, D) picks the style (around shapes, elbow, straight, curved), the arrowheads (one end, both, none = a line) and dashed. Esc or right-click cancels.
+- **Right-click** (Control-click on a Mac): the quick connect menu. Connect with an arrow around shapes, an elbow, straight or curved arrow, or a plain straight or curved line (Dashed and Both ends toggles), or add a connected copy, a copy, a shape or an icon.
+- **Shift-click**: pick a basic shape (rectangle, rounded, ellipse, diamond, database, cloud, document, hexagon) or a stencil for a new connected node. A new plain shape opens its label for typing.
+- **Labels count up**: a copy of "web-1" is "web-2", of "Server" is "Server 2" (skipping names the drawing already has).
+- **Several selected**: the handles act on all of them: each gets its own copy, or each is connected to the shape you pick. One undo step.
+- **Keyboard**: ⌥⌘+arrow adds a connected copy on that side and selects it (press again to build a chain); ⇧⌥⌘+arrow adds a plain copy. Tab / ⇧Tab moves to the next / previous connected shape.
+- Preferences → Quick connect shortcuts… rebinds the clicks, and can open the label for typing after every add.
 
 **Checks and layout**
 - **Diagram lint** (⌥⌘L): overlaps, unconnected arrows, unlabeled nodes, missing IPs, off-palette colors, arrows on top of each other or through nodes, labels in the way, crowded nodes, very long arrows. Safe one-click fixes; "Fix all" is one undo step.
@@ -144,11 +150,13 @@ npm run smoke      # builds, then drives the real app with Playwright and the MC
 | ⇧⌘E | Export |
 | ⇧⌘Y | Stencils panel |
 | ⌘B, ⌘I | Bold, italic for the selected text and labels (fonts with a bold / italic face) |
+| ⌥⌘←/→/↑/↓ | Quick connect: add a connected copy of the selection on that side (⇧⌥⌘←/→/↑/↓: a plain copy) |
+| ⇥ (Tab), ⇧Tab | Select the next / previous shape connected to the selected one |
 | ⌘F, Alt+S, ? | Excalidraw's own find, object snapping, help |
 
 The main menu groups everything into File, View, Diagram and Preferences (collapsible; the menu bar follows the same grouping). Two helps are there: **mydraw features and shortcuts…** (also in the command palette) and Excalidraw's own Help (`?`, or the corner button: drawing-tool and editing keys). Each dialog has a button that opens the other.
 
-On a quick-connect handle: click, Option-click, ⌘-click, Shift-click (see above). On Windows and Linux, Ctrl replaces ⌘.
+On a quick-connect handle: click, Option-click, ⌘-click, Shift-click, right-click, drag (see above). On Windows and Linux, Ctrl replaces ⌘.
 
 ## Command line
 

@@ -2490,7 +2490,7 @@ scene = await call("get_scene");
 const qArrow = scene.elements.find((e) => e.type === "arrow" && e.from === "qa");
 assert.ok(qArrow, "a bound arrow starts at the source");
 const qCopy = el(qArrow.to);
-assert.ok(qCopy && qCopy.type === "rectangle" && qCopy.label === "App", "the arrow ends at a copy with the same label");
+assert.ok(qCopy && qCopy.type === "rectangle" && qCopy.label === "App 2", "the arrow ends at a copy, its label counted up: " + qCopy?.label);
 assert.equal(qCopy.backgroundColor, "#a5d8ff", "copy keeps the fill");
 assert.equal(qCopy.strokeColor, "#1971c2", "copy keeps the stroke");
 assert.equal(qCopy.width, 160);
@@ -2679,10 +2679,25 @@ await call("add_elements", {
   ],
 });
 await call("select", { ids: ["g1", "g2"] });
-await sleep(400);
-assert.equal((await qcHandles()).length, 0, "two separate shapes are two units: no handles");
+await waitFor(async () => (await page.locator('.md-qc-handle[data-units="2"]').count()) === 4, "two selected shapes: handles around both");
+{
+  // Several selected: each gets its own copy on that side, one undo step.
+  const n = await t((x) => x.elementCount());
+  await page.click('.md-qc-handle[data-side="bottom"]', { modifiers: ["Alt"] });
+  await waitFor(async () => (await t((x) => x.elementCount())) === n + 6, "two copies (shape + label) and two arrows");
+  scene = await call("get_scene");
+  const fromG = scene.elements.filter((e) => e.type === "arrow" && (e.from === "g1" || e.from === "g2"));
+  assert.equal(fromG.length, 2, "one arrow from each selected shape");
+  assert.deepEqual(fromG.map((a) => el(a.to).label).sort(), ["One 2", "Two 2"], "each copy is labelled after its own source");
+  assert.ok(fromG.every((a) => el(a.to).y > 660), "both copies below");
+  assert.equal(await t((x) => x.selectedCount()), 2, "both copies are selected");
+  await call("undo");
+  await waitFor(async () => (await t((x) => x.elementCount())) === n, "one undo removes both copies");
+  await call("select", { ids: ["g1", "g2"] });
+  await waitFor(async () => (await qcHandles()).length === 4, "handles again");
+}
 await call("group", { ids: ["g1", "g2"] }); // same selected ids, but now one unit
-await waitFor(async () => (await qcHandles()).length === 4, "grouping the selection shows handles");
+await waitFor(async () => (await page.locator('.md-qc-handle[data-units="1"]').count()) === 4, "grouping the selection: handles for the one group");
 const gCount = await t((x) => x.elementCount());
 // Connected: the arrow leaves from the member on the clicked side, not through the other one.
 await clickRightHandle(["Alt"]);
@@ -2816,6 +2831,176 @@ await sleep(200);
 assert.equal(await page.$(".context-menu"), null, "...without opening Excalidraw's context menu");
 assert.equal(await t((x) => x.elementCount()), lkCount, "nothing added when cancelled");
 await call("select", { ids: [] });
+
+step("Quick connect: preview, right-click menu, lines, link bar, drag to drop, shapes in the picker, keyboard, Tab, edit label");
+await call("new_drawing", { title: "QC more" });
+await page.evaluate(() => localStorage.removeItem("mydraw.linkStyle"));
+await call("add_elements", {
+  elements: [
+    { type: "rectangle", id: "mA", x: 300, y: 400, width: 140, height: 70, label: "web-1" },
+    { type: "rectangle", id: "mB", x: 700, y: 600, width: 140, height: 70, label: "db" },
+  ],
+});
+{
+  const selectOnly = async (id) => {
+    await page.mouse.move(5, 5);
+    await call("select", { ids: [] });
+    await waitFor(async () => (await qcHandles()).length === 0, "no handles");
+    await call("select", { ids: [id] });
+    await waitFor(async () => (await qcHandles()).length === 4, `handles on ${id}`);
+    await page.evaluate(() => document.querySelector('.md-drawing:not([style*="display: none"]) .excalidraw')?.focus());
+  };
+  const handleAt = (side) => page.$eval(`.md-qc-handle[data-side="${side}"]`, (e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  const count = () => t((x) => x.elementCount());
+  const arrowFull = async (a) => (await call("get_element", { id: a.id }))[0].element;
+
+  // Hovering a handle previews where the copy goes (Option: with its arrow).
+  await selectOnly("mA");
+  let h = await handleAt("right");
+  await page.mouse.move(h.x - 10, h.y);
+  await page.mouse.move(h.x, h.y);
+  await page.waitForSelector(".md-qc-ghost .md-qc-ghost-box");
+  assert.equal(await page.locator(".md-qc-ghost .md-qc-ghost-path").count(), 0, "a plain copy has no arrow in the preview");
+  await page.keyboard.down("Alt");
+  await waitFor(async () => (await page.locator(".md-qc-ghost .md-qc-ghost-path").count()) === 1, "Option previews the arrow too");
+  await page.keyboard.up("Alt");
+  await page.mouse.move(5, 5);
+  await waitFor(async () => !(await page.$(".md-qc-ghost")), "the preview goes when the pointer leaves the handle");
+
+  // Right-click: the menu; "Straight line" links with a plain line.
+  const n0 = await count();
+  h = await handleAt("right");
+  await page.mouse.click(h.x, h.y, { button: "right" });
+  await page.waitForSelector(".md-qc-menu");
+  await sleep(150);
+  assert.equal(await page.$(".context-menu"), null, "Excalidraw's context menu stays closed");
+  await page.screenshot({ path: path.join(shots, "quick-menu.png") });
+  await page.click('.md-qc-menu-item[data-item="line"]');
+  await page.waitForSelector('.md-qc-linkmode[data-routing="straight"]');
+  const onB = await t((x) => x.toScreen(770, 635));
+  await page.mouse.move(onB.x - 10, onB.y - 10);
+  await page.mouse.move(onB.x, onB.y);
+  await page.waitForSelector(".md-qc-target");
+  await page.mouse.click(onB.x, onB.y);
+  await waitFor(async () => !(await page.$(".md-qc-linkmode")), "link mode ends");
+  scene = await call("get_scene");
+  const line = scene.elements.find((e) => e.type === "arrow" && e.from === "mA" && e.to === "mB");
+  assert.ok(line, "a line from A to B");
+  const lineFull = await arrowFull(line);
+  assert.equal(lineFull.endArrowhead, null, "a line has no arrowhead");
+  assert.equal(lineFull.startArrowhead, null);
+  assert.equal(lineFull.elbowed, false, "straight");
+  await call("undo");
+  await waitFor(async () => (await count()) === n0, "line undone");
+
+  // Connected copies use the same style (a plain straight line now); the label counts up.
+  await selectOnly("mA");
+  await page.click('.md-qc-handle[data-side="bottom"]', { modifiers: ["Alt"] });
+  await waitFor(async () => (await count()) === n0 + 3, "connected copy");
+  scene = await call("get_scene");
+  const cArrow = scene.elements.find((e) => e.type === "arrow" && e.from === "mA");
+  assert.equal(el(cArrow.to).label, "web-2", "label counted up");
+  assert.equal((await arrowFull(cArrow)).endArrowhead, null, "the copy's link is a line, like the last link style");
+  await call("undo");
+  await waitFor(async () => (await count()) === n0, "undone");
+
+  // The link bar sets the style by mouse.
+  await selectOnly("mA");
+  await page.click('.md-qc-handle[data-side="right"]', { modifiers: ["Meta"] });
+  await page.waitForSelector(".md-qc-link-bar");
+  await page.click('.md-qc-link-opt[data-routing="curved"]');
+  await page.click('.md-qc-link-opt[data-heads="end"]');
+  await page.waitForSelector('.md-qc-linkmode[data-routing="curved"]');
+  assert.ok(await page.$(".md-qc-linkmode"), "clicking the bar keeps linking");
+  await page.keyboard.press("Escape");
+  await waitFor(async () => !(await page.$(".md-qc-linkmode")), "Esc ends");
+  assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem("mydraw.linkStyle"))).routing, "curved", "the bar's choice is remembered");
+  await page.evaluate(() => localStorage.removeItem("mydraw.linkStyle"));
+
+  // Drag a handle to empty canvas: a connected copy there. Onto a shape: connects to it.
+  await selectOnly("mA");
+  h = await handleAt("right");
+  const drop = await t((x) => x.toScreen(1000, 430));
+  await page.mouse.move(h.x, h.y);
+  await page.mouse.down();
+  await page.mouse.move(drop.x, drop.y, { steps: 10 });
+  await page.waitForSelector(".md-qc-ghost .md-qc-ghost-box");
+  await page.mouse.up();
+  await waitFor(async () => (await count()) === n0 + 3, "dropped a connected copy");
+  scene = await call("get_scene");
+  const dArrow = scene.elements.find((e) => e.type === "arrow" && e.from === "mA");
+  const dropped = el(dArrow.to);
+  assert.ok(Math.abs(dropped.x + dropped.width / 2 - 1000) < 3 && Math.abs(dropped.y + dropped.height / 2 - 430) < 3, "centred where it was dropped: " + JSON.stringify(dropped));
+  await call("undo");
+  await waitFor(async () => (await count()) === n0, "undone");
+  await selectOnly("mA");
+  h = await handleAt("right");
+  await page.mouse.move(h.x, h.y);
+  await page.mouse.down();
+  await page.mouse.move(onB.x, onB.y, { steps: 10 });
+  await page.waitForSelector(".md-qc-ghost .md-qc-ghost-target");
+  await page.mouse.up();
+  await waitFor(async () => (await count()) === n0 + 1, "dragging onto a shape adds only an arrow");
+  scene = await call("get_scene");
+  assert.ok(scene.elements.some((e) => e.type === "arrow" && e.from === "mA" && e.to === "mB"), "connected to B");
+  await call("undo");
+  await waitFor(async () => (await count()) === n0, "undone");
+
+  // The picker's basic shapes: a diamond, its label open for typing.
+  await selectOnly("mA");
+  await page.click('.md-qc-handle[data-side="bottom"]', { modifiers: ["Shift"] });
+  await page.waitForSelector('.md-qc-shape[data-shape="diamond"]');
+  await page.click('.md-qc-shape[data-shape="diamond"]');
+  await waitFor(async () => (await count()) === n0 + 2, "diamond + arrow");
+  await waitFor(async () => !!(await t((x) => x.api().getAppState().editingTextElement)), "the new shape's label is open for typing");
+  await page.keyboard.type("Ok?");
+  await page.keyboard.press("Escape");
+  await waitFor(async () => (await call("get_scene")).elements.some((e) => e.type === "diamond" && e.label === "Ok?"), "the typed label is on the diamond");
+  await call("undo");
+  await call("undo");
+  await waitFor(async () => (await count()) === n0, "diamond undone");
+  await selectOnly("mA");
+  await page.click('.md-qc-handle[data-side="top"]', { modifiers: ["Shift"] });
+  await page.click('.md-qc-shape[data-shape="cylinder"]');
+  await waitFor(async () => (await call("get_scene")).elements.some((e) => e.type === "shape-node" && e.shape === "cylinder"), "a cylinder shape node");
+  await call("undo");
+  await waitFor(async () => (await count()) === n0, "cylinder undone");
+
+  // Keyboard: ⌥⌘→ twice builds a chain; Tab walks along it.
+  await selectOnly("mA");
+  await page.keyboard.press("Alt+Meta+ArrowRight");
+  await waitFor(async () => (await count()) === n0 + 3, "first keyboard copy");
+  await page.keyboard.press("Alt+Meta+ArrowRight");
+  await waitFor(async () => (await count()) === n0 + 6, "second keyboard copy, from the first");
+  scene = await call("get_scene");
+  const labels = scene.elements.filter((e) => e.type === "rectangle").map((e) => e.label);
+  assert.ok(labels.includes("web-2") && labels.includes("web-3"), "web-2 and web-3: " + labels);
+  const w2 = scene.elements.find((e) => e.label === "web-2");
+  const w3 = scene.elements.find((e) => e.label === "web-3");
+  assert.ok(scene.elements.some((e) => e.type === "arrow" && e.from === w2.id && e.to === w3.id), "the second copy hangs off the first");
+  await selectOnly("mA");
+  await page.keyboard.press("Tab");
+  await waitFor(async () => (await t((x) => Object.keys(x.api().getAppState().selectedElementIds))).includes(w2.id), "Tab selects the connected shape");
+  await page.keyboard.press("Tab");
+  await waitFor(async () => (await t((x) => Object.keys(x.api().getAppState().selectedElementIds))).includes(w3.id), "Tab again walks on");
+  await page.keyboard.press("Shift+Tab");
+  await waitFor(async () => (await t((x) => Object.keys(x.api().getAppState().selectedElementIds))).includes(w2.id), "Shift+Tab walks back");
+  await call("undo");
+  await call("undo");
+  await waitFor(async () => (await count()) === n0, "keyboard copies undone");
+
+  // Setting: open the label for typing after every add.
+  await page.evaluate(() => window.mydraw.updateSettings({ quickConnect: { editLabel: true } }));
+  await waitFor(async () => (await getSettings()).quickConnect.editLabel === true, "editLabel saved");
+  await selectOnly("mA");
+  await page.click('.md-qc-handle[data-side="bottom"]', { modifiers: ["Alt"] });
+  await waitFor(async () => !!(await t((x) => x.api().getAppState().editingTextElement)), "label open after Option-click");
+  await page.keyboard.press("Escape");
+  await call("undo");
+  await page.evaluate(() => window.mydraw.updateSettings({ quickConnect: {} }));
+  await waitFor(async () => (await getSettings()).quickConnect.editLabel === false, "back to the defaults");
+  await call("select", { ids: [] });
+}
 
 step("Phase 7: ⌘-link routes around shapes: preview, sides, bend points, styles, drag, chaining, free end; route_around");
 await call("new_drawing", { title: "Route around" });

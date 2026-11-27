@@ -157,6 +157,21 @@ export function QuickConnectSettingsDialog({ quick, onSave, onClose }: Props) {
         </div>
         <p className="md-qcs-hint">Click a key box and press the key you want.</p>
 
+        <h3>After adding</h3>
+        <label className="md-qcs-check">
+          <input
+            type="checkbox"
+            data-setting="editLabel"
+            checked={draft.editLabel}
+            onChange={(e) => {
+              const next = cloneQuickConnect(draft);
+              next.editLabel = e.target.checked;
+              setDraft(next);
+            }}
+          />
+          Open the new shape’s label for typing (copies of plain shapes)
+        </label>
+
         {conflicts.length > 0 && (
           <div className="md-qcs-error">
             {conflicts.map((c) => (
