@@ -3004,6 +3004,20 @@ body.md-panel-dragging * {
   background: color-mix(in srgb, var(--md-accent) 16%, transparent);
 }
 
+.md-qc-menu-item.current {
+  font-weight: 600;
+}
+
+.md-qc-menu-item.current .md-qc-menu-key {
+  color: var(--md-accent);
+}
+
+.md-qc-menu-note {
+  padding: 0 8px 4px;
+  font-size: 11px;
+  color: var(--md-muted);
+}
+
 .md-qc-menu-item svg {
   flex: none;
   color: var(--md-accent);

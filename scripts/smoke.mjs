@@ -2917,6 +2917,25 @@ await call("add_elements", {
   assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem("mydraw.linkStyle"))).routing, "curved", "the bar's choice is remembered");
   await page.evaluate(() => localStorage.removeItem("mydraw.linkStyle"));
 
+  // Dashed in the menu sticks without picking a row: the next copy's link is dashed.
+  await selectOnly("mA");
+  h = await handleAt("right");
+  await page.mouse.click(h.x, h.y, { button: "right" });
+  await page.waitForSelector(".md-qc-menu");
+  assert.ok(await page.$('.md-qc-menu-item.current[data-item="around"]'), "the menu marks the style in use");
+  await page.click('.md-qc-menu-chip[data-chip="dashed"]');
+  await page.keyboard.press("Escape");
+  await waitFor(async () => !(await page.$(".md-qc-menu")), "menu closed");
+  assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem("mydraw.linkStyle"))).dashed, true, "Dashed is saved at once");
+  await selectOnly("mA");
+  await page.click('.md-qc-handle[data-side="bottom"]', { modifiers: ["Alt"] });
+  await waitFor(async () => (await count()) === n0 + 3, "connected copy after closing the menu");
+  scene = await call("get_scene");
+  assert.equal((await arrowFull(scene.elements.find((e) => e.type === "arrow" && e.from === "mA"))).strokeStyle, "dashed", "the copy's link is dashed");
+  await call("undo");
+  await waitFor(async () => (await count()) === n0, "undone");
+  await page.evaluate(() => localStorage.removeItem("mydraw.linkStyle"));
+
   // Drag a handle to empty canvas: a connected copy there. Onto a shape: connects to it.
   await selectOnly("mA");
   h = await handleAt("right");

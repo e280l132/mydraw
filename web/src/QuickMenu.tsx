@@ -30,8 +30,10 @@ const CONNECTIONS: Connection[] = [
 
 interface Props {
   at: { x: number; y: number };
-  /** The saved link style (marks the matching row; Dashed / Both ends start from it). */
+  /** The saved link style (marks the matching row; Dashed / Both ends show and change it). */
   current: LinkStyle;
+  /** Dashed / Both ends changed: save the style at once (copies, drops and links all use it). */
+  onStyle(style: LinkStyle): void;
   /** How many shapes the action applies to (several selected). */
   count: number;
   /** Key hints for the add rows ("Option-click", ...). */
@@ -43,10 +45,17 @@ interface Props {
   ref: Ref<HTMLDivElement>;
 }
 
-export function QuickMenu({ at, current, count, hints, onConnect, onAdd, onSettings, onClose, ref }: Props) {
-  const [dashed, setDashed] = useState(current.dashed);
-  const [both, setBoth] = useState(current.heads === "both");
-  const [active, setActive] = useState(0);
+export function QuickMenu({ at, current, count, hints, onConnect, onStyle, onAdd, onSettings, onClose, ref }: Props) {
+  const [style, setStyleState] = useState<LinkStyle>(current);
+  const setStyle = (s: LinkStyle) => {
+    setStyleState(s);
+    onStyle(s);
+  };
+  const dashed = style.dashed;
+  const both = style.heads === "both";
+  const matches = (c: Connection) => c.style.routing === style.routing && (c.style.heads === "none") === (style.heads === "none");
+  // Start on the row of the style in use, so the highlight and the check mark agree.
+  const [active, setActive] = useState(() => Math.max(0, CONNECTIONS.findIndex(matches)));
   const box = useRef<HTMLDivElement | null>(null);
   useEffect(() => box.current?.focus(), []);
 
@@ -59,7 +68,6 @@ export function QuickMenu({ at, current, count, hints, onConnect, onAdd, onSetti
     { key: "settings", run: onSettings },
   ];
   const index = (key: string) => items.findIndex((i) => i.key === key);
-  const matches = (c: Connection) => c.style.routing === current.routing && (c.style.heads === "none") === (current.heads === "none");
 
   const width = 236;
   const left = Math.max(8, Math.min(at.x - width / 2, window.innerWidth - width - 8));
@@ -111,15 +119,16 @@ export function QuickMenu({ at, current, count, hints, onConnect, onAdd, onSetti
       }}
     >
       <div className="md-qc-menu-title">Connect to a shape{many}</div>
-      {CONNECTIONS.map((c) => row(c.id, c.label, c.icon, matches(c) ? "last used" : undefined))}
+      {CONNECTIONS.map((c) => row(c.id, c.label, c.icon, matches(c) ? "✓ in use" : undefined, matches(c) ? "current" : undefined))}
       <div className="md-qc-menu-chips">
-        <button className={`md-qc-menu-chip${dashed ? " on" : ""}`} data-chip="dashed" aria-pressed={dashed} onClick={() => setDashed(!dashed)}>
+        <button className={`md-qc-menu-chip${dashed ? " on" : ""}`} data-chip="dashed" aria-pressed={dashed} onClick={() => setStyle({ ...style, dashed: !dashed })}>
           Dashed
         </button>
-        <button className={`md-qc-menu-chip${both ? " on" : ""}`} data-chip="both" aria-pressed={both} title="Arrowheads at both ends (arrows only)" onClick={() => setBoth(!both)}>
+        <button className={`md-qc-menu-chip${both ? " on" : ""}`} data-chip="both" aria-pressed={both} title="Arrowheads at both ends" onClick={() => setStyle({ ...style, heads: both ? "end" : "both" })}>
           ↔ Both ends
         </button>
       </div>
+      <div className="md-qc-menu-note">Used by every new link: copies, drags and arrows</div>
       <div className="md-qc-menu-sep" />
       <div className="md-qc-menu-title">Add on this side{many}</div>
       {row("connectedCopy", "Connected copy", path("M2 8h12M11 5l3 3-3 3M17 4h5v8h-5z"), hints.connectedCopy)}

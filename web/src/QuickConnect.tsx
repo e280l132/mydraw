@@ -846,6 +846,7 @@ export function QuickConnect({ tabId, getApi, library, blocked, quick, insertSke
           ref={menuRef}
           at={menu}
           current={loadLinkStyle()}
+          onStyle={saveLinkStyle}
           count={menu.sourceIds.length}
           hints={hints}
           onConnect={(style) => {
