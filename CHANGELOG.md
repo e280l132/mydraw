@@ -12,6 +12,10 @@ under "What's new" when it offers the update.
 - Polish with Claude: restyles a drawing (colour by role, fills, outlines, soft shadows, arrow kinds, legend) without moving anything
 - Diagrams Claude builds are coloured by role with soft shadows by default (new "polished" look; "professional" is the plain one)
 - Claude model (Sonnet, Opus, Haiku) in Preferences
+- Ask Claude follow-ups: keep talking about the same drawing, or "Outline first" to see the plan before Claude builds it
+- Diagrams Claude builds can use grids (rows × availability zones), numbered steps along the arrows and several views of one diagram
+- Style brush (⌥⌘C, or right-click → Copy look): paint one shape's fill, stroke, shadow or text style onto others
+- Hatch and cross-hatch fills: the stroke width now changes only the outline; the hatch line width and spacing have their own sliders in the Fill popover
 
 ## 0.1
 
