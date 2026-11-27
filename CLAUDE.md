@@ -223,6 +223,9 @@ Roadmap and phase status: `plan.md`. Read it before starting a phase.
 - Edit menu: undo/redo/select-all use `registerAccelerator: false` so the keys reach Excalidraw.
 - No browser `alert/confirm`; use the main-process dialogs (`askUnsaved`) or in-app banners/toasts.
 
+## Branches
+Develop and push on `main` only. Don't create feature branches (local or on origin); commit straight to `main` and `git push origin main`.
+
 ## Checks before committing
 `npm run typecheck && npm test && npm run smoke` (`npm run build` also builds the MCP server); packaging changes also `npm run package && npm run verify-package`
 
