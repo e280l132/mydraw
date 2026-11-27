@@ -4,8 +4,11 @@
 //   npm run release -- 0.1.0          an explicit version (the first release: the current one)
 //   add --no-smoke to skip the smoke test
 // Needs: a clean tree on main, `gh` logged in, a "## <version>" section in CHANGELOG.md (its text
-// becomes the release notes). Runs the checks, builds and verifies the DMG, then asks before it
-// commits, tags, pushes and uploads anything.
+// becomes the release notes). Shows the notes and asks FIRST, then runs the checks, builds and
+// verifies the DMG and, only if all of that passes, commits, tags, pushes and uploads. The question
+// comes before the long build because a child of the build (the app, Electron, shells) can leave
+// another process group in the terminal's foreground: a prompt at the end then gets the process
+// stopped by SIGTTOU ("zsh: suspended (tty output)") until `fg`.
 import { execFileSync, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -56,7 +59,18 @@ const rest = changelog.slice(m.index + m[0].length);
 const notes = rest.slice(0, rest.search(/^## /m) === -1 ? undefined : rest.search(/^## /m)).trim();
 if (!notes) fail(`the "## ${label}" section of CHANGELOG.md is empty`);
 
-console.log(`Releasing mydraw ${label} (${current} -> ${next})`);
+console.log(`
+Release mydraw ${label} (${current} -> ${next}):
+  checks (typecheck, test${smoke ? ", smoke" : ""}), package, verify-package; then, if all pass:
+  ${next !== current ? `commit "Release ${next}" (package.json), ` : ""}tag ${tag}, push to origin, GitHub release with the DMG
+Release notes:
+${notes.replace(/^/gm, "  | ")}
+`);
+if (!process.stdin.isTTY) fail("not asking without a terminal; nothing was published");
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const answer = (await rl.question("Publish if everything passes? This pushes to GitHub and makes the update visible to installed apps. [y/N] ")).trim().toLowerCase();
+rl.close();
+if (answer !== "y" && answer !== "yes") fail("cancelled; nothing was published");
 const restore = () => {
   if (next !== current) spawnSync("git", ["checkout", "--", "package.json", "package-lock.json"], { cwd: root });
 };
@@ -79,23 +93,8 @@ const shaFile = `${dmg}.sha256`;
 fs.writeFileSync(shaFile, `${sha}  ${path.basename(dmg)}\n`);
 
 console.log(`
-Ready to publish mydraw ${label}:
-  ${path.relative(root, dmg)} (${(fs.statSync(dmg).size / 1048576).toFixed(0)} MB, sha256 ${sha.slice(0, 12)}…)
-  ${next !== current ? `commit "Release ${next}" (package.json), ` : ""}tag ${tag}, push to origin, GitHub release with the DMG
-Release notes:
-${notes.replace(/^/gm, "  | ")}
+Publishing mydraw ${label}: ${path.relative(root, dmg)} (${(fs.statSync(dmg).size / 1048576).toFixed(0)} MB, sha256 ${sha.slice(0, 12)}…)
 `);
-if (!process.stdin.isTTY) {
-  restore();
-  fail("not asking without a terminal; nothing was published");
-}
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const answer = (await rl.question("Publish? This pushes to GitHub and makes the update visible to installed apps. [y/N] ")).trim().toLowerCase();
-rl.close();
-if (answer !== "y" && answer !== "yes") {
-  restore();
-  fail("cancelled; nothing was published");
-}
 
 if (next !== current) {
   run("git", "add", "package.json", "package-lock.json");
