@@ -4,6 +4,20 @@ Versions are major.minor (0.1, 0.2, …); a third number marks a bug-fix build (
 section below becomes the release notes of that version (`npm run release`), which the app shows
 under "What's new" when it offers the update.
 
+## 0.2.1
+
+Quick connect (the "+" handles around a shape):
+
+- Right-click a "+" for a menu: connect with an arrow (around shapes, elbow, straight, curved) or a plain straight or curved line, dashed or with arrowheads at both ends, or add a copy, a shape or an icon
+- Connected copies use the same link style, so they can be joined by lines too; the style bar at the bottom of the screen changes it while drawing a link
+- Drag a "+" to drop a connected copy where you let go, or onto another shape to connect to it; a tip shows the link style in use (can be turned off in Preferences → Quick connect shortcuts…)
+- Hovering a "+" shows where the copy will go
+- Shift-click a "+": basic shapes (rectangle, rounded, ellipse, diamond, database, cloud, document, hexagon) besides the stencils; a new shape opens its label for typing
+- Copies count their labels up: web-1 → web-2, Server → Server 2
+- With several shapes selected, the "+" handles act on all of them (one undo step)
+- ⌥⌘+arrow adds a connected copy on that side (⇧⌥⌘+arrow: a plain copy); Tab / ⇧Tab move between connected shapes
+- Option to open the new shape's label for typing after every add
+
 ## 0.2
 
 - Ask Claude (⌥⌘J): type a change and Claude Code makes it in the drawing while you watch, one undo step per action, with Cancel
