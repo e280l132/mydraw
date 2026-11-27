@@ -24,6 +24,7 @@ export const SHORTCUTS = {
   importText: "⌥⌘U",
   inventory: "⌥⌘T",
   findReplace: "⌥⌘F",
+  askClaude: "⌥⌘J",
   stencils: "⇧⌘Y",
   quickSaveStencil: "⌥⌘S",
   copyLook: "⌥⌘C",

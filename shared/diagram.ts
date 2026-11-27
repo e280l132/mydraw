@@ -13,6 +13,7 @@ import { ARROWHEADS, EDGE_WEIGHTS, LOOKS_LIST, NODE_EMPHASES, type Arrowhead, ty
 import type { LayoutAlgorithm, LayoutDirection } from "./layout";
 import type { Routing } from "./routing";
 import { SVG_SHAPES, type SvgShape } from "./shapeSvgs";
+import { NODE_ROLES, type NodeRole } from "./nodeRoles";
 
 /** Excalidraw's own shapes, plus the drawn ones of shared/shapeSvgs.ts (cylinder for a database, ...). */
 /** A node's iconStyle (agent input), validated; undefined = the look decides. */
@@ -63,6 +64,8 @@ export interface DiagramNode {
   fillStyle?: FillStyleId;
   /** Shape nodes: border style (solid default, dashed, dotted, or an extra dash style). */
   strokeStyle?: LineStyle;
+  /** What the node is (entry, edge, compute, service, data, queue, storage, security, monitoring, external): the polished look colours it by role. Default: guessed from shape, kind, icon and label. */
+  role?: NodeRole;
 }
 
 export interface DiagramZone {
@@ -119,7 +122,7 @@ export interface DiagramSpec {
   title?: string;
   /** A line under the title. */
   subtitle?: string;
-  /** "professional" (default) or "sketch" (hand-drawn). */
+  /** "polished" (default: colour by role, soft shadows), "professional" (plain, white nodes) or "sketch" (hand-drawn). */
   look?: LookName;
   /** Default shadow for every node (a node's own `shadow` wins). */
   shadow?: Shadow | null;
@@ -272,6 +275,7 @@ export function normalizeSpec(raw: unknown): DiagramSpec {
       gradient: gradientIn(n.gradient, `node ${id} gradient`),
       fillStyle: n.fillStyle === undefined || n.fillStyle === null ? undefined : fillIn(n.fillStyle, `node ${id} fillStyle`),
       strokeStyle: oneOf(n.strokeStyle, STYLES, `node ${id} strokeStyle`),
+      role: oneOf(n.role, NODE_ROLES, `node ${id} role`),
     };
   });
   if (!nodes.length && !zones.length) throw new Error("diagram needs at least one node");

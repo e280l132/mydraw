@@ -368,7 +368,7 @@ describe("diagram spec: looks, shapes, emphasis, arrow semantics", () => {
 
   it("rejects bad values with readable messages", () => {
     const base = { nodes: [{ id: "a" }, { id: "b" }] };
-    expect(() => normalizeSpec({ ...base, look: "neon" })).toThrow(/look must be one of professional, sketch/);
+    expect(() => normalizeSpec({ ...base, look: "neon" })).toThrow(/look must be one of polished, professional, sketch/);
     expect(() => normalizeSpec({ nodes: [{ id: "a", shape: "star" }] })).toThrow(/shape must be one of/);
     expect(() => normalizeSpec({ nodes: [{ id: "a", emphasis: "loud" }] })).toThrow(/emphasis/);
     expect(() => normalizeSpec({ ...base, edges: [{ from: "a", to: "b", weight: "heavy" }] })).toThrow(/weight/);

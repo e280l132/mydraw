@@ -44,6 +44,8 @@ import { InventoryDialog } from "./InventoryDialog";
 import { HelpDialog } from "./HelpDialog";
 import { UpdateBanner } from "./UpdateBanner";
 import { SetupDialog } from "./SetupDialog";
+import { AskClaude, askRequest } from "./AskClaude";
+import { onAskFinished, startAsk, useAskState } from "./askRun";
 import { ImportDialog } from "./ImportDialog";
 import { QuickConnectSettingsDialog } from "./QuickConnectSettings";
 import { FontsDialog } from "./FontsDialog";
@@ -251,6 +253,10 @@ export function App() {
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [askOpen, setAskOpen] = useState(false);
+  const askOpenRef = useRef(false);
+  askOpenRef.current = askOpen;
+  const askStatus = useAskState().status;
   const [importOpen, setImportOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [fontsOpen, setFontsOpen] = useState(false);
@@ -367,6 +373,16 @@ export function App() {
   }, []);
 
   const showToast = useCallback((text: string, error = false) => setToast({ text, error }), []);
+  // A Claude run carries on when its box is closed: say when it ends.
+  useEffect(
+    () =>
+      onAskFinished((s) => {
+        if (askOpenRef.current) return;
+        if (s.status === "done") showToast(`Claude: ${s.result.split("\n")[0].slice(0, 160)}`);
+        else if (s.status === "failed") showToast(`Claude: ${s.result.slice(0, 160)}`, true);
+      }),
+    [showToast],
+  );
   const getActiveApi = useCallback(() => apis.current.get(activeRef.current), []);
   useEffect(() => {
     if (!toast) return;
@@ -1253,6 +1269,18 @@ export function App() {
         case "setup":
           setSetupOpen(true);
           return;
+        case "askClaude":
+          if (apis.current.get(activeRef.current)) setAskOpen((open) => !open);
+          return;
+        case "tidyWithClaude":
+        case "polishWithClaude": {
+          const api = apis.current.get(activeRef.current);
+          const tab = tabsRef.current.find((t) => t.id === activeRef.current);
+          if (!api || !tab) return;
+          setAskOpen(true);
+          void startAsk(askRequest(api, { id: tab.id, title: tab.title }, cmd.type === "tidyWithClaude" ? "tidy" : "polish", "", settingsRef.current?.askClaude.model ?? "sonnet"));
+          return;
+        }
         case "checkUpdates":
           void bridge.updateAction("check").catch((e: Error) => showToast(e.message, true));
           return;
@@ -1507,6 +1535,12 @@ export function App() {
         // ⌥⌘T: inventory table.
         e.preventDefault();
         if (apis.current.get(activeRef.current)) setInventoryOpen(true);
+        return;
+      }
+      if (e.altKey && !e.shiftKey && e.code === "KeyJ") {
+        // ⌥⌘J: Ask Claude box.
+        e.preventDefault();
+        void onCommand({ type: "askClaude" });
         return;
       }
       if (e.altKey && !e.shiftKey && e.code === "KeyF") {
@@ -1778,6 +1812,9 @@ export function App() {
         onTogglePanel={togglePanel}
         drawingStyle={settings?.drawingStyle ?? "clean"}
         onDrawingStyle={(drawingStyle) => onSettings({ drawingStyle })}
+        askOpen={askOpen}
+        askBusy={askStatus === "starting" || askStatus === "running"}
+        onAsk={() => void onCommand({ type: "askClaude" })}
       />
       <UpdateBanner toast={showToast} />
       <div className="md-main">
@@ -1955,6 +1992,19 @@ export function App() {
             setInventoryOpen(false);
             setExportFormat("csv");
             setExportOpen(true);
+          }}
+        />
+      )}
+      {askOpen && (
+        <AskClaude
+          api={activeApi}
+          drawing={tabs.find((t) => t.id === activeId) ? { id: activeId, title: tabs.find((t) => t.id === activeId)!.title } : null}
+          model={settings?.askClaude.model ?? "sonnet"}
+          onModel={(model) => onSettings({ askClaude: { model } })}
+          onSetup={() => setSetupOpen(true)}
+          onClose={() => {
+            setAskOpen(false);
+            document.querySelector<HTMLElement>(`[data-md-tab="${activeRef.current}"] .excalidraw`)?.focus();
           }}
         />
       )}

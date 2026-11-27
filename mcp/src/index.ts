@@ -17,6 +17,7 @@ import { z } from "zod";
 import { AGENT_EXPORT_FORMATS, CONTROL_FILE, type ControlInfo, type RpcResponse } from "../../shared/agent";
 import { APP_VERSION } from "../../shared/appVersion";
 import { buildId } from "../../shared/buildId";
+import { POLISH_RECIPE, TIDY_RECIPE } from "../../shared/recipes";
 
 const VERSION = APP_VERSION;
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -211,6 +212,7 @@ const server = new McpServer(
       "Tidying: `tidy` keeps the arrangement (lines up rows/columns, evens gaps, fixes overlaps); auto_layout re-lays out (onlyIfBetter: true keeps a drawing that is already good); align (edge left|center|right|top|middle|bottom, optional `to`) and distribute (axis, optional gap) for peers. Each id moves with its group, label or zone contents. Judge by meaning too (entry points first, data stores last, peers in a row): the tidy_diagram prompt has the full recipe.",
       "Draw clean diagrams: about 40 arrows at most, one arrow to a zone instead of many to its nodes, labels only on short arrows, one colour per kind of relationship. After build_diagram read `quality` (and `advice`), run lint_diagram (it finds arrows on top of each other or through nodes, labels in the way; fix:true repairs labels and re-routes) and look at a screenshot before telling the user it is done. Save the drawing to a file when it is finished: an unsaved drawing is lost if the app quits.",
       "Styling beyond Excalidraw's own: fillStyle patterns (hachure, cross-hatch, solid, zigzag, zigzag-line, dots, dashed), gradient fills on rectangles/diamonds/ellipses (`gradient`: a preset like \"sky\" or {from, to, kind: linear|radial, angle}), extra dash styles (strokeStyle short-dash, long-dash, dash-dot, dash-dot-dot, fine-dot, sparse-dot), shadow kinds (drop, inner, layered, extrude = 3D, contact = ground; presets soft, drop, lifted, hard, glow, long, inner, elevated, neon, extrude, float) and text outlines. They work in add_elements, update_elements, build_diagram nodes/edges/zones and style presets, and show in every export.",
+      "Make diagrams look good: build_diagram's default look (polished) colours nodes by role (give `role` when the guess would be wrong), soft shadows, firm strokes; mark the main path's arrows weight primary and give each relationship a kind (own colour/dash) and a legend. To restyle an existing drawing without moving anything, follow the polish_diagram prompt (it has the full design guide).",
       "Copy a look from one element to others with copy_look {from, to, parts}: the fill (with its gradient or pattern) by default; add stroke, effects (shadow, opacity) or text (font, size, colour, outline of text or labels).",
       "Fonts: list_fonts, then fontFamily by name (\"Inter Bold\", \"Caveat\") on text, labels, update_elements and style presets. Node data (ip, hostname, vlan, role, owner, url, notes): set_properties / build_diagram `data`; review with get_inventory.",
       "Every tool takes an optional `drawing` (tab id, file path or title); default is the active drawing.",
@@ -507,6 +509,10 @@ const node = z
     width: z.number().optional(),
     height: z.number().optional(),
     kind: z.string().optional().describe('Category for the legend, e.g. "Server"'),
+    role: z
+      .enum(["entry", "edge", "compute", "service", "data", "queue", "storage", "security", "monitoring", "external"])
+      .optional()
+      .describe("What the node is; the polished look colours it by role (entry blue, edge violet, compute teal, service sky, data green, queue orange, storage emerald, security red, monitoring slate, external gray dashed). Default: guessed from shape, kind, icon and label"),
     data: z.record(z.string(), z.any()).optional().describe("Custom properties, e.g. {ip, hostname}"),
     link: z.string().optional(),
   })
@@ -554,7 +560,7 @@ const placeOpts = {
   y: z.number().optional(),
   title: z.string().optional().describe("Title text above the diagram"),
   subtitle: z.string().optional().describe("A smaller line under the title"),
-  look: z.enum(["professional", "sketch"]).optional().describe("professional (default): crisp lines, Inter/Montserrat type with bold titles and labels; sketch: hand-drawn lines and handwriting fonts. Use sketch when the user asks for a sketch, whiteboard or hand-drawn look"),
+  look: z.enum(["polished", "professional", "sketch"]).optional().describe("polished (default): professional type plus colour by node role, 2 px strokes and soft shadows; professional: the same type with plain white nodes and no shadows; sketch: hand-drawn lines and handwriting fonts. Use sketch when the user asks for a sketch, whiteboard or hand-drawn look"),
   kinds: z.record(z.string(), kindStyle).optional().describe('Style per relationship kind, e.g. {"Traffic": {"color": "#1971c2", "weight": "primary"}, "Async": {"style": "dashed", "head": "triangle_outline"}}; kinds without an entry get a distinct colour'),
   legend: z.union([z.boolean(), z.string()]).optional().describe("Add a legend (true or its title)"),
   zoom: z.boolean().optional().describe("Zoom the view to the new diagram (default true)"),
@@ -566,7 +572,7 @@ tool(
     "laid out automatically with ELK (layered by default) and connected with elbow arrows that re-route when nodes move. The main 'draw me X' tool.",
     "Ids you give become element ids. It tries several layouts, keeps the cleanest (arrows moved apart, labels on free stretches) and returns ids, bounds, warnings (e.g. icons not found) and `quality`:",
     "score (lower is better), arrowsOnTopOfEachOther, arrowsThroughNodes, labelsColliding, crossings and `advice` (what to change in the spec if it is crowded). Read `quality`, then check the result with screenshot.",
-    "Looks: look professional (default) or sketch (when the user asks for hand-drawn); title + subtitle; node shapes include cylinder (database), cloud, queue, document, actor (person), server, hexagon, folder; node emphasis primary/muted and subtitle (IP, role); arrows have weight primary/normal/secondary, head/tail arrowheads (triangle, dot, diamond, crowfoot_many for ER), and a kind whose style is shared (kinds) and shown in the legend.",
+    "Looks: look polished (default: nodes coloured by `role` (tint fill + deeper stroke of one hue per role), strokes 2 px, soft shadows, lifted on primary nodes, role rows in the legend), professional (plain white nodes) or sketch (when the user asks for hand-drawn); title + subtitle; node shapes include cylinder (database), cloud, queue, document, actor (person), server, hexagon, folder; node emphasis primary/muted and subtitle (IP, role); arrows have weight primary/normal/secondary, head/tail arrowheads (triangle, dot, diamond, crowfoot_many for ER), and a kind whose style is shared (kinds) and shown in the legend.",
     "Drawing well: keep to about 40 arrows or fewer; mark the main path's arrows primary and management or optional ones secondary; draw one arrow to a ZONE (from/to may be a zone id) instead of one per node; give a label only to short arrows; one colour per kind of relationship (use `kind` and a legend); if `advice` says a node has many arrows or an arrow is very long, change the spec and build again rather than accepting it.",
   ].join(" "),
   {
@@ -832,23 +838,23 @@ tool(
 );
 
 // ---------- prompts ----------
-// Recipes Claude Code shows as /mcp__mydraw__<name>. TIDY_RECIPE is exported so a future in-app
-// "Tidy with Claude" (Phase 10) can run the same steps through `claude -p`.
+// Recipes Claude Code shows as /mcp__mydraw__<name>. TIDY_RECIPE (shared/recipes.ts) is also run by
+// the app's "Tidy with Claude" through `claude -p`.
 
-export const TIDY_RECIPE = (target: string, focus: string, keep: boolean) =>
-  [
-    `Tidy the mydraw drawing ${target} so it reads clearly${focus}. Work with the mydraw MCP tools.`,
-    "",
-    "1. Look first: list_drawings, then get_scene (ids, zones, arrows, kinds, properties) and screenshot. Say in one or two sentences what the diagram shows and what makes it hard to read.",
-    "2. Understand the roles: entry points (users, internet, DNS, load balancers), the main path, services, data stores (databases, queues, storage), management/monitoring, external systems. Note which nodes are peers (web-1, web-2...) and which zones hold what.",
-    keep
-      ? "3. Keep the user's arrangement: do NOT run auto_layout on the whole drawing. Start with `tidy` (small moves only), then fix specific problems by hand."
-      : "3. Decide the flow: entry points at the start (top or left), data stores at the end, management off to the side. If the arrangement is far from that or messy, run auto_layout (with onlyIfBetter: true first; with a direction if the flow is clear); otherwise start with `tidy`.",
-    "4. Refine by meaning, which the automatic layout can't know: peers in a row with align + distribute (equal gaps), related nodes next to each other, a node into the zone it belongs to (update_elements or move, then tidy), labels only on short arrows, one arrow to a zone instead of many to its nodes, arrows `routing: \"elbow\"` or `route_around` where they cut through shapes.",
-    "5. Check: lint_diagram (fix: true for the safe fixes), then screenshot again. Repeat 4-5 at most twice; stop when lint has no warnings and the screenshot reads cleanly.",
-    "6. Never delete nodes, rename labels, or change colours or properties unless the user asked; only move, align, resize zones and re-route. Each tool call is one undo step, so the user can step back.",
-    "7. Finish with zoom_to_fit and a short report: what you changed and why, the lint result, and anything only the user can decide (e.g. a diagram with too many arrows to split).",
-  ].join("\n");
+server.registerPrompt(
+  "polish_diagram",
+  {
+    title: "Polish a diagram's look",
+    description: "Claude restyles the drawing to mydraw's design guide: colour by role, fills, stroke weights, soft shadows, arrow kinds with their own colour and weight, a legend. Nothing is moved or renamed.",
+    argsSchema: {
+      drawing: z.string().optional().describe("Tab id, file path or title (default: the active drawing)"),
+      focus: z.string().optional().describe("What matters most, e.g. 'make the request path stand out' or 'dark, high-contrast'"),
+    },
+  },
+  ({ drawing: d, focus }) => ({
+    messages: [{ role: "user" as const, content: { type: "text" as const, text: POLISH_RECIPE(d ? `"${d}"` : "(the active one)", focus ? `, with the focus on: ${focus}` : "") } }],
+  }),
+);
 
 server.registerPrompt(
   "tidy_diagram",

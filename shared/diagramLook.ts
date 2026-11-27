@@ -1,12 +1,13 @@
-// How generated diagrams look (pure, tests/diagramLook.test.ts): two looks, "professional" (the
-// default: crisp lines, a type hierarchy in Inter / Montserrat / IBM Plex Mono) and "sketch"
-// (hand-drawn: rough lines, Kalam / Caveat / Permanent Marker). A look fixes fonts, sizes, stroke
+// How generated diagrams look (pure, tests/diagramLook.test.ts): "polished" (the default:
+// professional type plus colour by node role (shared/nodeRoles.ts), firmer strokes and soft
+// shadows), "professional" (plain: crisp lines, white nodes, a type hierarchy in Inter / Montserrat /
+// IBM Plex Mono) and "sketch" (hand-drawn: rough lines, Kalam / Caveat / Permanent Marker). A look fixes fonts, sizes, stroke
 // widths and roughness; arrow semantics (weight, arrowheads, kinds) map onto it here too.
 // Fonts are named; the renderer resolves names to Excalidraw font ids (web/src/fontRegistry.tsx)
 // and falls back to Excalidraw's own font when mydraw's extra fonts are off.
 import type { LineStyle } from "./diagram";
 
-export const LOOKS_LIST = ["professional", "sketch"] as const;
+export const LOOKS_LIST = ["polished", "professional", "sketch"] as const;
 export type LookName = (typeof LOOKS_LIST)[number];
 
 export const EDGE_WEIGHTS = ["primary", "normal", "secondary"] as const;
@@ -63,6 +64,11 @@ export interface DiagramLook {
   faded: number;
   /** Grey for muted nodes and subtitles. */
   muted: string;
+  /** Fill and stroke nodes by role (shared/nodeRoles.ts) unless the node names its own colours. */
+  roleColors: boolean;
+  /** Shadow preset for every node (null = none) and for primary nodes, unless the spec or node sets one. */
+  nodeShadow: string | null;
+  primaryShadow: string | null;
 }
 
 const PRO = (font: string, size: number): TextStyle => ({ font, fallback: "Nunito", size });
@@ -85,6 +91,9 @@ export const LOOKS: Record<LookName, DiagramLook> = {
     edgeWidth: { primary: 3, normal: 2, secondary: 1.25 },
     faded: 70,
     muted: "#868e96",
+    roleColors: false,
+    nodeShadow: null,
+    primaryShadow: null,
   },
   sketch: {
     name: "sketch",
@@ -102,11 +111,35 @@ export const LOOKS: Record<LookName, DiagramLook> = {
     edgeWidth: { primary: 3.5, normal: 2.5, secondary: 1.5 },
     faded: 70,
     muted: "#868e96",
+    roleColors: false,
+    nodeShadow: null,
+    primaryShadow: null,
+  },
+  polished: {
+    name: "polished",
+    roughness: 0,
+    title: { font: "Montserrat Bold", fallback: "Lilita One", size: 30 },
+    diagramSubtitle: PRO("Inter", 16),
+    zoneTitle: PRO("Inter SemiBold", 15),
+    nodeLabel: PRO("Inter SemiBold", 15),
+    nodeLabelBold: PRO("Inter Bold", 16),
+    caption: PRO("Inter", 13),
+    nodeSubtitle: { font: "IBM Plex Mono", fallback: "Cascadia", size: 12 },
+    edgeLabel: PRO("Inter", 12),
+    zoneStroke: { outer: 1.5, inner: 1 },
+    nodeStroke: { normal: 2, primary: 3, muted: 1.25 },
+    edgeWidth: { primary: 3.5, normal: 2, secondary: 1.5 },
+    faded: 70,
+    muted: "#868e96",
+    roleColors: true,
+    nodeShadow: "soft",
+    primaryShadow: "lifted",
   },
 };
 
+/** "sketch" and "professional" by name; anything else (or nothing) is the default, "polished". */
 export function lookOf(name?: string | null): DiagramLook {
-  return name === "sketch" ? LOOKS.sketch : LOOKS.professional;
+  return name === "sketch" ? LOOKS.sketch : name === "professional" ? LOOKS.professional : LOOKS.polished;
 }
 
 // ---------- arrow kinds ----------

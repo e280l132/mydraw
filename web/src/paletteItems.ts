@@ -85,6 +85,9 @@ export function buildPaletteItems(c: PaletteContext): PaletteItem[] {
   }
   cmd("Edit", "Tidy (keep the arrangement: line up, even gaps, fix overlaps)", { type: "tidyLayout" }, { keywords: "tidy clean up straighten line up align rows columns overlap neat selection" });
   cmd("Edit", "Re-layout (fresh automatic layout, only if cleaner)", { type: "relayout" }, { keywords: "auto layout arrange rearrange organize elk layout again selection" });
+  cmd("Edit", "Ask Claude…", { type: "askClaude" }, { keywords: "ai claude code prompt agent assistant chat request change edit", hint: sc("askClaude") });
+  cmd("Edit", "Tidy with Claude (by meaning: roles, flow, peers in rows)", { type: "tidyWithClaude" }, { keywords: "ai claude tidy clean up arrange layout agent smart selection" });
+  cmd("Edit", "Polish with Claude (colours by role, fills, strokes, shadows, arrow kinds)", { type: "polishWithClaude" }, { keywords: "ai claude polish restyle pretty beautify design colors colours shadow style look nicer agent selection" });
   cmd("Edit", "Snap selection to grid", { type: "snapToGrid" }, { keywords: "align layout line up round position" });
   add("Edit", "Link selection to a drawing…", c.linkSelection, { keywords: "hyperlink drill down open diagram" });
   add("Edit", "Remove links from selection", c.clearLinks, { keywords: "hyperlink unlink" });

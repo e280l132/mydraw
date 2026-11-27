@@ -4,6 +4,15 @@ Versions are major.minor (0.1, 0.2, …); a third number marks a bug-fix build (
 section below becomes the release notes of that version (`npm run release`), which the app shows
 under "What's new" when it offers the update.
 
+## 0.2
+
+- Ask Claude (⌥⌘J): type a change and Claude Code makes it in the drawing while you watch, one undo step per action, with Cancel
+- Tidy with Claude: Claude tidies the drawing or the selection by meaning (entry points first, peers in rows, clean arrows)
+- Ask Claude button in the tab bar; the box drops down under it
+- Polish with Claude: restyles a drawing (colour by role, fills, outlines, soft shadows, arrow kinds, legend) without moving anything
+- Diagrams Claude builds are coloured by role with soft shadows by default (new "polished" look; "professional" is the plain one)
+- Claude model (Sonnet, Opus, Haiku) in Preferences
+
 ## 0.1
 
 First installable version: one macOS app (Apple Silicon) with everything inside.

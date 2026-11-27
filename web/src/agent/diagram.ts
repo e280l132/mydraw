@@ -1,7 +1,8 @@
 // Diagram generation for agent commands: icon nodes, zones, ELK-laid-out diagrams (build_diagram,
 // mermaid_to_scene, apply_template), legends and auto layout of existing elements. Like sceneOps,
 // nothing here calls updateScene: callers commit the returned elements as one undo step.
-import { withShadow } from "../../../shared/shadow";
+import { resolveShadowInput, withShadow } from "../../../shared/shadow";
+import { inferRole, isNodeRole, ROLE_STYLES, type RoleStyle } from "../../../shared/nodeRoles";
 import { DASH_KEY, dashPatch, isDashId, type StrokeStyleName } from "../../../shared/dash";
 import { canGradient, gradientPatch } from "../../../shared/gradient";
 import { convertToExcalidrawElements, newElementWith } from "@excalidraw/excalidraw";
@@ -314,7 +315,8 @@ export async function buildDiagram(
   spec: DiagramSpec,
   items: Record<string, LibraryItem | null>,
 ): Promise<DiagramBuild> {
-  // The look (professional by default, or sketch) sets fonts, sizes, strokes and roughness.
+  // The look (polished by default, professional or sketch) sets fonts, sizes, strokes, roughness
+  // and, when polished, colours by node role and soft shadows.
   const look = lookOf(spec.look);
   /** Icons and drawn shapes: the node's iconStyle, else hand-drawn when the look is rough (sketch). */
   const sketchOf = (n: DiagramNode): IconSketch | null => (n.iconStyle !== undefined ? n.iconStyle : look.roughness > 0 ? { ...DEFAULT_ICON_SKETCH } : null);
@@ -356,7 +358,13 @@ export async function buildDiagram(
   // Text styles of a node: emphasis makes the label bold; muted nodes are grey.
   const labelText = (n: DiagramNode) => (n.emphasis === "primary" ? { f: fonts.nodeBold, size: look.nodeLabelBold.size } : { f: fonts.node, size: look.nodeLabel.size });
   const captionText = (n: DiagramNode) => (n.emphasis === "primary" ? { f: fonts.nodeBold, size: look.caption.size + 1 } : { f: fonts.caption, size: look.caption.size });
-  const strokeOf = (n: DiagramNode) => (n.emphasis === "muted" ? look.muted : (n.color ?? ink));
+  /** Polished look: the node's role colours (fill tint + deeper stroke), unless the node names its own. */
+  const roleOf = (n: DiagramNode): RoleStyle | null => (look.roleColors ? ROLE_STYLES[inferRole({ ...n, icon: n.icon ? (items[n.icon]?.name ?? n.icon) : undefined })] : null);
+  /** Icon nodes keep their own colours: the role colours only shapes. */
+  const isIconPlan = (n: DiagramNode) => !!(n.icon && items[n.icon]);
+  const strokeOf = (n: DiagramNode) => (n.emphasis === "muted" ? look.muted : (n.color ?? (isIconPlan(n) ? undefined : roleOf(n)?.stroke) ?? ink));
+  const fillOf = (n: DiagramNode) => n.fill ?? roleOf(n)?.fill ?? "#ffffff";
+  const defaultShadow = (n: DiagramNode) => resolveShadowInput(n.emphasis === "primary" ? look.primaryShadow : n.emphasis === "muted" ? null : look.nodeShadow) ?? null;
   const opacityOf = (n: DiagramNode) => (n.emphasis === "muted" ? look.faded : undefined);
   const subtitleSize = (n: DiagramNode) => (n.subtitle ? measureText(n.subtitle, look.nodeSubtitle.size, fonts.nodeSub) : null);
 
@@ -524,6 +532,7 @@ export async function buildDiagram(
     if (n.kind) data.mydrawKind = n.kind;
     if (n.zone) data.mydrawZoneId = n.zone;
     if (n.subtitle) data.mydrawSubtitle = n.subtitle;
+    if (look.roleColors) data.mydrawRole = inferRole({ ...n, icon: n.icon ? (items[n.icon]?.name ?? n.icon) : undefined });
     const stroke = strokeOf(n);
     if (plan.icon || plan.shape?.captionBelow) {
       // Icon, or a drawn shape with its label underneath (person, server).
@@ -533,7 +542,7 @@ export async function buildDiagram(
         files.push(...plan.icon.files);
       } else {
         const size = CAPTION_SHAPE_SIZE[plan.shape!.kind as "actor" | "server"];
-        const drawn = await sketchedShape(await shapeImage(plan.shape!.kind, { ...size, stroke, fill: n.fill ?? "#ffffff", strokeWidth: look.nodeStroke[n.emphasis ?? "normal"] }), sketchOf(n));
+        const drawn = await sketchedShape(await shapeImage(plan.shape!.kind, { ...size, stroke, fill: fillOf(n), strokeWidth: look.nodeStroke[n.emphasis ?? "normal"] }), sketchOf(n));
         image = drawn.image;
         files.push(drawn.file);
         data.mydrawShape = plan.shape!.kind;
@@ -560,7 +569,7 @@ export async function buildDiagram(
     } else if (plan.shape) {
       // A drawn shape with its label inside (database, cloud, queue, ...).
       data.mydrawShape = plan.shape.kind;
-      const drawn = await sketchedShape(await shapeImage(plan.shape.kind, { width: box.width, height: box.height, stroke, fill: n.fill ?? "#ffffff", strokeWidth: look.nodeStroke[n.emphasis ?? "normal"] }), sketchOf(n));
+      const drawn = await sketchedShape(await shapeImage(plan.shape.kind, { width: box.width, height: box.height, stroke, fill: fillOf(n), strokeWidth: look.nodeStroke[n.emphasis ?? "normal"] }), sketchOf(n));
       files.push(drawn.file);
       const t = labelText(n);
       const els = makeIconNode({
@@ -597,7 +606,7 @@ export async function buildDiagram(
             id: n.id,
             ...box,
             strokeColor: stroke,
-            backgroundColor: n.fill ?? "#ffffff",
+            backgroundColor: fillOf(n),
             fillStyle: "solid",
             strokeWidth: look.nodeStroke[n.emphasis ?? "normal"],
             roughness,
@@ -624,21 +633,24 @@ export async function buildDiagram(
   }
 
   // Fill pattern, gradient and border style of plain shape nodes (icon and drawn-shape nodes are images).
+  // (External systems in the polished look get a dashed border unless the node says otherwise.)
   for (const n of spec.nodes) {
-    if (n.gradient === undefined && n.fillStyle === undefined && n.strokeStyle === undefined) continue;
+    const strokeStyle = n.strokeStyle ?? (n.color === undefined ? roleOf(n)?.strokeStyle : undefined);
+    if (n.gradient === undefined && n.fillStyle === undefined && strokeStyle === undefined) continue;
     const i = nodeEls.findIndex((e) => e.id === n.id);
     if (i < 0 || nodeEls[i].customData?.mydrawNode) continue;
     let el = nodeEls[i] as El & Loose;
     if (n.fillStyle) el = { ...el, fillStyle: n.fillStyle as never };
-    if (n.strokeStyle) el = { ...el, ...dashPatch(el.customData as Loose | undefined, isDashId(n.strokeStyle) ? n.strokeStyle : null, isDashId(n.strokeStyle) ? "dashed" : (n.strokeStyle as "solid" | "dashed" | "dotted")) };
+    if (strokeStyle) el = { ...el, ...dashPatch(el.customData as Loose | undefined, isDashId(strokeStyle) ? strokeStyle : null, isDashId(strokeStyle) ? "dashed" : (strokeStyle as "solid" | "dashed" | "dotted")) };
     if (n.gradient !== undefined && canGradient(el.type)) el = { ...el, ...gradientPatch(el.customData as Loose | undefined, n.gradient) };
     nodeEls[i] = el as El;
     byId.set(n.id, nodeEls[i]);
   }
 
-  // Shadows: a node's own, else the diagram's. Icon and drawn-shape nodes carry it on their image.
+  // Shadows: a node's own, else the diagram's, else the look's (polished: soft, lifted for primary
+  // nodes). Icon and drawn-shape nodes carry it on their image.
   for (const n of spec.nodes) {
-    const sh = n.shadow !== undefined ? n.shadow : spec.shadow;
+    const sh = n.shadow !== undefined ? n.shadow : spec.shadow !== undefined ? spec.shadow : defaultShadow(n);
     if (!sh) continue;
     const container = byId.get(n.id);
     if (!container) continue;
@@ -789,6 +801,25 @@ export function buildLegend(
               roughness: o.roughness,
               roundness: el.roundness,
             } as never,
+          ]),
+      });
+    }
+  }
+  // Polished diagrams: one row per node role (colour swatch), when there are two or more roles and
+  // the shapes carry no kinds of their own.
+  const roles = new Map<string, El>();
+  for (const el of live) {
+    const role = el.customData?.mydrawRole;
+    if (isNodeRole(role) && !el.customData?.mydrawKind && (el.type === "rectangle" || el.type === "ellipse" || el.type === "diamond") && !isZone(el) && !roles.has(role)) roles.set(role, el);
+  }
+  if (roles.size >= 2) {
+    for (const [role, el] of roles) {
+      const st = ROLE_STYLES[role as keyof typeof ROLE_STYLES];
+      entries.set(`r:${role}`, {
+        label: st.title,
+        sample: (x, y) =>
+          convertToExcalidrawElements([
+            { type: "rectangle", x: x + 6, y: y + 8, width: 36, height: ROW - 16, strokeColor: st.stroke, backgroundColor: st.fill, fillStyle: "solid", strokeWidth: el.strokeWidth, roughness: o.roughness, roundness: { type: 3 } } as never,
           ]),
       });
     }

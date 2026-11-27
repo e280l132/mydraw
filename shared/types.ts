@@ -6,6 +6,7 @@ import type { QuickConnectSettings } from "./quickBindings";
 import type { CaptionFontMode, IconSketchLook, IconStyleSetting } from "./iconSketch";
 import type { UpdateAction, UpdateStatus } from "./update";
 import type { SetupAction, SetupStatus } from "./setup";
+import type { AskEvent, AskRequest, AskSettings } from "./askClaude";
 
 // Types shared by the Electron main process, the preload bridge and the renderer.
 
@@ -42,6 +43,8 @@ export interface Settings {
   updates: UpdateSettings;
   /** The "Set up mydraw" window was shown once (installed app, first launch). */
   setupShown: boolean;
+  /** Ask Claude box (Phase 10): the model `claude -p` runs with. */
+  askClaude: AskSettings;
 }
 
 export interface UpdateSettings {
@@ -170,7 +173,10 @@ export type MenuCommand =
   | { type: "versionHistory" }
   | { type: "present" }
   | { type: "checkUpdates" }
-  | { type: "setup" };
+  | { type: "setup" }
+  | { type: "askClaude" }
+  | { type: "tidyWithClaude" }
+  | { type: "polishWithClaude" };
 
 export interface MydrawBridge {
   platform: string;
@@ -184,6 +190,10 @@ export interface MydrawBridge {
   /** "Set up mydraw" (app/src/setup.ts): where the app runs, the `mydraw` command, Claude Code. */
   setupStatus(): Promise<SetupStatus>;
   setupAction(action: SetupAction): Promise<SetupStatus>;
+  /** Ask Claude box (app/src/askClaude.ts): start a `claude -p` run (returns its id), cancel it, follow it. */
+  askStart(req: AskRequest): Promise<number>;
+  askCancel(): Promise<void>;
+  onAskEvent(cb: (e: AskEvent) => void): () => void;
   getSettings(): Promise<Settings>;
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
   /** The user's saved style presets and themes (global, shared by every drawing). */

@@ -111,6 +111,7 @@ export function helpSections(): Section[] {
         { text: "Tidy: line up rows and columns, even gaps, fix overlaps, keeping your arrangement (Diagram menu, command palette)" },
         { text: "Re-layout: fresh automatic layout that follows your drawing, applied only if cleaner (Diagram menu, command palette)" },
         { text: "Route arrows around shapes (command palette)" },
+        { keys: sc("askClaude"), text: "Ask Claude: type a change and Claude Code makes it with mydraw's tools, live; Tidy with Claude tidies by meaning (roles, flow, peers in rows); Polish restyles (colour by role, fills, strokes, shadows, arrow kinds) without moving anything. Also the Ask Claude button in the tab bar. Each step is one undo step; Cancel stops it" },
         { keys: sc("findReplace"), text: "Find and replace: step through matches (Enter, Shift+Enter), replace one or all, match case, whole word, selection or whole drawing" },
       ],
     },

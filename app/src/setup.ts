@@ -73,8 +73,8 @@ async function loginPath(): Promise<string> {
   return shellPath;
 }
 
-/** Path of Claude Code's `claude`, or null when it isn't installed. */
-async function findClaude(): Promise<string | null> {
+/** Path of Claude Code's `claude`, or null when it isn't installed. Also used by the Ask Claude box. */
+export async function findClaude(): Promise<string | null> {
   if (process.env.MYDRAW_CLAUDE) return fs.existsSync(process.env.MYDRAW_CLAUDE) ? process.env.MYDRAW_CLAUDE : null;
   for (const dir of (await loginPath()).split(":")) {
     if (!dir) continue;
@@ -93,10 +93,16 @@ function isExecutable(p: string): boolean {
   }
 }
 
-/** Runs claude with the login shell's PATH (an npm-installed claude needs `node` on it). */
-async function runClaude(claude: string, args: string[]): Promise<void> {
+/** Environment for running claude: the login shell's PATH (an npm-installed claude needs `node` on it), none of mydraw's own switches. */
+export async function claudeEnv(): Promise<NodeJS.ProcessEnv> {
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: (await loginPath()) || process.env.PATH };
   for (const k of ["ELECTRON_RUN_AS_NODE", "MYDRAW_TEST", "MYDRAW_DEV_URL"]) delete env[k];
+  return env;
+}
+
+/** Runs claude with claudeEnv(). */
+async function runClaude(claude: string, args: string[]): Promise<void> {
+  const env = await claudeEnv();
   try {
     await run(claude, args, { timeout: 60_000, env });
   } catch (e) {

@@ -18,6 +18,10 @@ interface Props {
   /** The drawing style (Clean / Sketch): shown and switched here. */
   drawingStyle: DrawingStyle;
   onDrawingStyle(style: DrawingStyle): void;
+  /** Ask Claude box (web/src/AskClaude.tsx): open, a run in progress, toggle. */
+  askOpen: boolean;
+  askBusy: boolean;
+  onAsk(): void;
 }
 
 /** Clean = a straight line, Sketch = a wobbly pencil line. */
@@ -34,39 +38,55 @@ const STYLE_ICONS: Record<DrawingStyle, JSX.Element> = {
   ),
 };
 
-export function TabBar({ tabs, activeId, onSelect, onClose, onNew, panelOpen, onTogglePanel, drawingStyle, onDrawingStyle }: Props) {
+export function TabBar({ tabs, activeId, onSelect, onClose, onNew, panelOpen, onTogglePanel, drawingStyle, onDrawingStyle, askOpen, askBusy, onAsk }: Props) {
   return (
-    <div className="md-tabbar" role="tablist">
-      {tabs.map((t) => (
-        <div
-          key={t.id}
-          role="tab"
-          aria-selected={t.id === activeId}
-          className={`md-tab${t.id === activeId ? " active" : ""}${t.dirty ? " dirty" : ""}`}
-          title={t.filePath ?? "Not saved yet"}
-          onMouseDown={(e) => {
-            if (e.button === 1) {
-              e.preventDefault();
-              onClose(t.id);
-            } else if (e.button === 0) onSelect(t.id);
-          }}
-        >
-          <span className="md-tab-title">{t.title}</span>
-          <button
-            className="md-tab-close"
-            aria-label={`Close ${t.title}`}
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={() => onClose(t.id)}
+    <div className="md-tabbar">
+      {/* Tabs scroll on their own, so the buttons on the right always stay visible. */}
+      <div className="md-tabs" role="tablist">
+        {tabs.map((t) => (
+          <div
+            key={t.id}
+            role="tab"
+            aria-selected={t.id === activeId}
+            className={`md-tab${t.id === activeId ? " active" : ""}${t.dirty ? " dirty" : ""}`}
+            title={t.filePath ?? "Not saved yet"}
+            onMouseDown={(e) => {
+              if (e.button === 1) {
+                e.preventDefault();
+                onClose(t.id);
+              } else if (e.button === 0) onSelect(t.id);
+            }}
           >
-            <span className="dot">●</span>
-            <span className="x">×</span>
-          </button>
-        </div>
-      ))}
-      <button className="md-tab-new" aria-label="New drawing" title="New drawing (⌘N)" onClick={onNew}>
-        +
-      </button>
+            <span className="md-tab-title">{t.title}</span>
+            <button
+              className="md-tab-close"
+              aria-label={`Close ${t.title}`}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => onClose(t.id)}
+            >
+              <span className="dot">●</span>
+              <span className="x">×</span>
+            </button>
+          </div>
+        ))}
+        <button className="md-tab-new" aria-label="New drawing" title="New drawing (⌘N)" onClick={onNew}>
+          +
+        </button>
+      </div>
       <div className="md-tabbar-spacer" />
+      <button
+        className={`md-tabbar-btn md-ask-btn${askOpen ? " on" : ""}${askBusy ? " busy" : ""}`}
+        title={askBusy ? "Claude is working… (⌥⌘J)" : "Ask Claude to change the drawing (⌥⌘J)"}
+        aria-pressed={askOpen}
+        onClick={onAsk}
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
+          <path d="M10 3l1.6 4.6L16 9.2l-4.4 1.6L10 15.4 8.4 10.8 4 9.2l4.4-1.6z" />
+          <path d="M17.5 13.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z" />
+        </svg>
+        Ask Claude
+        {askBusy && <span className="md-ask-btn-dot" aria-hidden />}
+      </button>
       <div className={`md-style-switch ${drawingStyle}`} role="radiogroup" aria-label="Drawing style">
         {(["clean", "sketch"] as const).map((s) => (
           <button

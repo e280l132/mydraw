@@ -29,6 +29,7 @@ import { getSettings, onSettingsChanged, rememberRecent, updateSettings } from "
 import { getStyleLibrary, saveStyleLibrary } from "./styles-store";
 import { quitCancelled, setupUpdater, updateAction, updateStatus } from "./updater";
 import { setupAction, setupSetup, setupStatus } from "./setup";
+import { askCancel, askShutdown, askStart } from "./askClaude";
 import { SETUP_ACTIONS, type SetupAction } from "../../shared/setup";
 import { UPDATE_ACTIONS, type UpdateAction } from "../../shared/update";
 import { APP_VERSION_LABEL } from "../../shared/appVersion";
@@ -392,6 +393,15 @@ function registerIpc(): void {
     return setupAction(action as SetupAction);
   });
 
+  ipcMain.handle("ask:start", (e, req: unknown) => {
+    if (e.sender !== win?.webContents) throw new Error("invalid request");
+    return askStart(req, e.sender);
+  });
+  ipcMain.handle("ask:cancel", (e) => {
+    if (e.sender !== win?.webContents) throw new Error("invalid request");
+    askCancel();
+  });
+
   ipcMain.handle("update:get", () => updateStatus());
   ipcMain.handle("update:action", (e, action: unknown) => {
     if (e.sender !== win?.webContents || !UPDATE_ACTIONS.includes(action as UpdateAction)) throw new Error("invalid request");
@@ -569,6 +579,7 @@ if (!isTest && !app.requestSingleInstanceLock()) {
       quit: () => app.quit(),
     });
     setupSetup({ quit: () => app.quit() });
+    app.on("will-quit", askShutdown);
     void startAgentControl(store);
   });
 

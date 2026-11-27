@@ -7,10 +7,17 @@ const builtinFamilies = new Set(BUILTIN_FONTS.flatMap((f) => f.weights.map((w) =
 const EXCALIDRAW = new Set(["Excalifont", "Virgil", "Comic Shanns", "Lilita One", "Nunito", "Helvetica", "Cascadia", "Liberation Sans"]);
 
 describe("diagram looks", () => {
-  it("professional is the default; sketch only when asked", () => {
-    expect(lookOf(undefined).name).toBe("professional");
-    expect(lookOf("nonsense").name).toBe("professional");
+  it("polished is the default; professional and sketch only when asked", () => {
+    expect(lookOf(undefined).name).toBe("polished");
+    expect(lookOf("nonsense").name).toBe("polished");
+    expect(lookOf("professional").name).toBe("professional");
     expect(lookOf("sketch").name).toBe("sketch");
+    expect(LOOKS.polished.roughness).toBe(0);
+    expect(LOOKS.polished.roleColors).toBe(true);
+    expect(LOOKS.polished.nodeShadow).toBe("soft");
+    expect(LOOKS.polished.nodeStroke.normal).toBeGreaterThan(LOOKS.professional.nodeStroke.normal);
+    expect(LOOKS.professional.roleColors).toBe(false);
+    expect(LOOKS.professional.nodeShadow).toBeNull();
     expect(LOOKS.professional.roughness).toBe(0);
     expect(LOOKS.sketch.roughness).toBe(1);
   });

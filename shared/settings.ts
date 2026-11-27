@@ -4,6 +4,7 @@ import { cloneQuickConnect, defaultQuickConnect, normalizeQuickConnect } from ".
 import { CAPTION_FONT_MODES, DEFAULT_HAND_FONT, DEFAULT_ICON_SKETCH, ICON_STYLE_SETTINGS, type CaptionFontMode, type IconStyleSetting, lookOfSetting, normalizeHandFont, normalizeIconSketch } from "./iconSketch";
 import type { DrawingStyle, Settings, ThemeSetting } from "./types";
 import { tagVersion } from "./version";
+import { DEFAULT_ASK_MODEL, normalizeAskSettings } from "./askClaude";
 
 export const MAX_RECENT = 10;
 
@@ -23,6 +24,7 @@ export const DEFAULT_SETTINGS: Settings = {
   captionHandFont: DEFAULT_HAND_FONT,
   updates: { check: true, lastCheck: 0, skipped: null },
   setupShown: false,
+  askClaude: { model: DEFAULT_ASK_MODEL },
 };
 
 const THEMES: ThemeSetting[] = ["system", "light", "dark"];
@@ -30,7 +32,7 @@ const STYLES: DrawingStyle[] = ["clean", "sketch"];
 
 /** Merge untrusted JSON (settings file or a renderer patch) onto a base, keeping only valid values. */
 export function mergeSettings(base: Settings, raw: unknown): Settings {
-  const out: Settings = { ...base, recentFiles: [...base.recentFiles], autoExport: { ...base.autoExport }, quickConnect: cloneQuickConnect(base.quickConnect), grid: { ...base.grid }, panelOrder: [...base.panelOrder], iconSketch: { ...base.iconSketch }, updates: { ...base.updates } };
+  const out: Settings = { ...base, recentFiles: [...base.recentFiles], autoExport: { ...base.autoExport }, quickConnect: cloneQuickConnect(base.quickConnect), grid: { ...base.grid }, panelOrder: [...base.panelOrder], iconSketch: { ...base.iconSketch }, updates: { ...base.updates }, askClaude: { ...base.askClaude } };
   if (!raw || typeof raw !== "object") return out;
   const r = raw as Record<string, unknown>;
   if (THEMES.includes(r.theme as ThemeSetting)) out.theme = r.theme as ThemeSetting;
@@ -49,6 +51,7 @@ export function mergeSettings(base: Settings, raw: unknown): Settings {
       if (p.startsWith("/") && (v === "png" || v === "svg")) out.autoExport[p] = v;
     }
   }
+  if (r.askClaude !== undefined) out.askClaude = normalizeAskSettings(r.askClaude, base.askClaude);
   if (r.quickConnect !== undefined) out.quickConnect = normalizeQuickConnect(r.quickConnect);
   if (r.grid !== undefined) out.grid = normalizeGrid(r.grid, base.grid);
   if (r.panelOrder !== undefined) out.panelOrder = normalizePanelOrder(r.panelOrder);

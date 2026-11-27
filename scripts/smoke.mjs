@@ -53,11 +53,58 @@ await new Promise((r) => fontServer.listen(0, "127.0.0.1", r));
 const fontOrigin = `http://127.0.0.1:${fontServer.address().port}`;
 const pkgVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
 
+// A stand-in for Claude Code's `claude` (Ask Claude box, MYDRAW_CLAUDE): records its arguments and
+// prompt, starts the MCP server from --mcp-config exactly as claude would, adds a rectangle to the
+// drawing named in the system prompt through it, and prints stream-json like `claude -p`. A prompt
+// with SLOW waits after the first tool call (for Cancel).
+const fakeClaude = path.join(work, "fake-claude.mjs");
+const fakeClaudeLog = path.join(work, "fake-claude.json");
+fs.writeFileSync(
+  fakeClaude,
+  `#!${process.execPath}
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+const args = process.argv.slice(2);
+const opt = (name) => args.find((a) => a.startsWith(name + "="))?.slice(name.length + 1);
+let prompt = "";
+for await (const c of process.stdin) prompt += c;
+fs.writeFileSync(${JSON.stringify(fakeClaudeLog)}, JSON.stringify({ args, prompt }));
+const out = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
+const server = JSON.parse(opt("--mcp-config")).mcpServers.mydraw;
+const mcp = spawn(server.command, server.args, { env: { ...process.env, ...server.env }, stdio: ["pipe", "pipe", "inherit"] });
+let buf = "";
+const waiting = new Map();
+mcp.stdout.on("data", (d) => {
+  buf += d;
+  let i;
+  while ((i = buf.indexOf("\\n")) >= 0) {
+    const m = JSON.parse(buf.slice(0, i));
+    buf = buf.slice(i + 1);
+    waiting.get(m.id)?.(m);
+  }
+});
+let n = 0;
+const rpc = (method, params) => new Promise((r) => { const id = ++n; waiting.set(id, r); mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\\n"); });
+await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fake-claude", version: "1" } });
+mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\\n");
+out({ type: "system", subtype: "init", model: "claude-" + opt("--model") + "-fake", mcp_servers: [{ name: "mydraw", status: "connected" }] });
+const drawing = /drawing: "([^"]+)"/.exec(opt("--append-system-prompt"))[1];
+out({ type: "assistant", message: { content: [{ type: "text", text: "Adding a box." }, { type: "tool_use", id: "t1", name: "mcp__mydraw__add_elements", input: {} }] } });
+const res = await rpc("tools/call", { name: "add_elements", arguments: { drawing, elements: [{ type: "rectangle", id: "askbox", x: 0, y: 400, width: 120, height: 60, label: "from Claude" }] } });
+out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: !!res.result?.isError, content: res.result?.content ?? [] }] } });
+if (prompt.includes("SLOW")) await new Promise((r) => setTimeout(r, 60000));
+out({ type: "assistant", message: { content: [{ type: "tool_use", id: "t2", name: "mcp__mydraw__zoom_to_fit", input: {} }] } });
+out({ type: "result", subtype: "success", is_error: false, result: "Added a box labelled from Claude.", duration_ms: 1200, total_cost_usd: 0.001 });
+mcp.kill();
+`,
+  { mode: 0o755 },
+);
+
 async function launch() {
   const app = await electron.launch({
     executablePath: electronBinary(),
     args: [root],
-    env: { ...process.env, MYDRAW_TEST: "1", MYDRAW_USER_DATA: userData, MYDRAW_LIBRARY: libraryDir, MYDRAW_FONT_API: fontOrigin, MYDRAW_FONT_CDN: fontOrigin, MYDRAW_UPDATE_API: fontOrigin },
+    env: { ...process.env, MYDRAW_TEST: "1", MYDRAW_USER_DATA: userData, MYDRAW_LIBRARY: libraryDir, MYDRAW_FONT_API: fontOrigin, MYDRAW_FONT_CDN: fontOrigin, MYDRAW_UPDATE_API: fontOrigin, MYDRAW_CLAUDE: fakeClaude },
   });
   const page = await app.firstWindow();
   await page.setViewportSize({ width: 1400, height: 860 });
@@ -1876,6 +1923,102 @@ await page.keyboard.press("Escape");
 await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
 await t((x) => x.appStateValue("selectedElementIds")); // (selection stays; cleared next)
 await page.keyboard.press("Escape");
+
+step("Ask Claude box (⌥⌘J): runs claude with this app's MCP server, shows steps and the result; Tidy with a selection; Cancel; model setting");
+{
+  await call("new_drawing", { title: "Ask test" });
+  await page.evaluate(() => document.querySelector(".md-drawing:not([style*=\"display: none\"]) .excalidraw")?.focus());
+  await page.keyboard.press(`${MOD}+Alt+KeyJ`);
+  await page.waitForSelector(".md-ask");
+  assert.equal(await page.$eval(".md-ask-send", (b) => b.disabled), true, "Ask needs text");
+  await page.selectOption(".md-ask-model", "haiku");
+  await waitFor(async () => (await getSettings()).askClaude.model === "haiku", "model saved in settings");
+  await page.fill(".md-ask-input", "add a box");
+  await page.keyboard.press(`${MOD}+Enter`);
+  await page.waitForSelector('.md-ask[data-ask-state="done"]', { timeout: 30000 });
+  const log = JSON.parse(fs.readFileSync(fakeClaudeLog, "utf8"));
+  assert.equal(log.prompt, "add a box");
+  assert.ok(log.args.includes("--model=haiku") && log.args.includes("--strict-mcp-config") && log.args.includes("--allowedTools=mcp__mydraw"), "claude arguments");
+  assert.match(await page.textContent(".md-ask-steps"), /Adding shapes/);
+  assert.match(await page.textContent(".md-ask-result"), /Added a box/);
+  const scene = JSON.stringify(await call("get_scene", { drawing: "Ask test" }));
+  assert.match(scene, /from Claude/, "the fake claude's MCP call reached this drawing");
+  await page.click(".md-ask-clear");
+  assert.equal(await page.$(".md-ask-result"), null, "Clear empties the log");
+
+  // Tidy with Claude: the recipe, with the drawing and the selection.
+  await call("select", { drawing: "Ask test", ids: ["askbox"] });
+  await page.click(".md-ask-tidy");
+  await page.waitForSelector('.md-ask[data-ask-state="done"]', { timeout: 30000 });
+  const tidy = JSON.parse(fs.readFileSync(fakeClaudeLog, "utf8"));
+  assert.match(tidy.prompt, /Tidy the mydraw drawing/);
+  assert.match(tidy.prompt, /ids askbox/);
+  assert.match(tidy.prompt, /do NOT run auto_layout/, "a selection keeps the arrangement");
+
+  // Cancel stops a run; closing the box doesn't.
+  await page.fill(".md-ask-input", "SLOW please");
+  await page.click(".md-ask-send");
+  await waitFor(async () => (await page.locator(".md-ask-steps li").count()) > 0, "first step shown");
+  await page.click(".md-ask-cancel");
+  await page.waitForSelector('.md-ask[data-ask-state="cancelled"]', { timeout: 10000 });
+
+  // Polish: the design recipe, restyling only.
+  await page.click(".md-ask-polish");
+  await page.waitForSelector('.md-ask[data-ask-state="done"]', { timeout: 30000 });
+  const polish = JSON.parse(fs.readFileSync(fakeClaudeLog, "utf8"));
+  assert.match(polish.prompt, /Polish the look of the mydraw drawing/);
+  assert.match(polish.prompt, /Design guide/);
+  assert.match(polish.args.find((x) => x.startsWith("--append-system-prompt=")), /Design guide/, "every run carries the design guide");
+  await page.click(".md-find-close");
+  await waitFor(async () => !(await page.$(".md-ask")), "box closes");
+
+  // The tab bar's Ask Claude button opens the box under itself and closes it again; a dot shows while Claude works.
+  await page.click(".md-ask-btn");
+  await page.waitForSelector(".md-ask.md-ask-drop");
+  const btn = await page.$eval(".md-ask-btn", (e) => e.getBoundingClientRect().toJSON());
+  const box = await page.$eval(".md-ask", (e) => e.getBoundingClientRect().toJSON());
+  assert.ok(box.top >= btn.bottom && box.top - btn.bottom < 20, `box hangs under the button (${box.top} vs ${btn.bottom})`);
+  assert.ok(Math.abs(box.right - btn.right) < 2, "box is right-aligned with the button");
+  await page.fill(".md-ask-input", "SLOW again");
+  await page.click(".md-ask-send");
+  await page.waitForSelector(".md-ask-btn.busy .md-ask-btn-dot");
+  await page.click(".md-ask-cancel");
+  await page.waitForSelector('.md-ask[data-ask-state="cancelled"]', { timeout: 10000 });
+  assert.equal(await page.$(".md-ask-btn.busy"), null, "no busy dot after the run");
+  await page.click(".md-ask-btn");
+  await waitFor(async () => !(await page.$(".md-ask")), "the button closes the box");
+
+  // build_diagram's default look (polished) colours nodes by role and adds soft shadows; professional stays plain.
+  await call("new_drawing", { title: "Polished look" });
+  await call("build_diagram", { nodes: [{ id: "pl_web", label: "web-1" }, { id: "pl_db", label: "Postgres", shape: "rectangle" }, { id: "pl_x", label: "Stripe API", role: "external" }], edges: [{ from: "pl_web", to: "pl_db" }, { from: "pl_web", to: "pl_x" }], legend: true });
+  const api = await page.evaluate(() => window.__mydrawTest.api().getSceneElements().filter((e) => e.id.startsWith("pl_")).map((e) => ({ id: e.id, bg: e.backgroundColor, stroke: e.strokeColor, sw: e.strokeWidth, shadow: e.customData?.mydrawShadow ?? null, role: e.customData?.mydrawRole, dash: e.strokeStyle })));
+  const db = api.find((e) => e.id === "pl_db");
+  assert.equal(db.role, "data");
+  assert.notEqual(db.bg, "#ffffff", "data node gets a tinted fill");
+  assert.ok(db.shadow, "polished nodes get a shadow");
+  assert.equal(db.sw, 2);
+  assert.equal(api.find((e) => e.id === "pl_x").dash, "dashed", "external nodes get a dashed border");
+  assert.notEqual(api.find((e) => e.id === "pl_web").bg, db.bg, "different roles, different fills");
+  await call("build_diagram", {
+    title: "Shop",
+    subtitle: "polished look",
+    nodes: [{ id: "pl_users", label: "Users", shape: "actor" }, { id: "pl_lb", label: "Load balancer", emphasis: "primary" }, { id: "pl_app", label: "App", zone: "pl_z" }, { id: "pl_q", label: "Kafka", shape: "queue", zone: "pl_z" }, { id: "pl_cache", label: "Redis", shape: "cylinder", zone: "pl_z" }, { id: "pl_mon", label: "Grafana" }],
+    zones: [{ id: "pl_z", label: "VPC" }],
+    edges: [{ from: "pl_users", to: "pl_lb", weight: "primary" }, { from: "pl_lb", to: "pl_app", weight: "primary" }, { from: "pl_app", to: "pl_q", kind: "Async" }, { from: "pl_app", to: "pl_cache", kind: "Data" }, { from: "pl_mon", to: "pl_app", kind: "Monitoring", weight: "secondary" }],
+    legend: true,
+  });
+  await call("zoom_to_fit", { drawing: "Polished look" });
+  await page.screenshot({ path: path.join(shots, "polished-look.png") });
+  // Many tabs scroll inside the tab strip; the buttons on the right stay fully on screen.
+  for (const sel of [".md-ask-btn", ".md-style-switch", ".md-tabbar-btn:not(.md-ask-btn)"]) {
+    const r = await page.$eval(sel, (e) => e.getBoundingClientRect().toJSON());
+    assert.ok(r.right <= (await page.evaluate(() => window.innerWidth)) + 0.5 && r.width > 20, `${sel} fully visible with many tabs`);
+  }
+  await call("build_diagram", { look: "professional", nodes: [{ id: "pp_db", label: "Postgres" }] });
+  const plain = await page.evaluate(() => window.__mydrawTest.api().getSceneElements().find((e) => e.id === "pp_db"));
+  assert.equal(plain.backgroundColor, "#ffffff", "professional stays white");
+  assert.ok(!plain.customData?.mydrawShadow, "professional has no shadow");
+}
 
 step("Phase 7: find & replace (⌥⌘F): counts, replace all in one undo step, selection scope, select matches");
 await call("new_drawing", { title: "Find test" });

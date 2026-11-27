@@ -2,6 +2,7 @@ import { useState, type ReactElement, type ReactNode } from "react";
 import { MainMenu } from "@excalidraw/excalidraw";
 import type { MenuCommand, Settings } from "../../shared/types";
 import { sc } from "../../shared/shortcuts";
+import { ASK_MODEL_LABELS, ASK_MODELS } from "../../shared/askClaude";
 import { APP_VERSION, APP_VERSION_LABEL } from "../../shared/appVersion";
 import {
   CheckOffIcon,
@@ -253,6 +254,11 @@ export function AppMenu({ settings, panels, onCommand, onSettings }: Props) {
         </MainMenu.Item>
         <MainMenu.Item onSelect={run({ type: "tidyLayout" })}>Tidy</MainMenu.Item>
         <MainMenu.Item onSelect={run({ type: "relayout" })}>Re-layout</MainMenu.Item>
+        <MainMenu.Item onSelect={run({ type: "askClaude" })} shortcut={sc("askClaude")}>
+          Ask Claude…
+        </MainMenu.Item>
+        <MainMenu.Item onSelect={run({ type: "tidyWithClaude" })}>Tidy with Claude</MainMenu.Item>
+        <MainMenu.Item onSelect={run({ type: "polishWithClaude" })}>Polish with Claude</MainMenu.Item>
         <MainMenu.Item onSelect={run({ type: "snapToGrid" })}>Snap selection to grid</MainMenu.Item>
         <MainMenu.Item onSelect={run({ type: "saveStencil" })}>Save selection as stencil…</MainMenu.Item>
       </Section>
@@ -289,6 +295,12 @@ export function AppMenu({ settings, panels, onCommand, onSettings }: Props) {
           </CheckItem>
           <MainMenu.Item onSelect={run({ type: "quickConnectSettings" })}>Quick connect shortcuts…</MainMenu.Item>
           <MainMenu.Item onSelect={run({ type: "fonts" })}>Fonts…</MainMenu.Item>
+          <SegmentRow
+            label="Claude model"
+            value={settings.askClaude.model}
+            options={ASK_MODELS.map((m) => ({ value: m, label: ASK_MODEL_LABELS[m] }))}
+            onChange={(model) => onSettings({ askClaude: { model } })}
+          />
           <MainMenu.Item onSelect={run({ type: "setup" })}>Command line & Claude Code…</MainMenu.Item>
           <CheckItem checked={settings.updates.check} onToggle={() => onSettings({ updates: { ...settings.updates, check: !settings.updates.check } })}>
             Check for updates automatically

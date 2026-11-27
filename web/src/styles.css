@@ -61,9 +61,23 @@ body {
   height: 34px;
   padding: 0 6px;
   border-bottom: 1px solid var(--md-border);
-  overflow-x: auto;
+  overflow: hidden;
   flex: none;
   user-select: none;
+}
+
+/* The tabs (and "+") scroll sideways when there are many; the controls on the right never move off screen. */
+.md-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.md-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .md-tab {
@@ -147,7 +161,7 @@ body {
 }
 
 .md-tabbar-spacer {
-  flex: 1;
+  flex: 1 0 8px;
 }
 
 .md-tabbar-btn {
@@ -207,6 +221,37 @@ body {
 .md-tabbar-btn.on {
   color: var(--md-accent);
   border-color: var(--md-accent);
+}
+
+/* Ask Claude: the one accent-coloured button in the tab bar, so it is easy to find. */
+.md-ask-btn {
+  position: relative;
+  margin-right: 8px;
+  color: var(--md-accent);
+  border-color: color-mix(in srgb, var(--md-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--md-accent) 8%, transparent);
+  font-weight: 600;
+}
+.md-ask-btn:hover,
+.md-ask-btn.on {
+  color: #fff;
+  background: var(--md-accent);
+  border-color: var(--md-accent);
+}
+.md-ask-btn-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f08c00;
+  animation: md-ask-pulse 1.2s ease-in-out infinite;
+}
+@keyframes md-ask-pulse {
+  50% {
+    opacity: 0.3;
+  }
 }
 
 /* ---------- drawing ---------- */
@@ -2196,6 +2241,131 @@ body.md-panel-dragging * {
 .md-find-btn:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+/* ---------- Ask Claude box (Phase 10) ---------- */
+
+.md-ask {
+  position: fixed;
+  bottom: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 61;
+  width: min(520px, calc(100vw - 48px));
+  max-height: calc(100vh - 180px);
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--md-panel);
+  color: var(--md-fg);
+  border: 1px solid var(--md-border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.md-ask.md-ask-drop {
+  max-height: calc(100vh - 120px);
+}
+
+.md-ask-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.md-ask-title {
+  font-weight: 600;
+}
+
+.md-ask-scope,
+.md-ask-meta,
+.md-ask-hint {
+  font-size: 12px;
+  color: var(--md-muted);
+}
+
+.md-ask-model {
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--md-border);
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+
+.md-ask-input {
+  resize: vertical;
+  min-height: 56px;
+  font-size: 13px;
+}
+
+.md-ask-run {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid var(--md-border);
+  padding-top: 8px;
+}
+
+.md-ask-asked {
+  font-style: italic;
+  color: var(--md-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.md-ask-steps {
+  margin: 0;
+  padding-left: 20px;
+  max-height: 140px;
+  overflow: auto;
+  font-size: 12px;
+}
+
+.md-ask-steps li.failed {
+  color: #d9480f;
+}
+
+.md-ask-working {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--md-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.md-ask-spinner {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+  border: 2px solid var(--md-border);
+  border-top-color: var(--md-accent);
+  border-radius: 50%;
+  animation: md-ask-spin 0.8s linear infinite;
+}
+
+@keyframes md-ask-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.md-ask-warn,
+.md-ask-result.error p {
+  color: #d9480f;
+}
+
+.md-ask-result p {
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ---------- pages panel ---------- */
