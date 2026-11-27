@@ -1,6 +1,6 @@
 {
   "name": "mydraw",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local Excalidraw desktop app with stencils and Claude Code control",
   "private": true,
   "type": "module",
